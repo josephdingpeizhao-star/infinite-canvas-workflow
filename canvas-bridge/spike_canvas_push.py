@@ -23,11 +23,19 @@ import batch_editor
 import ic_client
 import layout_store
 import projector
+import run_controller
 import state_reader
 
 STRESS_PREFIX = "wfstress:"
 IMAGE_PREFIX = "wfimg:"
-MINE_PREFIXES = (f"{projector.NODE_ID_PREFIX}:", STRESS_PREFIX, IMAGE_PREFIX, f"{batch_editor.EDITOR_PREFIX}:")
+MINE_PREFIXES = (
+    f"{projector.NODE_ID_PREFIX}:",
+    STRESS_PREFIX,
+    IMAGE_PREFIX,
+    f"{batch_editor.EDITOR_PREFIX}:",
+    f"{run_controller.RUN_PREFIX}:",
+    f"{run_controller.LOG_PREFIX}:",
+)
 
 
 def build_live_view(manifest_path: Path):
@@ -45,13 +53,63 @@ def resolve_layout(batch: dict, layout_path: Path | None) -> tuple[Path, dict | 
     return target, layout_store.load_layout(target)
 
 
-def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
+def build_full_projection(manifest_path: Path, layout_path: Path | None):
+    """Full-projection ops: graph nodes + editor node + run console + event log."""
     graph, batch, route, view = build_live_view(manifest_path)
     product_id = str(batch.get("product_id") or "unknown")
+    integrity = state_reader.integrity_report_status(route)
     target, layout = resolve_layout(batch, layout_path)
+    journal = run_controller.journal_path(manifest_path, product_id)
     ops = projector.project_batch(graph, batch, view=view, layout=layout)
-    ops.append({"type": "delete_node", "ids": [batch_editor.editor_node_id(product_id)]})
+    ops.append(
+        {
+            "type": "delete_node",
+            "ids": [
+                batch_editor.editor_node_id(product_id),
+                run_controller.run_node_id(product_id),
+                run_controller.log_node_id(product_id),
+            ],
+        }
+    )
     ops.append(batch_editor.editor_node_op(product_id, batch))
+    ops.append(run_controller.run_node_op(product_id, route, integrity))
+    ops.append(run_controller.log_node_op(product_id, run_controller.read_journal_tail(journal)))
+    return product_id, batch, route, integrity, view, layout, target, journal, ops
+
+
+def control_update_ops(
+    product_id: str,
+    route: dict,
+    integrity: dict,
+    journal: Path,
+    *,
+    note: str = "",
+    status: str = "idle",
+    error: str = "",
+) -> list[dict]:
+    """update_node refreshes for the run console + event log (position preserved)."""
+    return [
+        {
+            "type": "update_node",
+            "id": run_controller.run_node_id(product_id),
+            "metadata": {
+                "content": run_controller.render_run_content(route, integrity, note),
+                "status": status,
+                "errorDetails": error,
+            },
+        },
+        {
+            "type": "update_node",
+            "id": run_controller.log_node_id(product_id),
+            "metadata": {"content": run_controller.render_log_content(run_controller.read_journal_tail(journal))},
+        },
+    ]
+
+
+def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
+    product_id, _batch, route, _integrity, _view, layout, target, _journal, ops = build_full_projection(
+        manifest_path, layout_path
+    )
     ic_client.apply_ops(ops)
     if restore_viewport and layout and layout.get("viewport"):
         ic_client.apply_ops([{"type": "set_viewport", "viewport": layout["viewport"]}])
@@ -111,12 +169,9 @@ def cmd_apply_edits(manifest_path: Path, layout_path: Path | None = None, restor
 
 
 def cmd_watch(manifest_path: Path, interval: float, layout_path: Path | None = None) -> None:
-    graph, batch, route, view = build_live_view(manifest_path)
-    product_id = str(batch.get("product_id") or "unknown")
-    _target, layout = resolve_layout(batch, layout_path)
-    initial_ops = projector.project_batch(graph, batch, view=view, layout=layout)
-    initial_ops.append({"type": "delete_node", "ids": [batch_editor.editor_node_id(product_id)]})
-    initial_ops.append(batch_editor.editor_node_op(product_id, batch))
+    product_id, _batch, route, _integrity, view, _layout, _target, _journal, initial_ops = build_full_projection(
+        manifest_path, layout_path
+    )
     ic_client.apply_ops(initial_ops)
     print(json.dumps({"watch": "started", "interval": interval, "current_stage": route.get("current_stage")}, ensure_ascii=False), flush=True)
     previous = view
@@ -141,6 +196,175 @@ def cmd_watch(manifest_path: Path, interval: float, layout_path: Path | None = N
             previous = current
     except KeyboardInterrupt:
         print(json.dumps({"watch": "stopped"}, ensure_ascii=False))
+
+
+def cmd_serve(
+    manifest_path: Path,
+    interval: float,
+    layout_path: Path | None = None,
+    executor_name: str = "demo",
+) -> None:
+    """Phase 4 daemon: full projection, then poll the run console for commands
+    and mirror manifest changes incrementally (three gates per command)."""
+    product_id, batch, route, integrity, view, _layout, _target, journal, ops = build_full_projection(
+        manifest_path, layout_path
+    )
+    executor = run_controller.build_executor(executor_name, batch)
+    while True:
+        try:
+            ic_client.apply_ops(ops)
+            break
+        except ic_client.CanvasAgentError as exc:
+            print(json.dumps({"serve": "waiting_canvas", "error": str(exc)[:120]}, ensure_ascii=False), flush=True)
+            time.sleep(max(interval, 3.0))
+    print(
+        json.dumps(
+            {
+                "serve": "started",
+                "interval": interval,
+                "executor": executor_name,
+                "current_stage": route.get("current_stage"),
+                "journal": str(journal),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+    previous = view
+    consumed_content: str | None = None
+    try:
+        while True:
+            time.sleep(interval)
+            try:
+                state = ic_client.call_tool("canvas_get_state")
+            except ic_client.CanvasAgentError as exc:
+                print(json.dumps({"serve": "waiting_canvas", "error": str(exc)[:120]}, ensure_ascii=False), flush=True)
+                continue
+
+            run_id = run_controller.run_node_id(product_id)
+            node = next((item for item in state.get("nodes") or [] if item.get("id") == run_id), None)
+            if node is None:
+                # Self-heal: someone deleted the control nodes; re-add them.
+                ic_client.apply_ops(
+                    [
+                        run_controller.run_node_op(product_id, route, integrity),
+                        run_controller.log_node_op(product_id, run_controller.read_journal_tail(journal)),
+                    ]
+                )
+                continue
+
+            content = str((node.get("metadata") or {}).get("content") or "")
+            command = None
+            parse_error: run_controller.RunValidationError | None = None
+            if content != consumed_content:
+                try:
+                    command = run_controller.parse_run_content(content)
+                except run_controller.RunValidationError as exc:
+                    parse_error = exc
+                if command is None and parse_error is None:
+                    consumed_content = None  # idle template observed; accept future commands
+
+            if command or parse_error:
+                consumed_content = content
+                _graph, batch, route, current = build_live_view(manifest_path)
+                integrity = state_reader.integrity_report_status(route)
+                error = parse_error
+                step = None
+                if command and not error:
+                    try:
+                        step = run_controller.resolve_command(command, route, integrity)
+                    except run_controller.RunValidationError as exc:
+                        error = exc
+                if error:
+                    detail = str(error)
+                    command_text = f"{command[0]}: {command[1]}" if command else ""
+                    run_controller.append_event(journal, "gate_rejected", command=command_text, detail=detail)
+                    update_ops = projector.runtime_update_ops(product_id, previous, current)
+                    update_ops += control_update_ops(
+                        product_id, route, integrity, journal, note=f"🚫 {detail}", status="error", error=detail
+                    )
+                    ic_client.apply_ops(update_ops)
+                    previous = current
+                    print(json.dumps({"gate_rejected": detail}, ensure_ascii=False), flush=True)
+                    continue
+
+                verb, target_name = command  # type: ignore[misc]
+                run_controller.append_event(journal, "step_started", step=step, command=f"{verb}: {target_name}")
+                stage_canvas_id = projector.canvas_node_id(product_id, run_controller.STEP_GRAPH_NODES[step])
+                loading_ops = control_update_ops(
+                    product_id, route, integrity, journal, note=f"⏳ 正在执行 {step} …", status="loading"
+                )
+                loading_ops.append({"type": "update_node", "id": stage_canvas_id, "metadata": {"status": "loading"}})
+                ic_client.apply_ops(loading_ops)
+
+                started = time.monotonic()
+                try:
+                    run_detail = executor.run(step)
+                except run_controller.RunExecutionError as exc:
+                    run_controller.append_event(journal, "step_failed", step=step, detail=str(exc))
+                    note, status, error_text = f"✘ {step} 失败：{exc}", "error", str(exc)
+                    result_log = {"step": step, "result": "failed", "detail": str(exc)}
+                else:
+                    elapsed = f"{time.monotonic() - started:.1f}s"
+                    run_controller.append_event(journal, "step_succeeded", step=step, detail=f"{run_detail}（{elapsed}）")
+                    note, status, error_text = f"✔ {step} 完成（{elapsed}）", "success", ""
+                    result_log = {"step": step, "result": "succeeded", "elapsed": elapsed}
+
+                _graph, batch, route, current = build_live_view(manifest_path)
+                integrity = state_reader.integrity_report_status(route)
+                update_ops = projector.runtime_update_ops(product_id, previous, current)
+                # The stage node was forced to loading outside the view diff;
+                # when its view entry is unchanged (e.g. retry of a completed
+                # step) the diff is empty, so always restore it explicitly.
+                entry = current.get(run_controller.STEP_GRAPH_NODES[step])
+                if entry:
+                    update_ops.append(
+                        {
+                            "type": "update_node",
+                            "id": stage_canvas_id,
+                            "patch": {"title": entry["title"]},
+                            "metadata": {
+                                "status": entry["status"] or "idle",
+                                "content": entry["content"],
+                                "errorDetails": entry["errorDetails"],
+                            },
+                        }
+                    )
+                update_ops += control_update_ops(
+                    product_id, route, integrity, journal, note=note, status=status, error=error_text
+                )
+                ic_client.apply_ops(update_ops)
+                previous = current
+                print(
+                    json.dumps(
+                        {
+                            **result_log,
+                            "current_stage": route.get("current_stage"),
+                            "next_required_skill": route.get("next_required_skill"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+                continue
+
+            # Plain watch tick: mirror external manifest/workspace changes.
+            _graph, batch, route, current = build_live_view(manifest_path)
+            integrity = state_reader.integrity_report_status(route)
+            update_ops = projector.runtime_update_ops(product_id, previous, current)
+            if update_ops:
+                update_ops += control_update_ops(product_id, route, integrity, journal)
+                ic_client.apply_ops(update_ops)
+                print(
+                    json.dumps(
+                        {"changed_nodes": len(update_ops), "current_stage": route.get("current_stage")},
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            previous = current
+    except KeyboardInterrupt:
+        print(json.dumps({"serve": "stopped"}, ensure_ascii=False))
 
 
 def cmd_health() -> None:
@@ -267,6 +491,8 @@ def main() -> int:
     parser.add_argument("--watch", type=Path, metavar="MANIFEST", help="轮询批次状态并增量更新画布")
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--apply-edits", type=Path, metavar="MANIFEST", help="读取画布上的批次配置节点，三段校验后写回 manifest（阶段3）")
+    parser.add_argument("--serve", type=Path, metavar="MANIFEST", help="常驻：轮询画布运行台命令并执行 + 增量投影（阶段4）")
+    parser.add_argument("--executor", default="demo", help="--serve 使用的执行器（阶段4仅内置 demo）")
     parser.add_argument("--layout-save", type=Path, metavar="MANIFEST", help="把当前画布布局保存为 canvas_layout 文件（阶段2）")
     parser.add_argument("--layout-path", type=Path, help="布局文件路径，默认 manifests/<product_id>.canvas_layout.json")
     parser.add_argument("--restore-viewport", action="store_true", help="push-live 时恢复布局文件中的视口")
@@ -299,6 +525,9 @@ def main() -> int:
         ran = True
     if args.watch:
         cmd_watch(args.watch, args.interval, args.layout_path)
+        ran = True
+    if args.serve:
+        cmd_serve(args.serve, args.interval, args.layout_path, args.executor)
         ran = True
     if args.stress:
         cmd_stress(args.stress)

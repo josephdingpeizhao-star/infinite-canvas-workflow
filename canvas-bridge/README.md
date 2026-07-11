@@ -15,6 +15,7 @@
 - `state_reader.py`：镜像 `detect_current_state.inspect_batch()`，支持任意路径的批次 manifest；附完整性报告定位。
 - `layout_store.py`：布局持久化（阶段2）。按图节点 id 记录位置/尺寸/视口，默认存 `manifests/<product_id>.canvas_layout.json`（可 Git diff），schema 见 `schemas/canvas_layout.schema.json`。布局是纯 UI 状态，不影响执行依赖。
 - `batch_editor.py`：受控编辑（阶段3）。画布上的 `wfedit:<pid>:batch` 配置节点回读后过三段门禁（白名单解析→字段校验→改后 manifest 干跑 `route_batch()`），全部通过才原子写回；白名单仅 `requested_outputs`/`notes`，拓扑只读。
+- `run_controller.py`：执行接入（阶段4）。画布新增 `wfrun:<pid>:batch` 运行台（写 `run: next` / `run: <步骤>` / `retry: <已完成步骤>`）与 `wflog:<pid>:events` 日志投影；命令过三段门禁（动词白名单解析→按真实 `route_batch()` 判定可运行/可重试→注册执行器子进程执行），事件追加写 `<pid>.events.jsonl`（执行历史的事实来源）。阶段4内置 demo 执行器（演示工作区 `--advance`），Codex/Comfy 执行器留有注册位。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
 - `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）。
 - `spike_canvas_push.py`：驱动脚本，见 `--help`。
@@ -32,6 +33,7 @@ python canvas-bridge/spike_canvas_push.py --health
 python canvas-bridge/spike_canvas_push.py --push-live <批次manifest> [--layout-path P] [--restore-viewport]
 python canvas-bridge/spike_canvas_push.py --watch <批次manifest> --interval 2 [--layout-path P]
 python canvas-bridge/spike_canvas_push.py --apply-edits <批次manifest> [--layout-path P]
+python canvas-bridge/spike_canvas_push.py --serve <批次manifest> [--layout-path P] [--interval 2] [--executor demo]
 python canvas-bridge/spike_canvas_push.py --layout-save <批次manifest> [--layout-path P]
 python canvas-bridge/spike_canvas_push.py --status-demo
 python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
@@ -46,4 +48,4 @@ python canvas-bridge/make_demo_workspace.py --reset
 
 ## 状态
 
-阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）均已跑通并有测试与现场验证。画布对业务数据的写入仅经由阶段 3 的三段门禁白名单通道，其余场景保持零写入。
+阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。画布对业务数据的写入仅经由阶段 3/4 的三段门禁白名单通道（配置字段、运行命令），其余场景保持零写入；执行历史以 `<pid>.events.jsonl` 追加日志为事实来源。
