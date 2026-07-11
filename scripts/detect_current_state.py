@@ -109,7 +109,7 @@ ARTIFACT_TYPES = {
     "set_angle_layout_inventory": {"set_angle_layout_inventory"},
     "final_prompts": {"final_prompt"},
     "comfyui_jobs": {"comfyui_job"},
-    "qc_reports": {"qc_report", "final_prompt_integrity_report"},
+    "qc_reports": {"qc_report"},
 }
 
 
@@ -1022,7 +1022,9 @@ def artifact_present(summary: dict[str, Any], key: str) -> bool:
         return False
 
     # Dedicated artifact directories can be treated as present when they contain
-    # untyped markdown/text artifacts. Shared variable_config folders cannot.
+    # untyped markdown/text artifacts. Shared variable_config folders cannot, and
+    # qc_reports cannot either: the final prompt integrity gate writes its own
+    # reports into that folder, and gate output must not count as completed QC.
     return key in {
         "asset_manifest",
         "product_identity_archive",
@@ -1030,7 +1032,6 @@ def artifact_present(summary: dict[str, Any], key: str) -> bool:
         "angle_inventory",
         "final_prompts",
         "comfyui_jobs",
-        "qc_reports",
     }
 
 
