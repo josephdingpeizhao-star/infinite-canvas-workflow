@@ -1,0 +1,190 @@
+"""Stage-0 spike driver: push workflow projections into infinite-canvas.
+
+Usage examples (run from repository root):
+
+    python canvas-bridge/spike_canvas_push.py --health
+    python canvas-bridge/spike_canvas_push.py --push-batch tests/fixtures/external_workspace_batch_manifest.fixture.json
+    python canvas-bridge/spike_canvas_push.py --stress 300
+    python canvas-bridge/spike_canvas_push.py --status-demo
+    python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
+    python canvas-bridge/spike_canvas_push.py --get-state --save-layout out.json
+    python canvas-bridge/spike_canvas_push.py --clear-mine
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import time
+from pathlib import Path
+
+import ic_client
+import projector
+
+STRESS_PREFIX = "wfstress:"
+IMAGE_PREFIX = "wfimg:"
+MINE_PREFIXES = (f"{projector.NODE_ID_PREFIX}:", STRESS_PREFIX, IMAGE_PREFIX)
+
+
+def cmd_health() -> None:
+    print(json.dumps(ic_client.health(), ensure_ascii=False))
+
+
+def cmd_push_batch(manifest_path: Path) -> None:
+    graph = projector.load_graph()
+    batch = projector.load_batch_manifest(manifest_path)
+    ops = projector.project_batch(graph, batch)
+    chunks = ic_client.apply_ops(ops)
+    adds = sum(1 for op in ops if op["type"] == "add_node")
+    connects = sum(1 for op in ops if op["type"] == "connect_nodes")
+    print(json.dumps({"pushed_nodes": adds, "pushed_connections": connects, "chunks": chunks}, ensure_ascii=False))
+
+
+def cmd_stress(count: int, columns: int = 20) -> None:
+    started = time.perf_counter()
+    ops = [{"type": "delete_node", "ids": [f"{STRESS_PREFIX}{index}" for index in range(count)]}]
+    for index in range(count):
+        column = index % columns
+        row = index // columns
+        ops.append(
+            {
+                "type": "add_node",
+                "id": f"{STRESS_PREFIX}{index}",
+                "nodeType": "text",
+                "title": f"压测节点 {index + 1}",
+                "position": {"x": 60 + column * 320, "y": 900 + row * 150},
+                "width": 280,
+                "height": 100,
+                "metadata": {"content": f"stress node {index + 1}/{count}", "fontSize": 12},
+            }
+        )
+    for index in range(count - 1):
+        if index % columns != columns - 1:
+            ops.append({"type": "connect_nodes", "fromNodeId": f"{STRESS_PREFIX}{index}", "toNodeId": f"{STRESS_PREFIX}{index + 1}"})
+    chunks = ic_client.apply_ops(ops)
+    elapsed = round(time.perf_counter() - started, 2)
+    print(json.dumps({"stress_nodes": count, "chunks": chunks, "push_seconds": elapsed}, ensure_ascii=False))
+
+
+def cmd_status_demo(manifest_path: Path, hold_seconds: float) -> None:
+    graph = projector.load_graph()
+    batch = projector.load_batch_manifest(manifest_path)
+    for node_id in projector.stage_node_ids(graph, batch):
+        ic_client.apply_ops([{"type": "update_node", "id": node_id, "metadata": {"status": "loading"}}])
+        time.sleep(hold_seconds)
+        ic_client.apply_ops([{"type": "update_node", "id": node_id, "metadata": {"status": "success"}}])
+        print(f"status cycled: {node_id}")
+
+
+def cmd_image_url(url: str, title: str) -> None:
+    ops = [
+        {"type": "delete_node", "ids": [f"{IMAGE_PREFIX}demo"]},
+        {
+            "type": "add_node",
+            "id": f"{IMAGE_PREFIX}demo",
+            "nodeType": "image",
+            "title": title,
+            "position": {"x": 80, "y": -320},
+            "width": 360,
+            "height": 240,
+            "metadata": {
+                "content": url,
+                "status": "success",
+                "mimeType": "image/svg+xml",
+                "naturalWidth": 360,
+                "naturalHeight": 240,
+            },
+        },
+    ]
+    ic_client.apply_ops(ops)
+    print(json.dumps({"image_node": f"{IMAGE_PREFIX}demo", "url": url}, ensure_ascii=False))
+
+
+def cmd_get_state(save_layout: Path | None) -> None:
+    state = ic_client.call_tool("canvas_get_state")
+    nodes = state.get("nodes") or []
+    connections = state.get("connections") or []
+    mine = [node for node in nodes if str(node.get("id", "")).startswith(MINE_PREFIXES)]
+    print(
+        json.dumps(
+            {
+                "nodes_total": len(nodes),
+                "connections_total": len(connections),
+                "nodes_mine": len(mine),
+                "viewport": state.get("viewport"),
+            },
+            ensure_ascii=False,
+        )
+    )
+    if save_layout:
+        layout = {
+            "layout_version": 1,
+            "saved_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "nodes": [
+                {
+                    "id": node.get("id"),
+                    "position": node.get("position"),
+                    "width": node.get("width"),
+                    "height": node.get("height"),
+                }
+                for node in mine
+            ],
+        }
+        save_layout.write_text(json.dumps(layout, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"layout saved: {save_layout} ({len(layout['nodes'])} nodes)")
+
+
+def cmd_clear_mine() -> None:
+    state = ic_client.call_tool("canvas_get_state")
+    ids = [str(node.get("id")) for node in state.get("nodes") or [] if str(node.get("id", "")).startswith(MINE_PREFIXES)]
+    if ids:
+        ic_client.apply_ops([{"type": "delete_node", "ids": ids}])
+    print(json.dumps({"deleted": len(ids)}, ensure_ascii=False))
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Spike driver: project workflow state into infinite-canvas.")
+    parser.add_argument("--health", action="store_true")
+    parser.add_argument("--push-batch", type=Path, metavar="MANIFEST")
+    parser.add_argument("--stress", type=int, metavar="N")
+    parser.add_argument("--status-demo", action="store_true")
+    parser.add_argument("--status-manifest", type=Path, default=Path("tests/fixtures/external_workspace_batch_manifest.fixture.json"))
+    parser.add_argument("--hold-seconds", type=float, default=1.2)
+    parser.add_argument("--image-url", metavar="URL")
+    parser.add_argument("--image-title", default="外部引用图片（本地HTTP）")
+    parser.add_argument("--get-state", action="store_true")
+    parser.add_argument("--save-layout", type=Path)
+    parser.add_argument("--clear-mine", action="store_true")
+    args = parser.parse_args()
+
+    ran = False
+    if args.health:
+        cmd_health()
+        ran = True
+    if args.push_batch:
+        cmd_push_batch(args.push_batch)
+        ran = True
+    if args.stress:
+        cmd_stress(args.stress)
+        ran = True
+    if args.status_demo:
+        cmd_status_demo(args.status_manifest, args.hold_seconds)
+        ran = True
+    if args.image_url:
+        cmd_image_url(args.image_url, args.image_title)
+        ran = True
+    if args.get_state:
+        cmd_get_state(args.save_layout)
+        ran = True
+    if args.clear_mine:
+        cmd_clear_mine()
+        ran = True
+    if not ran:
+        parser.print_help()
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
