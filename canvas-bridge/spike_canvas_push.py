@@ -21,10 +21,67 @@ from pathlib import Path
 
 import ic_client
 import projector
+import state_reader
 
 STRESS_PREFIX = "wfstress:"
 IMAGE_PREFIX = "wfimg:"
 MINE_PREFIXES = (f"{projector.NODE_ID_PREFIX}:", STRESS_PREFIX, IMAGE_PREFIX)
+
+
+def build_live_view(manifest_path: Path):
+    graph = projector.load_graph()
+    batch = projector.load_batch_manifest(manifest_path)
+    route = state_reader.read_batch_route(manifest_path)
+    integrity = state_reader.integrity_report_status(route)
+    view = projector.node_runtime_view(graph, batch, route, integrity)
+    return graph, batch, route, view
+
+
+def cmd_push_live(manifest_path: Path) -> None:
+    graph, batch, route, view = build_live_view(manifest_path)
+    ops = projector.project_batch(graph, batch, view=view)
+    ic_client.apply_ops(ops)
+    print(
+        json.dumps(
+            {
+                "pushed_nodes": sum(1 for op in ops if op["type"] == "add_node"),
+                "current_stage": route.get("current_stage"),
+                "next_required_skill": route.get("next_required_skill"),
+                "blocked_reasons": route.get("blocked_reasons"),
+                "available_artifacts": route.get("available_artifacts"),
+            },
+            ensure_ascii=False,
+        )
+    )
+
+
+def cmd_watch(manifest_path: Path, interval: float) -> None:
+    graph, batch, route, view = build_live_view(manifest_path)
+    product_id = str(batch.get("product_id") or "unknown")
+    ic_client.apply_ops(projector.project_batch(graph, batch, view=view))
+    print(json.dumps({"watch": "started", "interval": interval, "current_stage": route.get("current_stage")}, ensure_ascii=False), flush=True)
+    previous = view
+    try:
+        while True:
+            time.sleep(interval)
+            _graph, _batch, route, current = build_live_view(manifest_path)
+            ops = projector.runtime_update_ops(product_id, previous, current)
+            if ops:
+                ic_client.apply_ops(ops)
+                print(
+                    json.dumps(
+                        {
+                            "changed_nodes": len(ops),
+                            "current_stage": route.get("current_stage"),
+                            "next_required_skill": route.get("next_required_skill"),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
+            previous = current
+    except KeyboardInterrupt:
+        print(json.dumps({"watch": "stopped"}, ensure_ascii=False))
 
 
 def cmd_health() -> None:
@@ -147,6 +204,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Spike driver: project workflow state into infinite-canvas.")
     parser.add_argument("--health", action="store_true")
     parser.add_argument("--push-batch", type=Path, metavar="MANIFEST")
+    parser.add_argument("--push-live", type=Path, metavar="MANIFEST", help="投影真实批次状态（阶段1只读画布）")
+    parser.add_argument("--watch", type=Path, metavar="MANIFEST", help="轮询批次状态并增量更新画布")
+    parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--stress", type=int, metavar="N")
     parser.add_argument("--status-demo", action="store_true")
     parser.add_argument("--status-manifest", type=Path, default=Path("tests/fixtures/external_workspace_batch_manifest.fixture.json"))
@@ -164,6 +224,12 @@ def main() -> int:
         ran = True
     if args.push_batch:
         cmd_push_batch(args.push_batch)
+        ran = True
+    if args.push_live:
+        cmd_push_live(args.push_live)
+        ran = True
+    if args.watch:
+        cmd_watch(args.watch, args.interval)
         ran = True
     if args.stress:
         cmd_stress(args.stress)

@@ -3,6 +3,12 @@
 Pure functions only. This module reads repository files and returns
 ``canvas_apply_ops`` payloads; it never writes anything. The canvas is a
 projection target, never a source of truth.
+
+Two projection modes:
+- static: layout + descriptions only (stage-0 spike behaviour);
+- live: statuses derived from a real ``route_batch()`` result (phase 1) —
+  artifacts present turn success, the next required stage is marked ▶,
+  blocked stages turn error with the blocked reasons attached.
 """
 
 from __future__ import annotations
@@ -34,6 +40,18 @@ NODE_SIZES = {
 
 X_GAP = 420
 Y_GAP = 190
+
+SKILL_ARTIFACT_KEYS = {
+    "product-identity-archive": "product_identity_archive",
+    "style-master-extractor": "style_master",
+    "angle-inventory": "angle_inventory",
+    "set-product-identity": "set_product_identity",
+    "set-angle-layout-inventory": "set_angle_layout_inventory",
+    "main-variable-config": "main_variable_configs",
+    "detail-variable-config": "detail_variable_configs",
+    "final-prompt-compiler": "final_prompts",
+    "qc-inspector": "qc_reports",
+}
 
 
 def load_graph(path: Path | None = None) -> dict[str, Any]:
@@ -139,9 +157,103 @@ def canvas_node_id(product_id: str, graph_node_id: str) -> str:
     return f"{NODE_ID_PREFIX}:{product_id}:{graph_node_id}"
 
 
-def project_batch(graph: dict[str, Any], batch: dict[str, Any], *, origin_x: int = 80, origin_y: int = 80) -> list[dict[str, Any]]:
+def _section_file_count(route: dict[str, Any], section: str, key: str) -> int:
+    summary = (route.get(section) or {}).get(key) or {}
+    value = summary.get("file_count")
+    return int(value) if isinstance(value, int) else 0
+
+
+def node_runtime_view(
+    graph: dict[str, Any],
+    batch: dict[str, Any],
+    route: dict[str, Any],
+    integrity: dict[str, Any] | None = None,
+) -> dict[str, dict[str, str]]:
+    """Pure mapping: graph node id -> {status, title, content, errorDetails}.
+
+    Rules (phase 1, read-only):
+    - artifact node: present in route.available_artifacts -> success, else idle
+    - stage node: produced artifact present -> success; next required stage ->
+      "▶ " title prefix; if the batch is blocked, that stage shows error with
+      the blocked reasons; otherwise idle
+    - input/draft/output node: file_count > 0 -> success (+ count in content)
+    - gate node: mirrors the integrity report (pass/needs_review -> success,
+      fail/render_blocked -> error, missing -> idle)
+    - render stage: renders present -> success
+    """
+    nodes, _edges = active_subgraph(graph, batch)
+    available = set(route.get("available_artifacts") or [])
+    next_skill = route.get("next_required_skill")
+    blocked = [str(item) for item in route.get("blocked_reasons") or []]
+    integrity = integrity or {"found": False, "status": "", "render_blocked": False}
+
+    view: dict[str, dict[str, str]] = {}
+    for node_id, node in nodes.items():
+        kind = node["kind"]
+        base_title = f"{KIND_MARKS[kind]} {node['title']}"
+        content = node_content(batch, node)
+        status = ""
+        error_details = ""
+        title = base_title
+
+        if kind == "artifact":
+            status = "success" if node.get("manifest_key") in available else "idle"
+            if node.get("artifact_type") == "final_prompt_integrity_report":
+                if integrity["found"]:
+                    status = "error" if (integrity["render_blocked"] or integrity["status"] == "fail") else "success"
+                    content += f"\nreport: {integrity['status'] or 'unknown'}"
+                else:
+                    status = "idle"
+        elif kind == "gate":
+            if integrity["found"]:
+                blocked_render = integrity["render_blocked"] or integrity["status"] == "fail"
+                status = "error" if blocked_render else "success"
+                content += f"\nreport: {integrity['status'] or 'unknown'}"
+                if blocked_render:
+                    error_details = f"完整性门禁未通过：{integrity['status']}"
+            else:
+                status = "idle"
+        elif kind == "stage":
+            skill = node.get("skill")
+            produced_key = SKILL_ARTIFACT_KEYS.get(skill or "")
+            if produced_key and produced_key in available:
+                status = "success"
+            elif node.get("executor") == "comfy":
+                renders = _section_file_count(route, "outputs", "renders")
+                status = "success" if renders > 0 else "idle"
+                content += f"\nrenders: {renders}"
+            elif skill and skill == next_skill:
+                if blocked:
+                    status = "error"
+                    error_details = "；".join(blocked)
+                else:
+                    status = "idle"
+                    title = f"▶ {base_title}"
+                    content += "\n下一步：等待执行"
+            else:
+                status = "idle"
+        elif kind in {"input", "output"}:
+            section = node.get("manifest_section") or ("inputs" if kind == "input" else "outputs")
+            count = _section_file_count(route, section, node.get("manifest_key") or "")
+            status = "success" if count > 0 else "idle"
+            content += f"\nfiles: {count}"
+
+        view[node_id] = {"status": status, "title": title, "content": content, "errorDetails": error_details}
+    return view
+
+
+def project_batch(
+    graph: dict[str, Any],
+    batch: dict[str, Any],
+    *,
+    origin_x: int = 80,
+    origin_y: int = 80,
+    view: dict[str, dict[str, str]] | None = None,
+) -> list[dict[str, Any]]:
     """Return canvas ops that render the batch pipeline. Idempotent: deletes
-    previously projected nodes for the same product before re-adding them."""
+    previously projected nodes for the same product before re-adding them.
+    When ``view`` is given (from node_runtime_view), statuses/titles/content
+    reflect real batch state."""
     product_id = str(batch.get("product_id") or "unknown")
     nodes, edges = active_subgraph(graph, batch)
     layers = longest_path_layers(nodes, edges)
@@ -159,9 +271,10 @@ def project_batch(graph: dict[str, Any], batch: dict[str, Any], *, origin_x: int
         members = sorted(by_layer[layer_index], key=lambda node_id: (kind_rank.get(nodes[node_id]["kind"], 9), node_id))
         for row, node_id in enumerate(members):
             node = nodes[node_id]
+            node_view = (view or {}).get(node_id) or {}
             width, height = NODE_SIZES[node["kind"]]
             metadata: dict[str, Any] = {
-                "content": node_content(batch, node),
+                "content": node_view.get("content") or node_content(batch, node),
                 "fontSize": 13,
                 "workflowRef": {
                     "graph_id": graph.get("graph_id"),
@@ -170,14 +283,19 @@ def project_batch(graph: dict[str, Any], batch: dict[str, Any], *, origin_x: int
                     "product_id": product_id,
                 },
             }
-            if node["kind"] in {"stage", "gate"}:
+            status = node_view.get("status")
+            if status:
+                metadata["status"] = status
+            elif node["kind"] in {"stage", "gate"}:
                 metadata["status"] = "idle"
+            if node_view.get("errorDetails"):
+                metadata["errorDetails"] = node_view["errorDetails"]
             ops.append(
                 {
                     "type": "add_node",
                     "id": canvas_node_id(product_id, node_id),
                     "nodeType": "text",
-                    "title": f"{KIND_MARKS[node['kind']]} {node['title']}",
+                    "title": node_view.get("title") or f"{KIND_MARKS[node['kind']]} {node['title']}",
                     "position": {"x": origin_x + layer_index * X_GAP, "y": origin_y + row * Y_GAP},
                     "width": width,
                     "height": height,
@@ -191,6 +309,31 @@ def project_batch(graph: dict[str, Any], batch: dict[str, Any], *, origin_x: int
                 "type": "connect_nodes",
                 "fromNodeId": canvas_node_id(product_id, edge["from"]),
                 "toNodeId": canvas_node_id(product_id, edge["to"]),
+            }
+        )
+    return ops
+
+
+def runtime_update_ops(
+    product_id: str,
+    previous_view: dict[str, dict[str, str]] | None,
+    next_view: dict[str, dict[str, str]],
+) -> list[dict[str, Any]]:
+    """Incremental update_node ops for nodes whose view changed."""
+    ops: list[dict[str, Any]] = []
+    for node_id, entry in next_view.items():
+        if previous_view is not None and previous_view.get(node_id) == entry:
+            continue
+        ops.append(
+            {
+                "type": "update_node",
+                "id": canvas_node_id(product_id, node_id),
+                "patch": {"title": entry["title"]},
+                "metadata": {
+                    "status": entry["status"] or "idle",
+                    "content": entry["content"],
+                    "errorDetails": entry["errorDetails"],
+                },
             }
         )
     return ops
