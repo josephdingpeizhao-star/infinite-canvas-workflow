@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow_graph.schema.json",
+  "title": "Workflow Graph Template",
+  "description": "Machine-readable pipeline graph for the e-commerce AI image workflow. Nodes are inputs, stages, gates, artifacts, and outputs; edges declare production, data flow, and route_batch sequencing. This file is a projection source for external tooling such as the canvas bridge. scripts/detect_current_state.py route_batch() remains the runtime routing authority; tests/test_workflow_graph_projection.py keeps this graph and route_batch() consistent. additionalProperties is intentionally strict because this file is designed to be machine-edited later.",
+  "type": "object",
+  "required": ["artifact_type", "graph_id", "graph_version", "nodes", "edges"],
+  "properties": {
+    "artifact_type": { "const": "workflow_graph_template" },
+    "graph_id": { "type": "string", "minLength": 1 },
+    "graph_version": { "type": "integer", "minimum": 1 },
+    "version": { "type": "string" },
+    "summary": { "type": "string" },
+    "port_types": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "nodes": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/node" } },
+    "edges": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/edge" } },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "condition": {
+      "type": "object",
+      "required": ["when"],
+      "properties": {
+        "when": { "enum": ["set_enabled", "requested_output"] },
+        "requested_output": { "enum": ["main", "detail", "final_prompts", "qc_reports"] }
+      },
+      "if": { "properties": { "when": { "const": "requested_output" } } },
+      "then": { "required": ["when", "requested_output"] },
+      "additionalProperties": false
+    },
+    "node": {
+      "type": "object",
+      "required": ["id", "kind", "title"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["input", "stage", "gate", "artifact", "output"] },
+        "title": { "type": "string", "minLength": 1 },
+        "executor": { "enum": ["agent", "python", "comfy"] },
+        "skill": { "type": "string", "minLength": 1 },
+        "script": { "type": "string", "minLength": 1 },
+        "artifact_type": { "type": "string", "minLength": 1 },
+        "schema_ref": { "type": "string", "minLength": 1 },
+        "manifest_section": { "enum": ["inputs", "drafts", "artifacts", "outputs"] },
+        "manifest_key": { "type": "string", "minLength": 1 },
+        "condition": { "$ref": "#/$defs/condition" },
+        "notes": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["stage", "gate"] } }, "required": ["kind"] },
+          "then": { "required": ["executor"] }
+        },
+        {
+          "if": { "properties": { "kind": { "enum": ["input", "artifact", "output"] } }, "required": ["kind"] },
+          "then": { "required": ["artifact_type"] }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "type": "object",
+      "required": ["from", "to", "port", "edge_kind"],
+      "properties": {
+        "from": { "type": "string", "minLength": 1 },
+        "to": { "type": "string", "minLength": 1 },
+        "port": { "type": "string", "minLength": 1 },
+        "edge_kind": {
+          "enum": ["produces", "data", "sequence"],
+          "description": "produces: stage writes this artifact. data: consumer reads this artifact/input. sequence: ordering imposed by route_batch() without a schema-proven data dependency."
+        },
+        "required": { "type": "boolean", "default": true },
+        "condition": { "$ref": "#/$defs/condition" },
+        "notes": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

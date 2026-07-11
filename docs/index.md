@@ -14,6 +14,7 @@ Use this page as the starting point for understanding the project.
 - `ARCHITECTURE.md`: simple overview for non-programmers.
 - `docs/ARCHITECTURE.md`: more technical architecture notes from the migration work.
 - `manifests/workflow_architecture.json`: machine-readable workflow architecture.
+- `manifests/workflow_graph.template.json`: machine-readable pipeline graph (stages, artifacts, dependencies), validated against `schemas/workflow_graph.schema.json` and kept consistent with `scripts/detect_current_state.py` routing by `tests/test_workflow_graph_projection.py`.
 - `docs/RUNTIME_OPTIMIZATION.md`: notes about runtime efficiency and boundaries.
 
 ## Task Flow And Stages
