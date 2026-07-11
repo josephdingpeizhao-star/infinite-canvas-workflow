@@ -50,6 +50,17 @@ class BuildLayoutTest(unittest.TestCase):
 
 
 class ProjectWithLayoutTest(unittest.TestCase):
+    def test_delete_covers_condition_filtered_nodes(self) -> None:
+        batch = make_batch()
+        batch["requested_outputs"] = ["main"]
+        ops = projector.project_batch(GRAPH, batch)
+        delete_ids = set(ops[0]["ids"])
+        added_ids = {op["id"] for op in ops if op["type"] == "add_node"}
+        self.assertIn("wf:p1:stage_qc", delete_ids)
+        self.assertIn("wf:p1:stage_detail_variable_config", delete_ids)
+        self.assertNotIn("wf:p1:stage_qc", added_ids)
+        self.assertTrue(added_ids.issubset(delete_ids), "every re-added node must first be deleted")
+
     def test_layout_overrides_position_and_size(self) -> None:
         batch = make_batch()
         layout = {

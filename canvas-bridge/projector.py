@@ -265,8 +265,11 @@ def project_batch(
         by_layer.setdefault(layer_index, []).append(node_id)
 
     kind_rank = {"input": 0, "stage": 1, "gate": 1, "artifact": 2, "output": 3}
+    # Delete covers EVERY graph node id, not just the active subset: nodes
+    # filtered out by a condition change (e.g. requested_outputs shrinking)
+    # must not linger on the canvas as orphans.
     ops: list[dict[str, Any]] = [
-        {"type": "delete_node", "ids": [canvas_node_id(product_id, node_id) for node_id in nodes]}
+        {"type": "delete_node", "ids": [canvas_node_id(product_id, node["id"]) for node in graph["nodes"]]}
     ]
 
     for layer_index in sorted(by_layer):
