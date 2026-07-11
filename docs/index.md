@@ -51,6 +51,7 @@ Use this page as the starting point for understanding the project.
 ## History And Evidence
 
 - `reports/`: validation reports, stage reports, routing decisions, rendering reports, and QC reports.
+- `docs/CANVAS_SPIKE_REPORT.md`: stage-0 canvas spike results (six spike questions answered against a live canvas).
 - `_archive/`: stale manifests and migrated files kept for history.
 - `docs/CURRENT_PROGRESS.md`: short human summary of completed gates and current restrictions.
 
