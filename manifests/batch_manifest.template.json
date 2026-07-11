@@ -1,0 +1,49 @@
+{
+  "batch_id": "",
+  "product_id": "_template_product",
+  "batch_type": "single",
+  "user_declared_set_product": false,
+  "requested_outputs": [],
+  "current_stage": "not_started",
+  "next_skill": "workflow-router",
+  "workspace": {
+    "mode": "repository",
+    "root": "",
+    "layout": "repository_product_v1",
+    "manifests_root": "",
+    "inputs_root": "",
+    "drafts_root": "",
+    "artifacts_root": "",
+    "outputs_root": ""
+  },
+  "inputs": {
+    "white_bg_images": [],
+    "style_reference_images": [],
+    "set_group_images": [],
+    "component_white_bg_images": []
+  },
+  "drafts": {
+    "product_identity_draft": "",
+    "style_master_draft": ""
+  },
+  "artifacts": {
+    "asset_manifest": "",
+    "product_identity_archive": "",
+    "style_master": "",
+    "angle_inventory": "",
+    "main_variable_configs": [],
+    "detail_variable_configs": [],
+    "set_product_identity": "",
+    "set_angle_layout_inventory": "",
+    "final_prompts": [],
+    "comfyui_jobs": [],
+    "qc_reports": []
+  },
+  "outputs": {
+    "renders": [],
+    "repaired": []
+  },
+  "missing_required_artifacts": [],
+  "blocked_reasons": [],
+  "notes": ""
+}

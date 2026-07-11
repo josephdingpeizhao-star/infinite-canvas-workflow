@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qc_report.schema.json",
+  "title": "QC Report",
+  "type": "object",
+  "required": [
+    "product_id",
+    "artifact_type",
+    "checked_assets",
+    "results",
+    "issues",
+    "repair_targets",
+    "adds_new_generation_direction"
+  ],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "qc_report" },
+    "checked_assets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check_item", "status"],
+        "properties": {
+          "check_item": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "fail", "needs_review", "not_applicable"]
+          },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue_id", "severity", "description"],
+        "properties": {
+          "issue_id": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "needs_review"]
+          },
+          "description": { "type": "string" },
+          "affected_asset": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "repair_targets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["target_id", "repair_goal"],
+        "properties": {
+          "target_id": { "type": "string" },
+          "repair_goal": { "type": "string" },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "needs_review"]
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "adds_new_generation_direction": {
+      "const": false,
+      "default": false
+    },
+    "notes": { "type": "string" }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["new_generation_direction"] },
+      { "required": ["creative_direction"] },
+      { "required": ["generation_prompt"] },
+      { "required": ["final_prompt"] }
+    ]
+  },
+  "additionalProperties": true
+}

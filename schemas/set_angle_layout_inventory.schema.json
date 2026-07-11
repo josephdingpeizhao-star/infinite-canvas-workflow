@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "set_angle_layout_inventory.schema.json",
+  "title": "Set Angle Layout Inventory",
+  "type": "object",
+  "required": ["product_id", "artifact_type", "set_group_assets", "layouts"],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "set_angle_layout_inventory" },
+    "user_declared_set_product": {
+      "type": "boolean",
+      "default": false
+    },
+    "explicit_set_request": {
+      "type": ["string", "object"]
+    },
+    "set_product_identity": {
+      "type": "string"
+    },
+    "set_group_assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["asset_id", "file_path"],
+        "properties": {
+          "asset_id": { "type": "string" },
+          "file_path": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "layouts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["layout_id"],
+        "properties": {
+          "layout_id": { "type": "string" },
+          "source_asset_id": { "type": "string" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "user_declared_set_product": { "const": true }
+      },
+      "required": ["user_declared_set_product"]
+    },
+    {
+      "required": ["explicit_set_request"]
+    }
+  ],
+  "not": {
+    "anyOf": [
+      { "required": ["angle_slots"] },
+      { "required": ["variable_configs"] },
+      { "required": ["final_prompt"] },
+      { "required": ["qc_results"] }
+    ]
+  },
+  "additionalProperties": true
+}

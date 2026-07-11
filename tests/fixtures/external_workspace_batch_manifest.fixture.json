@@ -1,0 +1,76 @@
+{
+  "batch_id": "demo_external",
+  "product_id": "demo_external",
+  "batch_type": "single",
+  "user_declared_set_product": false,
+  "requested_outputs": [
+    "main",
+    "detail",
+    "final_prompts",
+    "qc_reports"
+  ],
+  "current_stage": "not_started",
+  "next_skill": "workflow-router",
+  "workspace": {
+    "mode": "external",
+    "root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612",
+    "layout": "external_run_folder_v1",
+    "manifests_root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\manifests",
+    "inputs_root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\inputs",
+    "drafts_root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\drafts",
+    "artifacts_root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts",
+    "outputs_root": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\outputs"
+  },
+  "inputs": {
+    "white_bg_images": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\inputs\\white_bg"
+    ],
+    "style_reference_images": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\inputs\\style_refs"
+    ],
+    "set_group_images": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\inputs\\set_group"
+    ],
+    "component_white_bg_images": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\inputs\\component_white_bg"
+    ]
+  },
+  "drafts": {
+    "product_identity_draft": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\drafts\\product_identity_draft.md",
+    "style_master_draft": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\drafts\\style_master_draft.md"
+  },
+  "artifacts": {
+    "asset_manifest": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\manifests\\asset_manifest.json",
+    "product_identity_archive": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\identity",
+    "style_master": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\style_master",
+    "angle_inventory": "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\angle_inventory",
+    "main_variable_configs": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\variable_configs"
+    ],
+    "detail_variable_configs": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\variable_configs"
+    ],
+    "set_product_identity": "",
+    "set_angle_layout_inventory": "",
+    "final_prompts": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\final_prompts"
+    ],
+    "comfyui_jobs": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\comfyui_jobs"
+    ],
+    "qc_reports": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\artifacts\\qc_reports"
+    ]
+  },
+  "outputs": {
+    "renders": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\outputs\\renders"
+    ],
+    "repaired": [
+      "C:\\Users\\John\\Desktop\\水壶类\\demo_external_20260612\\outputs\\repaired"
+    ]
+  },
+  "missing_required_artifacts": [],
+  "blocked_reasons": [],
+  "notes": "Fixture only; do not copy into manifests/ as an active batch without real inputs."
+}

@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final_prompt.schema.json",
+  "title": "Final Prompt",
+  "type": "object",
+  "required": [
+    "product_id",
+    "artifact_type",
+    "upstream_artifacts",
+    "variable_config",
+    "uses_upstream_prompt_files_as_visual_requirements",
+    "final_prompt",
+    "negative_prompt"
+  ],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "final_prompt" },
+    "upstream_artifacts": {
+      "type": "object",
+      "required": ["product_identity_archive", "style_master", "angle_inventory"],
+      "properties": {
+        "product_identity_archive": { "type": "string", "minLength": 1 },
+        "style_master": { "type": "string", "minLength": 1 },
+        "angle_inventory": { "type": "string", "minLength": 1 },
+        "variable_config": { "type": "string", "minLength": 1 },
+        "realism_constraints": { "type": "string" },
+        "prop_rules": { "type": "string" },
+        "platform_rules": { "type": "string" },
+        "qc_checklist": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "variable_config": {
+      "type": "object",
+      "required": [
+        "config_id",
+        "output_type",
+        "source_path",
+        "source_sha256",
+        "source_schema",
+        "common_constraints_ref",
+        "per_image_overrides_ref",
+        "resolved_variable_config_sha256"
+      ],
+      "properties": {
+        "config_id": { "type": "string", "minLength": 1 },
+        "output_type": { "enum": ["main", "detail"] },
+        "source_path": { "type": "string", "minLength": 1 },
+        "source_sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "source_schema": { "const": "common_constraints + per_image_overrides" },
+        "common_constraints_ref": {
+          "type": "object",
+          "required": ["path", "json_pointer"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "json_pointer": { "const": "/common_constraints" }
+          },
+          "additionalProperties": true
+        },
+        "per_image_overrides_ref": {
+          "type": "object",
+          "required": ["path", "json_pointer"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "json_pointer": { "type": "string", "pattern": "^/configs/[0-9]+/per_image_overrides$" }
+          },
+          "additionalProperties": true
+        },
+        "resolved_variable_config_sha256": { "type": "string", "minLength": 64, "maxLength": 64 }
+      },
+      "additionalProperties": true
+    },
+    "uses_upstream_prompt_files_as_visual_requirements": {
+      "const": false,
+      "default": false
+    },
+    "final_prompt": {
+      "type": "string",
+      "minLength": 1
+    },
+    "negative_prompt": {
+      "type": "string"
+    },
+    "notes": { "type": "string" }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["upstream_prompt_files_as_final_requirements"] },
+      { "required": ["prompt_source_files"] },
+      { "required": ["qc_results"] }
+    ]
+  },
+  "additionalProperties": true
+}

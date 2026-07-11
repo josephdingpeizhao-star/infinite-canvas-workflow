@@ -1,0 +1,150 @@
+{
+  "checked_at": "2026-06-24T02:43:14.459454+00:00",
+  "status": "pass",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
+  "skill_roots": {
+    "primary_skill_tree": ".agents\\skills",
+    "agents_skill_tree": {
+      "path": ".agents\\skills",
+      "exists": true,
+      "role": "primary_skill_tree"
+    },
+    "codex_skill_tree": {
+      "path": ".codex\\skills",
+      "exists": true,
+      "role": "legacy_skill_tree"
+    },
+    "mirror_status": "mirrored_ok",
+    "copy_actions": [],
+    "needs_manual_review": [],
+    "comparison": {
+      "status": "mirrored_ok",
+      "missing_in_agents": [],
+      "extra_in_agents": [],
+      "changed_files": [],
+      "agents_file_count": 53,
+      "codex_file_count": 53
+    }
+  },
+  "skills": [
+    {
+      "skill": "workflow-router",
+      "skill_dir": ".agents\\skills\\workflow-router",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\workflow-router\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\workflow-router\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "product-identity-archive",
+      "skill_dir": ".agents\\skills\\product-identity-archive",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\product-identity-archive\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\product-identity-archive\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "style-master-extractor",
+      "skill_dir": ".agents\\skills\\style-master-extractor",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\style-master-extractor\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\style-master-extractor\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "angle-inventory",
+      "skill_dir": ".agents\\skills\\angle-inventory",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\angle-inventory\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\angle-inventory\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "main-variable-config",
+      "skill_dir": ".agents\\skills\\main-variable-config",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\main-variable-config\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\main-variable-config\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "detail-variable-config",
+      "skill_dir": ".agents\\skills\\detail-variable-config",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\detail-variable-config\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\detail-variable-config\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "final-prompt-compiler",
+      "skill_dir": ".agents\\skills\\final-prompt-compiler",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\final-prompt-compiler\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\final-prompt-compiler\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "qc-inspector",
+      "skill_dir": ".agents\\skills\\qc-inspector",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\qc-inspector\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\qc-inspector\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "set-product-identity",
+      "skill_dir": ".agents\\skills\\set-product-identity",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\set-product-identity\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\set-product-identity\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "set-angle-layout-inventory",
+      "skill_dir": ".agents\\skills\\set-angle-layout-inventory",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\set-angle-layout-inventory\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\set-angle-layout-inventory\\references",
+      "references_dir_exists": true
+    },
+    {
+      "skill": "set-variable-config-extension",
+      "skill_dir": ".agents\\skills\\set-variable-config-extension",
+      "skill_dir_exists": true,
+      "skill_md": ".agents\\skills\\set-variable-config-extension\\SKILL.md",
+      "skill_md_exists": true,
+      "references_dir": ".agents\\skills\\set-variable-config-extension\\references",
+      "references_dir_exists": true
+    }
+  ],
+  "missing_skills": [],
+  "missing_skill_md": [],
+  "missing_references_dir": [],
+  "migration_files": {
+    "moved": [],
+    "needs_manual_review": [],
+    "not_found": [
+      "（workflow-router）SKILL.md",
+      "（product-identity-archive）SKILL.md",
+      "（style-master-extractor）SKILL.md",
+      "（angle-inventory）SKILL.md",
+      "（main-variable-config）SKILL.md",
+      "（detail-variable-config）SKILL.md",
+      "（final-prompt-compiler）SKILL.md",
+      "（qc-inspector）SKILL.md",
+      "（set-product-identity）SKILL.md",
+      "（set-angle-layout-inventory）SKILL.md",
+      "（set-variable-config-extension）SKILL.md"
+    ]
+  }
+}

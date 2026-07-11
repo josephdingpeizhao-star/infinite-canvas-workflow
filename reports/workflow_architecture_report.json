@@ -1,0 +1,110 @@
+{
+  "checked_at": "2026-06-24T02:43:14.332817+00:00",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
+  "architecture_manifest": "manifests/workflow_architecture.json",
+  "schema": "schemas/workflow_architecture.schema.json",
+  "checks": [
+    {
+      "name": "artifact_type",
+      "status": "pass",
+      "detail": "artifact_type must be workflow_architecture"
+    },
+    {
+      "name": "version",
+      "status": "pass",
+      "detail": "version must be a non-empty string"
+    },
+    {
+      "name": "chatgpt_review_only",
+      "status": "pass",
+      "detail": "ChatGPT production execution must be false"
+    },
+    {
+      "name": "codex_uses_repository_state",
+      "status": "pass",
+      "detail": "Codex must use repository state"
+    },
+    {
+      "name": "external_chat_memory_forbidden",
+      "status": "pass",
+      "detail": "external chat memory must be forbidden as production state"
+    },
+    {
+      "name": "comfyui_execution_only",
+      "status": "pass",
+      "detail": "ComfyUI decision authority must be false"
+    },
+    {
+      "name": "artifact_base_path",
+      "status": "pass",
+      "detail": "structured artifacts must use artifacts/{product_id}/"
+    },
+    {
+      "name": "external_workspace_base_path",
+      "status": "pass",
+      "detail": "external workspace artifacts must be manifest-declared"
+    },
+    {
+      "name": "external_workspace_manifest_connection",
+      "status": "pass",
+      "detail": "external workspace must be connected through batch manifests"
+    },
+    {
+      "name": "required_product_artifacts",
+      "status": "pass",
+      "detail": "all required product artifacts must be declared"
+    },
+    {
+      "name": "reports_gate_progression",
+      "status": "pass",
+      "detail": "JSON and Markdown reports must gate progression"
+    },
+    {
+      "name": "hard_rule_phrase:ChatGPT is not the primary production execution environment.",
+      "status": "pass",
+      "detail": "hard_rules must include: ChatGPT is not the primary production execution environment."
+    },
+    {
+      "name": "hard_rule_phrase:Codex must work from repository state",
+      "status": "pass",
+      "detail": "hard_rules must include: Codex must work from repository state"
+    },
+    {
+      "name": "hard_rule_phrase:ComfyUI executes image generation",
+      "status": "pass",
+      "detail": "hard_rules must include: ComfyUI executes image generation"
+    },
+    {
+      "name": "hard_rule_phrase:artifacts/{product_id}/",
+      "status": "pass",
+      "detail": "hard_rules must include: artifacts/{product_id}/"
+    },
+    {
+      "name": "hard_rule_phrase:manifest-declared external workspace",
+      "status": "pass",
+      "detail": "hard_rules must include: manifest-declared external workspace"
+    },
+    {
+      "name": "hard_rule_phrase:JSON and Markdown reports",
+      "status": "pass",
+      "detail": "hard_rules must include: JSON and Markdown reports"
+    },
+    {
+      "name": "hard_rule_phrase:Codex must use reports",
+      "status": "pass",
+      "detail": "hard_rules must include: Codex must use reports"
+    },
+    {
+      "name": "architecture_manifest_exists",
+      "status": "pass",
+      "detail": "workflow architecture manifest must exist"
+    },
+    {
+      "name": "schema_available",
+      "status": "pass",
+      "detail": "workflow architecture schema must exist and declare the expected id"
+    }
+  ],
+  "errors": [],
+  "status": "pass"
+}

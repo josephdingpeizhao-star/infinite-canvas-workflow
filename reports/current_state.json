@@ -1,0 +1,871 @@
+{
+  "checked_at": "2026-06-24T02:43:14.626077+00:00",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
+  "status": "blocked",
+  "current_stage": "repository_initialized_no_active_batch",
+  "next_skill": null,
+  "missing_required_artifacts": [
+    "active_product_batch_manifest",
+    "product_source_inputs"
+  ],
+  "blocked_reasons": [
+    "No non-template product batch manifest found in manifests/.",
+    "No product batch manifest points to repository inputs/artifacts or a manifest-declared external workspace."
+  ],
+  "validation_reports": {
+    "workflow_architecture_report": {
+      "path": "reports/workflow_architecture_report.json",
+      "exists": true,
+      "status": "pass",
+      "checked_at": "2026-06-24T02:43:14.332817+00:00"
+    },
+    "skill_tree_report": {
+      "path": "reports/skill_tree_report.json",
+      "exists": true,
+      "status": "pass",
+      "checked_at": "2026-06-24T02:43:14.459454+00:00"
+    },
+    "reference_check_report": {
+      "path": "reports/reference_check_report.json",
+      "exists": true,
+      "status": "pass",
+      "checked_at": "2026-06-24T02:43:14.549366+00:00"
+    },
+    "production_readiness_report": {
+      "path": "reports/production_readiness_report.json",
+      "exists": true,
+      "status": "pass",
+      "checked_at": "2026-06-24T02:43:14.604810+00:00"
+    }
+  },
+  "skill_tree": {
+    "status": "pass",
+    "primary_skill_tree": ".agents\\skills",
+    "codex_skill_tree_role": "legacy_skill_tree",
+    "mirror_status": "mirrored_ok",
+    "missing_skill_count": 0,
+    "missing_skill_md_count": 0,
+    "missing_references_dir_count": 0,
+    "changed_file_count": 0,
+    "extra_in_agents_count": 0,
+    "missing_in_agents_count": 0
+  },
+  "references": {
+    "status": "pass",
+    "checked_skill_count": 11,
+    "missing_file_count": 0,
+    "extra_file_count": 0,
+    "misplaced_set_file_count": 0
+  },
+  "directory_tree_summary": {
+    "required_count": 17,
+    "confirmed_count": 17,
+    "missing": [],
+    "items": [
+      {
+        "path": "inputs/products/_template_product/white_bg",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "inputs/products/_template_product/style_refs",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "inputs/products/_template_product/set_group",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "inputs/products/_template_product/component_white_bg",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/identity",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/style_master",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/angle_inventory",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/variable_configs",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/final_prompts",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/comfyui_jobs",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "artifacts/_template_product/qc_reports",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "manifests",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "schemas",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "scripts",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "reports",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "tests/fixtures",
+        "exists": true,
+        "type": "directory"
+      },
+      {
+        "path": "_archive/migrated_skill_md",
+        "exists": true,
+        "type": "directory"
+      }
+    ]
+  },
+  "generated_or_confirmed_files": {
+    "required_count": 42,
+    "confirmed_count": 42,
+    "confirmed": [
+      "AGENTS.md",
+      "docs/ARCHITECTURE.md",
+      "docs/STAGE_PLAN.md",
+      "docs/CURRENT_PROGRESS.md",
+      "manifests/workflow_architecture.json",
+      "manifests/batch_manifest.template.json",
+      "manifests/asset_manifest.template.json",
+      "schemas/workflow_architecture.schema.json",
+      "schemas/routing_decision.schema.json",
+      "schemas/product_identity_archive.schema.json",
+      "schemas/style_master.schema.json",
+      "schemas/angle_inventory.schema.json",
+      "schemas/product_info_supplement.schema.json",
+      "schemas/main_variable_config.schema.json",
+      "schemas/detail_variable_config.schema.json",
+      "schemas/final_prompt.schema.json",
+      "schemas/final_prompt_integrity_report.schema.json",
+      "schemas/qc_report.schema.json",
+      "schemas/set_product_identity.schema.json",
+      "schemas/set_angle_layout_inventory.schema.json",
+      "schemas/set_variable_config_extension.schema.json",
+      "scripts/validate_workflow_architecture.py",
+      "scripts/validate_skill_tree.py",
+      "scripts/validate_references.py",
+      "scripts/validate_artifact_schema.py",
+      "scripts/build_batch_manifest.py",
+      "scripts/build_runtime_rule_index.py",
+      "scripts/compile_final_prompts.py",
+      "scripts/validate_final_prompt_integrity.py",
+      "scripts/detect_current_state.py",
+      "scripts/pre_render_reference_gate.py",
+      "scripts/run_comfy_cloud_batch_robust.py",
+      "scripts/submit_comfy_cloud_jobs.py",
+      "scripts/validate_production_readiness.py",
+      "reports/skill_tree_report.json",
+      "reports/skill_tree_report.md",
+      "reports/reference_check_report.json",
+      "reports/reference_check_report.md",
+      "reports/current_state.json",
+      "reports/current_state.md",
+      "scripts/detect_current_stage.py",
+      "scripts/workflow_doctor.py"
+    ],
+    "missing": [],
+    "items": [
+      {
+        "path": "AGENTS.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "docs/ARCHITECTURE.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "docs/STAGE_PLAN.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "docs/CURRENT_PROGRESS.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "manifests/workflow_architecture.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "manifests/batch_manifest.template.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "manifests/asset_manifest.template.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/workflow_architecture.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/routing_decision.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/product_identity_archive.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/style_master.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/angle_inventory.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/product_info_supplement.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/main_variable_config.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/detail_variable_config.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/final_prompt.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/final_prompt_integrity_report.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/qc_report.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/set_product_identity.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/set_angle_layout_inventory.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "schemas/set_variable_config_extension.schema.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_workflow_architecture.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_skill_tree.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_references.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_artifact_schema.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/build_batch_manifest.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/build_runtime_rule_index.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/compile_final_prompts.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_final_prompt_integrity.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/detect_current_state.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/pre_render_reference_gate.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/run_comfy_cloud_batch_robust.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/submit_comfy_cloud_jobs.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/validate_production_readiness.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/skill_tree_report.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/skill_tree_report.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/reference_check_report.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/reference_check_report.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/current_state.json",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "reports/current_state.md",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/detect_current_stage.py",
+        "exists": true,
+        "type": "file"
+      },
+      {
+        "path": "scripts/workflow_doctor.py",
+        "exists": true,
+        "type": "file"
+      }
+    ]
+  },
+  "missing_files": [],
+  "extra_files": [],
+  "codex_agents_compatibility": {
+    "status": "pass",
+    "primary_skill_tree": ".agents\\skills",
+    "legacy_skill_tree": ".codex\\skills",
+    "legacy_role": "legacy_skill_tree",
+    "mirror_status": "mirrored_ok",
+    "agents_file_count": 53,
+    "codex_file_count": 53,
+    "changed_files": [],
+    "missing_in_agents": [],
+    "extra_in_agents": [],
+    "needs_manual_review": false
+  },
+  "needs_manual_review": [],
+  "file_groups": {
+    "manifests": {
+      "path": "manifests",
+      "exists": true,
+      "file_count": 3,
+      "files": [
+        "manifests/asset_manifest.template.json",
+        "manifests/batch_manifest.template.json",
+        "manifests/workflow_architecture.json"
+      ]
+    },
+    "schemas": {
+      "path": "schemas",
+      "exists": true,
+      "file_count": 14,
+      "files": [
+        "schemas/angle_inventory.schema.json",
+        "schemas/detail_variable_config.schema.json",
+        "schemas/final_prompt.schema.json",
+        "schemas/final_prompt_integrity_report.schema.json",
+        "schemas/main_variable_config.schema.json",
+        "schemas/product_identity_archive.schema.json",
+        "schemas/product_info_supplement.schema.json",
+        "schemas/qc_report.schema.json",
+        "schemas/routing_decision.schema.json",
+        "schemas/set_angle_layout_inventory.schema.json",
+        "schemas/set_product_identity.schema.json",
+        "schemas/set_variable_config_extension.schema.json",
+        "schemas/style_master.schema.json",
+        "schemas/workflow_architecture.schema.json"
+      ]
+    },
+    "scripts": {
+      "path": "scripts",
+      "exists": true,
+      "file_count": 20,
+      "files": [
+        "scripts/auto_cleanup_legacy_residue.py",
+        "scripts/build_batch_manifest.py",
+        "scripts/build_runtime_rule_index.py",
+        "scripts/compile_final_prompts.py",
+        "scripts/detect_current_stage.py",
+        "scripts/detect_current_state.py",
+        "scripts/generate_current_mist_blue_mug_artifacts_20260615.py",
+        "scripts/generate_mist_blue_mug_artifacts_20260615.py",
+        "scripts/generate_qingjian_mug_artifacts_20260614.py",
+        "scripts/pre_render_reference_gate.py",
+        "scripts/run_comfy_cloud_batch_robust.py",
+        "scripts/submit_comfy_cloud_jobs.py",
+        "scripts/validate_artifact_schema.py",
+        "scripts/validate_final_prompt_integrity.py",
+        "scripts/validate_production_readiness.py",
+        "scripts/validate_references.py",
+        "scripts/validate_skill_tree.py",
+        "scripts/validate_workflow_architecture.py",
+        "scripts/workflow_doctor.py",
+        "scripts/write_mist_blue_mug_final_reports_20260615.py"
+      ]
+    },
+    "reports": {
+      "path": "reports",
+      "exists": true,
+      "file_count": 12,
+      "files": [
+        "reports/current_state.json",
+        "reports/current_state.md",
+        "reports/production_readiness_report.json",
+        "reports/production_readiness_report.md",
+        "reports/reference_check_report.json",
+        "reports/reference_check_report.md",
+        "reports/runtime_rule_index.json",
+        "reports/runtime_rule_index.md",
+        "reports/skill_tree_report.json",
+        "reports/skill_tree_report.md",
+        "reports/workflow_architecture_report.json",
+        "reports/workflow_architecture_report.md"
+      ]
+    }
+  },
+  "batches": [],
+  "startup_hygiene": {
+    "status": "needs_review",
+    "mode": "recycle_bin_cleanup",
+    "review_reasons": [
+      "previous_current_state_contains_batches_not_found_by_fresh_scan"
+    ],
+    "current_effective_batch_ids": [],
+    "current_batch_sources": {
+      "manifest_product_ids": [],
+      "repository_input_dir_product_ids": [],
+      "repository_artifact_dir_product_ids": []
+    },
+    "previous_current_state_batch_ids": [
+      "cup_batch_1_20260624"
+    ],
+    "previous_state_only_batch_ids": [
+      "cup_batch_1_20260624"
+    ],
+    "directory_residue_product_ids": [],
+    "historical_report_only_product_ids": [],
+    "archived_manifest_product_ids": [],
+    "manifest_workspace_roots": [],
+    "missing_manifest_workspace_roots": [],
+    "completed_manifest_product_ids": [],
+    "protected_audit_evidence": [],
+    "cleanup_actions": [],
+    "safe_cleanup_candidate_count": 0,
+    "notes": "Startup hygiene is conservative: it classifies active batch inputs, directory residues, stale previous state, and protected historical evidence without deleting files.",
+    "cleanup_selection": {
+      "mode": "auto_detected",
+      "automatic_detection_used": true,
+      "explicit_abandoned_product_ids": [],
+      "explicit_abandoned_paths": [],
+      "abandoned_product_ids": [
+        "cup_batch_1_20260624"
+      ],
+      "abandoned_paths": [],
+      "historical_report_product_ids": [],
+      "delete_historical_product_reports": false,
+      "skipped_protected_product_ids": [],
+      "skipped_protected_reason": "Archived stale manifests are audit evidence and are not auto-cleaned.",
+      "source_review_reasons": [
+        "previous_current_state_contains_batches_not_found_by_fresh_scan"
+      ]
+    }
+  },
+  "stage_plan": {
+    "status": "blocked",
+    "completed_stage_count": 6,
+    "total_stage_count": 13,
+    "last_completed_stage": {
+      "stage": 5,
+      "name": "Current-State Orchestrator",
+      "status": "complete",
+      "evidence": [
+        "orchestrator_script_count=3/3",
+        "workflow_doctor_updates_current_state_reports=true"
+      ],
+      "missing": [],
+      "blocked_reasons": [],
+      "next_action": null
+    },
+    "current_stage": {
+      "stage": 6,
+      "name": "Product Batch Intake",
+      "status": "blocked",
+      "evidence": [
+        "active_batch_count=0"
+      ],
+      "missing": [
+        "manifests/<product_id>.batch_manifest.json",
+        "manifest-declared workspace artifacts/"
+      ],
+      "blocked_reasons": [
+        "No non-template product batch manifest was found.",
+        "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
+      ],
+      "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+    },
+    "next_stage": {
+      "stage": 6,
+      "name": "Product Batch Intake",
+      "status": "blocked",
+      "evidence": [
+        "active_batch_count=0"
+      ],
+      "missing": [
+        "manifests/<product_id>.batch_manifest.json",
+        "manifest-declared workspace artifacts/"
+      ],
+      "blocked_reasons": [
+        "No non-template product batch manifest was found.",
+        "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
+      ],
+      "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+    },
+    "next_unblocked_stage": null,
+    "stages": [
+      {
+        "stage": 0,
+        "name": "Source Rule Freeze",
+        "status": "complete",
+        "evidence": [
+          "source_rule_file_count=18/18",
+          "persistent_doc_count=4/4",
+          "migration_files_identified=True",
+          "no_image_generation_performed_by_stage_0_to_5_scripts"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 1,
+        "name": "Skill Tree Normalization",
+        "status": "complete",
+        "evidence": [
+          "skill_tree_report_status=pass",
+          "needs_manual_review_count=0"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 2,
+        "name": "References Mapping Validation",
+        "status": "complete",
+        "evidence": [
+          "reference_check_report_status=pass",
+          "missing_file_count=0",
+          "extra_file_count=0",
+          "misplaced_set_file_count=0"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 3,
+        "name": "Templates, Schemas, Scripts, Directories",
+        "status": "complete",
+        "evidence": [
+          "directory_count=17/17",
+          "manifest_template_count=3/3",
+          "schema_count=14/14",
+          "script_count=13/13",
+          "production_readiness_report_status=pass"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 4,
+        "name": "Basic Validation Run",
+        "status": "complete",
+        "evidence": [
+          "skill_tree_report_status=pass",
+          "reference_check_report_status=pass",
+          "current_state_report_marks_stage_4_complete=true"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 5,
+        "name": "Current-State Orchestrator",
+        "status": "complete",
+        "evidence": [
+          "orchestrator_script_count=3/3",
+          "workflow_doctor_updates_current_state_reports=true"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
+      },
+      {
+        "stage": 6,
+        "name": "Product Batch Intake",
+        "status": "blocked",
+        "evidence": [
+          "active_batch_count=0"
+        ],
+        "missing": [
+          "manifests/<product_id>.batch_manifest.json",
+          "manifest-declared workspace artifacts/"
+        ],
+        "blocked_reasons": [
+          "No non-template product batch manifest was found.",
+          "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
+        ],
+        "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+      },
+      {
+        "stage": 7,
+        "name": "Upstream Artifact Readiness",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      },
+      {
+        "stage": 8,
+        "name": "Variable Config Generation",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      },
+      {
+        "stage": 9,
+        "name": "Final Prompt Compilation",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      },
+      {
+        "stage": 10,
+        "name": "ComfyUI Render Job Preparation",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      },
+      {
+        "stage": 11,
+        "name": "Rendering",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      },
+      {
+        "stage": 12,
+        "name": "QC and Retry Planning",
+        "status": "pending",
+        "evidence": [
+          "waiting_for_stage_6_product_batch"
+        ],
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": "Complete Stage 6 first."
+      }
+    ]
+  },
+  "last_completed_stage": {
+    "stage": 5,
+    "name": "Current-State Orchestrator",
+    "status": "complete",
+    "evidence": [
+      "orchestrator_script_count=3/3",
+      "workflow_doctor_updates_current_state_reports=true"
+    ],
+    "missing": [],
+    "blocked_reasons": [],
+    "next_action": null
+  },
+  "next_stage": {
+    "stage": 6,
+    "name": "Product Batch Intake",
+    "status": "blocked",
+    "evidence": [
+      "active_batch_count=0"
+    ],
+    "missing": [
+      "manifests/<product_id>.batch_manifest.json",
+      "manifest-declared workspace artifacts/"
+    ],
+    "blocked_reasons": [
+      "No non-template product batch manifest was found.",
+      "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
+    ],
+    "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+  },
+  "current_stage_judgment": {
+    "stage": 6,
+    "name": "Product Batch Intake",
+    "status": "blocked",
+    "evidence": [
+      "active_batch_count=0"
+    ],
+    "missing": [
+      "manifests/<product_id>.batch_manifest.json",
+      "manifest-declared workspace artifacts/"
+    ],
+    "blocked_reasons": [
+      "No non-template product batch manifest was found.",
+      "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
+    ],
+    "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+  },
+  "allowed_next_actions": [
+    "run_self_checks",
+    "refresh_reports_current_state",
+    "review_skill_tree_and_reference_reports",
+    "prepare_product_batch_intake_after_product_id_and_inputs_are_provided"
+  ],
+  "forbidden_next_actions": [
+    "generate_images",
+    "call_comfyui",
+    "compile_final_prompts_before_variable_configs",
+    "use_upstream_prompt_files_as_final_image_prompts",
+    "rewrite_original_business_rule_files",
+    "invent_product_facts_or_specs",
+    "enable_set_product_skills_without_explicit_set_request",
+    "render_without_final_prompt_integrity_gate",
+    "generate_variable_configs_without_product_batch",
+    "compile_final_prompts_without_upstream_artifacts",
+    "run_qc_without_generated_images"
+  ],
+  "workflow_doctor": {
+    "checked_at": "2026-06-24T02:43:14.633835+00:00",
+    "validation_runs": [
+      {
+        "script": "scripts/validate_workflow_architecture.py",
+        "exit_code": 0,
+        "report": "reports/workflow_architecture_report.json",
+        "report_status": "pass"
+      },
+      {
+        "script": "scripts/validate_skill_tree.py",
+        "exit_code": 0,
+        "report": "reports/skill_tree_report.json",
+        "report_status": "pass"
+      },
+      {
+        "script": "scripts/validate_references.py",
+        "exit_code": 0,
+        "report": "reports/reference_check_report.json",
+        "report_status": "pass"
+      },
+      {
+        "script": "scripts/validate_production_readiness.py",
+        "exit_code": 0,
+        "report": "reports/production_readiness_report.json",
+        "report_status": "pass"
+      }
+    ],
+    "validation_failed_count": 0,
+    "updated_reports": [
+      "reports/current_state.json",
+      "reports/current_state.md"
+    ]
+  }
+}

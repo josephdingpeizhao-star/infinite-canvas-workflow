@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product_info_supplement.schema.json",
+  "title": "Product Info Supplement",
+  "type": "object",
+  "required": ["product_id", "artifact_type", "missing_questions", "confirmed_facts"],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "product_info_supplement" },
+    "missing_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confirmed_facts": {
+      "type": "object",
+      "description": "Only the four allowed product text fields used for detail-page copy planning.",
+      "properties": {
+        "product_name": { "type": "string" },
+        "size_info": { "type": "string" },
+        "capacity_info": { "type": "string" },
+        "chinese_marketing_copy": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          ]
+        },
+        "商品名称": { "type": "string" },
+        "尺寸信息": { "type": "string" },
+        "容量信息": { "type": "string" },
+        "中文营销文案": {
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "unconfirmed_items": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "string" }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["variable_configs"] },
+      { "required": ["final_prompt"] },
+      { "required": ["qc_results"] }
+    ]
+  },
+  "additionalProperties": true
+}

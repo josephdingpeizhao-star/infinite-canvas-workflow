@@ -1,0 +1,107 @@
+{
+  "artifact_type": "workflow_architecture",
+  "version": "2026-06-11",
+  "summary": "ChatGPT is review-only, Codex is the repository-backed production control layer, external run folders hold product batch files when declared in manifests, ComfyUI is the image execution layer, and structured artifacts plus reports gate every stage.",
+  "layers": {
+    "chatgpt_human_review": {
+      "role": "workflow discussion and human review",
+      "production_execution_allowed": false,
+      "allowed_uses": [
+        "workflow_discussion",
+        "business_rule_revision",
+        "product_identity_draft_review",
+        "style_master_draft_review",
+        "ambiguous_visual_judgment",
+        "manual_review_of_low_confidence_entries"
+      ],
+      "forbidden_uses": [
+        "batch_image_upload_and_repeated_angle_recognition",
+        "routine_main_variable_config_generation",
+        "routine_detail_variable_config_generation",
+        "final_production_rendering",
+        "comfyui_execution",
+        "bulk_qc_loops"
+      ]
+    },
+    "codex_control": {
+      "role": "production control layer",
+      "must_use_repository_state": true,
+      "forbidden_state_source": "external_chat_memory",
+      "responsibilities": [
+        "repository_organization",
+        "external_workspace_path_resolution",
+        "skill_routing",
+        "reference_mapping",
+        "manifest_creation",
+        "json_schema_validation",
+        "current_stage_detection",
+        "product_batch_intake",
+        "asset_manifest_creation",
+        "upstream_artifact_generation_orchestration",
+        "main_variable_config_generation",
+        "detail_variable_config_generation",
+        "final_prompt_compilation",
+        "final_prompt_integrity_gate",
+        "comfyui_render_job_json_preparation",
+        "batch_execution_scripts",
+        "qc_reports",
+        "retry_planning",
+        "version_management"
+      ]
+    },
+    "comfyui_execution": {
+      "role": "image execution layer",
+      "decision_authority_allowed": false,
+      "responsibilities": [
+        "reference_image_control",
+        "node_based_rendering",
+        "batch_rendering",
+        "local_image_generation",
+        "inpainting",
+        "upscale",
+        "output_saving"
+      ],
+      "forbidden_decisions": [
+        "business_rules",
+        "product_identity",
+        "angle_inventory",
+        "variable_config_logic",
+        "qc_categories"
+      ]
+    },
+    "structured_artifacts": {
+      "base_path_pattern": "artifacts/{product_id}/",
+      "external_workspace_base_path_pattern": "{workspace_root}/artifacts/",
+      "external_workspace_manifest_connection": true,
+      "required_product_artifacts": [
+        "batch_manifest",
+        "asset_manifest",
+        "product_identity_archive",
+        "style_master",
+        "angle_inventory",
+        "main_variable_configs",
+        "detail_variable_configs",
+        "final_prompts",
+        "comfyui_jobs",
+        "qc_reports"
+      ]
+    },
+    "reports_and_gates": {
+      "requires_json_report": true,
+      "requires_markdown_report": true,
+      "codex_must_use_reports_for_progression": true,
+      "final_prompt_integrity_gate_required_after_compilation": true,
+      "final_prompt_integrity_gate_blocks_rendering_on_fail": true
+    }
+  },
+  "hard_rules": [
+    "ChatGPT is not the primary production execution environment.",
+    "Codex must work from repository state, manifests, schemas, artifacts, and reports, not external chat memory.",
+    "ComfyUI executes image generation and does not decide business rules, product identity, angle inventory, variable config logic, or QC categories.",
+    "All generated workflow outputs must be saved as structured artifacts under artifacts/{product_id}/ or the manifest-declared external workspace artifacts/ folder.",
+    "External product batch files must be connected through batch manifests and must not replace repository schemas, Skills, scripts, or reports as source-of-truth controls.",
+    "Every engineering or production stage must write JSON and Markdown reports.",
+    "Codex must use reports to decide whether to proceed.",
+    "Final prompt integrity must be checked after final prompt compilation and before any ComfyUI job submission or rendering."
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "style_master.schema.json",
+  "title": "Style Master",
+  "type": "object",
+  "required": ["product_id", "artifact_type", "source_references", "style_master"],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "style_master" },
+    "source_references": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "style_master": { "type": "object" },
+    "missing_information": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": { "type": "string" }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["product_identity_archive"] },
+      { "required": ["angle_slots"] },
+      { "required": ["variable_configs"] },
+      { "required": ["final_prompt"] },
+      { "required": ["qc_results"] }
+    ]
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,264 @@
+{
+  "checked_at": "2026-06-24T02:43:14.549366+00:00",
+  "status": "pass",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
+  "skill_roots": {
+    "primary_skill_tree": ".agents\\skills",
+    "source_status": "agents_primary",
+    "agents_skill_tree": {
+      "path": ".agents\\skills",
+      "exists": true,
+      "role": "primary_skill_tree"
+    },
+    "codex_skill_tree": {
+      "path": ".codex\\skills",
+      "exists": true,
+      "role": "legacy_skill_tree"
+    }
+  },
+  "skills": [
+    {
+      "skill": "workflow-router",
+      "references_dir": ".agents\\skills\\workflow-router\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "工作流总控规则.txt"
+      ],
+      "actual_files": [
+        "工作流总控规则.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "product-identity-archive",
+      "references_dir": ".agents\\skills\\product-identity-archive\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "产品身份档案提示词.txt"
+      ],
+      "actual_files": [
+        "产品身份档案提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "style-master-extractor",
+      "references_dir": ".agents\\skills\\style-master-extractor\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "反向提取风格母版提示词.txt"
+      ],
+      "actual_files": [
+        "反向提取风格母版提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "angle-inventory",
+      "references_dir": ".agents\\skills\\angle-inventory\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "角度槽位入库表生成与识别提示词.txt"
+      ],
+      "actual_files": [
+        "角度槽位入库表生成与识别提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "main-variable-config",
+      "references_dir": ".agents\\skills\\main-variable-config\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "主图单张变量配置提示词生成.txt",
+        "工作流总控规则.txt",
+        "真实感约束.txt",
+        "道具生成规则模块.txt",
+        "电商图片通用质检清单.txt"
+      ],
+      "actual_files": [
+        "主图单张变量配置提示词生成.txt",
+        "工作流总控规则.txt",
+        "电商图片通用质检清单.txt",
+        "真实感约束.txt",
+        "道具生成规则模块.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "detail-variable-config",
+      "references_dir": ".agents\\skills\\detail-variable-config\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "详情图单张变量配置提示词生成.txt",
+        "工作流总控规则.txt",
+        "真实感约束.txt",
+        "道具生成规则模块.txt",
+        "淘宝天猫详情页链路与平台规范模块.txt",
+        "商品信息补充清单提示词.txt",
+        "电商图片通用质检清单.txt"
+      ],
+      "actual_files": [
+        "商品信息补充清单提示词.txt",
+        "工作流总控规则.txt",
+        "淘宝天猫详情页链路与平台规范模块.txt",
+        "电商图片通用质检清单.txt",
+        "真实感约束.txt",
+        "详情图单张变量配置提示词生成.txt",
+        "道具生成规则模块.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "final-prompt-compiler",
+      "references_dir": ".agents\\skills\\final-prompt-compiler\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "工作流总控规则.txt",
+        "真实感约束.txt",
+        "道具生成规则模块.txt",
+        "淘宝天猫详情页链路与平台规范模块.txt",
+        "电商图片通用质检清单.txt"
+      ],
+      "actual_files": [
+        "工作流总控规则.txt",
+        "淘宝天猫详情页链路与平台规范模块.txt",
+        "电商图片通用质检清单.txt",
+        "真实感约束.txt",
+        "道具生成规则模块.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "qc-inspector",
+      "references_dir": ".agents\\skills\\qc-inspector\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "电商图片通用质检清单.txt",
+        "工作流总控规则.txt",
+        "真实感约束.txt"
+      ],
+      "actual_files": [
+        "工作流总控规则.txt",
+        "电商图片通用质检清单.txt",
+        "真实感约束.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "set-product-identity",
+      "references_dir": ".agents\\skills\\set-product-identity\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "套装产品身份档案提示词.txt",
+        "套装产品工作流补充规则.txt"
+      ],
+      "actual_files": [
+        "套装产品工作流补充规则.txt",
+        "套装产品身份档案提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "set-angle-layout-inventory",
+      "references_dir": ".agents\\skills\\set-angle-layout-inventory\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "套装角度与编排入库表提示词.txt",
+        "套装编排规则.txt",
+        "套装产品工作流补充规则.txt"
+      ],
+      "actual_files": [
+        "套装产品工作流补充规则.txt",
+        "套装编排规则.txt",
+        "套装角度与编排入库表提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    },
+    {
+      "skill": "set-variable-config-extension",
+      "references_dir": ".agents\\skills\\set-variable-config-extension\\references",
+      "references_dir_exists": true,
+      "expected_files": [
+        "套装产品工作流补充规则.txt",
+        "套装变量配置补充模块.txt",
+        "套装编排规则.txt",
+        "套装产品身份档案提示词.txt",
+        "套装角度与编排入库表提示词.txt"
+      ],
+      "actual_files": [
+        "套装产品工作流补充规则.txt",
+        "套装产品身份档案提示词.txt",
+        "套装变量配置补充模块.txt",
+        "套装编排规则.txt",
+        "套装角度与编排入库表提示词.txt"
+      ],
+      "missing_files": [],
+      "extra_files": [],
+      "misplaced_set_files": []
+    }
+  ],
+  "missing_reference_dirs": [],
+  "missing_files": [],
+  "extra_files": [],
+  "misplaced_set_files": [],
+  "runtime_package_checks": [
+    {
+      "skill": "detail-variable-config",
+      "package": ".agents\\skills\\detail-variable-config\\references\\runtime_rule_slices\\detail-variable-config.runtime_rule_slices.json",
+      "status": "pass",
+      "runtime_package_version": "2-slim",
+      "slice_count": 13,
+      "runtime_bytes": 78279,
+      "errors": []
+    },
+    {
+      "skill": "final-prompt-compiler",
+      "package": ".agents\\skills\\final-prompt-compiler\\references\\runtime_rule_slices\\final-prompt-compiler.runtime_rule_slices.json",
+      "status": "pass",
+      "runtime_package_version": "2-slim",
+      "slice_count": 10,
+      "runtime_bytes": 53960,
+      "errors": []
+    },
+    {
+      "skill": "main-variable-config",
+      "package": ".agents\\skills\\main-variable-config\\references\\runtime_rule_slices\\main-variable-config.runtime_rule_slices.json",
+      "status": "pass",
+      "runtime_package_version": "2-slim",
+      "slice_count": 11,
+      "runtime_bytes": 64247,
+      "errors": []
+    },
+    {
+      "skill": "qc-inspector",
+      "package": ".agents\\skills\\qc-inspector\\references\\runtime_rule_slices\\qc-inspector.runtime_rule_slices.json",
+      "status": "pass",
+      "runtime_package_version": "2-slim",
+      "slice_count": 5,
+      "runtime_bytes": 18082,
+      "errors": []
+    }
+  ],
+  "runtime_package_errors": []
+}

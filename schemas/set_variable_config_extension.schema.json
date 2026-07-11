@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "set_variable_config_extension.schema.json",
+  "title": "Set Variable Config Extension",
+  "type": "object",
+  "required": [
+    "product_id",
+    "artifact_type",
+    "base_variable_config",
+    "set_extension_rules_applied",
+    "extended_configs"
+  ],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "set_variable_config_extension" },
+    "user_declared_set_product": {
+      "type": "boolean",
+      "default": false
+    },
+    "explicit_set_request": {
+      "type": ["string", "object"]
+    },
+    "upstream_artifacts": {
+      "type": "object",
+      "properties": {
+        "set_product_identity": { "type": "string" },
+        "set_angle_layout_inventory": { "type": "string" },
+        "base_variable_config": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "base_variable_config": {
+      "type": "object"
+    },
+    "set_extension_rules_applied": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extended_configs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["config_id", "variable_config"],
+        "properties": {
+          "config_id": { "type": "string" },
+          "variable_config": { "type": "object" },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "anyOf": [
+    {
+      "properties": {
+        "user_declared_set_product": { "const": true }
+      },
+      "required": ["user_declared_set_product"]
+    },
+    {
+      "required": ["explicit_set_request"]
+    }
+  ],
+  "not": {
+    "anyOf": [
+      { "required": ["final_prompt"] },
+      { "required": ["qc_results"] }
+    ]
+  },
+  "additionalProperties": true
+}

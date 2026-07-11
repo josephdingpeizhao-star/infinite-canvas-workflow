@@ -1,0 +1,205 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "workflow_architecture.schema.json",
+  "title": "Workflow Architecture",
+  "type": "object",
+  "required": [
+    "artifact_type",
+    "version",
+    "summary",
+    "layers",
+    "hard_rules"
+  ],
+  "properties": {
+    "artifact_type": {
+      "const": "workflow_architecture"
+    },
+    "version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "layers": {
+      "type": "object",
+      "required": [
+        "chatgpt_human_review",
+        "codex_control",
+        "comfyui_execution",
+        "structured_artifacts",
+        "reports_and_gates"
+      ],
+      "properties": {
+        "chatgpt_human_review": {
+          "type": "object",
+          "required": [
+            "role",
+            "production_execution_allowed",
+            "allowed_uses",
+            "forbidden_uses"
+          ],
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "production_execution_allowed": {
+              "const": false
+            },
+            "allowed_uses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "forbidden_uses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "codex_control": {
+          "type": "object",
+          "required": [
+            "role",
+            "must_use_repository_state",
+            "forbidden_state_source",
+            "responsibilities"
+          ],
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "must_use_repository_state": {
+              "const": true
+            },
+            "forbidden_state_source": {
+              "const": "external_chat_memory"
+            },
+            "responsibilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "comfyui_execution": {
+          "type": "object",
+          "required": [
+            "role",
+            "decision_authority_allowed",
+            "responsibilities",
+            "forbidden_decisions"
+          ],
+          "properties": {
+            "role": {
+              "type": "string"
+            },
+            "decision_authority_allowed": {
+              "const": false
+            },
+            "responsibilities": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "forbidden_decisions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "structured_artifacts": {
+          "type": "object",
+          "required": [
+            "base_path_pattern",
+            "required_product_artifacts"
+          ],
+          "properties": {
+            "base_path_pattern": {
+              "const": "artifacts/{product_id}/"
+            },
+            "external_workspace_base_path_pattern": {
+              "const": "{workspace_root}/artifacts/"
+            },
+            "external_workspace_manifest_connection": {
+              "const": true
+            },
+            "required_product_artifacts": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "batch_manifest",
+                  "asset_manifest",
+                  "product_identity_archive",
+                  "style_master",
+                  "angle_inventory",
+                  "main_variable_configs",
+                  "detail_variable_configs",
+                  "final_prompts",
+                  "comfyui_jobs",
+                  "qc_reports"
+                ]
+              },
+              "minItems": 10,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": true
+        },
+        "reports_and_gates": {
+          "type": "object",
+          "required": [
+            "requires_json_report",
+            "requires_markdown_report",
+            "codex_must_use_reports_for_progression"
+          ],
+          "properties": {
+            "requires_json_report": {
+              "const": true
+            },
+            "requires_markdown_report": {
+              "const": true
+            },
+            "codex_must_use_reports_for_progression": {
+              "const": true
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "hard_rules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}

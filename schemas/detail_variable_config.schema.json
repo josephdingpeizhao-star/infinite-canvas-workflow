@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "detail_variable_config.schema.json",
+  "title": "Detail Variable Config",
+  "type": "object",
+  "required": ["product_id", "artifact_type", "config_count", "upstream_artifacts", "common_constraints", "configs"],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "detail_variable_config" },
+    "config_count": {
+      "type": "integer",
+      "const": 8,
+      "default": 8
+    },
+    "upstream_artifacts": {
+      "type": "object",
+      "required": ["product_identity_archive", "style_master", "angle_inventory"],
+      "properties": {
+        "product_identity_archive": { "type": "string", "minLength": 1 },
+        "style_master": { "type": "string", "minLength": 1 },
+        "angle_inventory": { "type": "string", "minLength": 1 },
+        "product_info_supplement": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "common_constraints": {
+      "type": "object",
+      "description": "Shared constraints applied to every detail-image config. Each per-image config is resolved by overlaying per_image_overrides on this object."
+    },
+    "configs": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": ["config_id", "output_type", "per_image_overrides", "resolved_variable_config_sha256"],
+        "properties": {
+          "config_id": { "type": "string" },
+          "output_type": { "const": "detail" },
+          "per_image_overrides": { "type": "object" },
+          "resolved_variable_config_sha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "notes": { "type": "string" }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["final_prompt"] },
+      { "required": ["qc_results"] },
+      { "required": ["set_layouts"] }
+    ]
+  },
+  "additionalProperties": true
+}

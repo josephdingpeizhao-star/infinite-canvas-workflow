@@ -1,0 +1,148 @@
+{
+  "1": {
+    "inputs": {
+      "prompt": [
+        "10",
+        0
+      ],
+      "seed": 434267726,
+      "quality": "high",
+      "background": "auto",
+      "size": "auto",
+      "n": 1,
+      "model": "gpt-image-2",
+      "custom_width": 1024,
+      "custom_height": 1024,
+      "image": [
+        "17",
+        0
+      ]
+    },
+    "class_type": "OpenAIGPTImage1",
+    "_meta": {
+      "title": "OpenAI GPT Image 2"
+    }
+  },
+  "2": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "产品身份档案"
+    }
+  },
+  "4": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "风格母版"
+    }
+  },
+  "5": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "本张变量配置"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "真实感约束"
+    }
+  },
+  "7": {
+    "inputs": {
+      "delimiter": "---",
+      "clean_whitespace": "true",
+      "text_a": [
+        "2",
+        0
+      ],
+      "text_b": [
+        "4",
+        0
+      ],
+      "text_c": [
+        "5",
+        0
+      ],
+      "text_d": [
+        "6",
+        0
+      ]
+    },
+    "class_type": "Text Concatenate",
+    "_meta": {
+      "title": "Text Concatenate"
+    }
+  },
+  "10": {
+    "inputs": {
+      "delimiter": "---",
+      "clean_whitespace": "true",
+      "text_a": [
+        "7",
+        0
+      ],
+      "text_b": [
+        "11",
+        0
+      ],
+      "text_c": [
+        "12",
+        0
+      ]
+    },
+    "class_type": "Text Concatenate",
+    "_meta": {
+      "title": "Text Concatenate"
+    }
+  },
+  "11": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "道具规则"
+    }
+  },
+  "12": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Text Multiline",
+    "_meta": {
+      "title": "角度与尺寸控制规则"
+    }
+  },
+  "17": {
+    "inputs": {},
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "加载图像"
+    }
+  },
+  "20": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "保存图像"
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final_prompt_integrity_report.schema.json",
+  "title": "Final Prompt Integrity Report",
+  "type": "object",
+  "required": [
+    "product_id",
+    "artifact_type",
+    "gate_name",
+    "status",
+    "render_blocked",
+    "checked_assets",
+    "results",
+    "blocking_issues",
+    "warnings",
+    "image_generation_performed",
+    "comfyui_execution_performed"
+  ],
+  "properties": {
+    "product_id": { "type": "string", "minLength": 1 },
+    "artifact_type": { "const": "final_prompt_integrity_report" },
+    "gate_name": { "const": "final_prompt_integrity_gate" },
+    "status": {
+      "type": "string",
+      "enum": ["pass", "needs_review", "fail"]
+    },
+    "render_blocked": { "type": "boolean" },
+    "checked_at": { "type": "string" },
+    "batch_manifest": { "type": "string" },
+    "product_identity_archive": { "type": "string" },
+    "final_prompt_index": { "type": "string" },
+    "job_manifest": { "type": "string" },
+    "compiler": { "type": "string" },
+    "checked_assets": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "checked_prompt_count": { "type": "integer", "minimum": 0 },
+    "blocking_issue_count": { "type": "integer", "minimum": 0 },
+    "warning_count": { "type": "integer", "minimum": 0 },
+    "results": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["check_item", "status"],
+        "properties": {
+          "check_item": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["pass", "needs_review", "fail", "not_applicable"]
+          },
+          "notes": { "type": "string" }
+        },
+        "additionalProperties": true
+      }
+    },
+    "blocking_issues": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "issues": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/issue" }
+    },
+    "derived_policy_terms": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "image_generation_performed": { "const": false },
+    "comfyui_execution_performed": { "const": false },
+    "notes": { "type": "string" }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "required": ["issue_id", "severity", "blocking", "description"],
+      "properties": {
+        "issue_id": { "type": "string" },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "major", "minor", "needs_review"]
+        },
+        "blocking": { "type": "boolean" },
+        "description": { "type": "string" },
+        "affected_asset": { "type": "string" },
+        "job_id": { "type": "string" },
+        "evidence": { "type": "object", "additionalProperties": true },
+        "required_action": { "type": "string" }
+      },
+      "additionalProperties": true
+    }
+  },
+  "not": {
+    "anyOf": [
+      { "required": ["final_prompt"] },
+      { "required": ["generation_prompt"] },
+      { "required": ["new_generation_direction"] },
+      { "required": ["creative_direction"] }
+    ]
+  },
+  "additionalProperties": true
+}

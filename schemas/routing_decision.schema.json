@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "routing_decision.schema.json",
+  "title": "Routing Decision",
+  "type": "object",
+  "required": [
+    "batch_type",
+    "current_stage",
+    "next_skill",
+    "available_artifacts",
+    "missing_required_artifacts",
+    "allowed_skills",
+    "forbidden_skills"
+  ],
+  "properties": {
+    "batch_type": {
+      "type": "string",
+      "enum": ["single", "set"]
+    },
+    "user_declared_set_product": {
+      "type": "boolean",
+      "default": false
+    },
+    "explicit_set_request": {
+      "type": ["string", "object", "null"]
+    },
+    "current_stage": {
+      "type": "string"
+    },
+    "next_skill": {
+      "type": ["string", "null"],
+      "enum": [
+        "workflow-router",
+        "product-identity-archive",
+        "style-master-extractor",
+        "angle-inventory",
+        "main-variable-config",
+        "detail-variable-config",
+        "final-prompt-compiler",
+        "qc-inspector",
+        "set-product-identity",
+        "set-angle-layout-inventory",
+        "set-variable-config-extension",
+        null
+      ]
+    },
+    "available_artifacts": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "missing_required_artifacts": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "allowed_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "workflow-router",
+          "product-identity-archive",
+          "style-master-extractor",
+          "angle-inventory",
+          "main-variable-config",
+          "detail-variable-config",
+          "final-prompt-compiler",
+          "qc-inspector",
+          "set-product-identity",
+          "set-angle-layout-inventory",
+          "set-variable-config-extension"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "forbidden_skills": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "workflow-router",
+          "product-identity-archive",
+          "style-master-extractor",
+          "angle-inventory",
+          "main-variable-config",
+          "detail-variable-config",
+          "final-prompt-compiler",
+          "qc-inspector",
+          "set-product-identity",
+          "set-angle-layout-inventory",
+          "set-variable-config-extension"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "blocked_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "batch_type": { "const": "single" }
+        },
+        "required": ["batch_type"]
+      },
+      "then": {
+        "not": {
+          "properties": {
+            "next_skill": {
+              "enum": [
+                "set-product-identity",
+                "set-angle-layout-inventory",
+                "set-variable-config-extension"
+              ]
+            }
+          },
+          "required": ["next_skill"]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "batch_type": { "const": "set" }
+        },
+        "required": ["batch_type"]
+      },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "user_declared_set_product": { "const": true }
+            },
+            "required": ["user_declared_set_product"]
+          },
+          {
+            "required": ["explicit_set_request"]
+          }
+        ]
+      }
+    }
+  ],
+  "additionalProperties": false
+}
