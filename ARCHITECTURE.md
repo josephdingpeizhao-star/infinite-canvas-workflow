@@ -25,7 +25,6 @@ The repository is the rule book and control center. Product photos, temporary ou
 - Root `.txt` files are original business rule prompts and rule modules. They are source material, not final image prompts, and should not be rewritten casually.
 - `GPT-image 2 图生图工作流（初始）【api】.json` is a workflow JSON file for image-generation execution. It should not be edited without an explicit workflow change request.
 - `.env.local` is local environment configuration.
-- `ecommerce_ai_image_workflow_state.json` and `stage_4_basic_validation.json` are older or side state files; prefer `reports/current_state.*` for current status.
 
 ## Main Workflow
 
