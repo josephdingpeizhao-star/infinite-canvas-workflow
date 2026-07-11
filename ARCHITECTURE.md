@@ -14,6 +14,7 @@ The repository is the rule book and control center. Product photos, temporary ou
 - `manifests/` connects a product batch to its inputs, artifacts, external workspace paths, and workflow metadata.
 - `schemas/` defines the expected shape of JSON files. These are the checklists scripts use to catch malformed outputs.
 - `scripts/` contains Python tools that validate the repo, build manifests, detect the current stage, compile final prompts, prepare or submit render jobs, and write reports.
+- `canvas-bridge/` projects the workflow onto a local infinite-canvas board and hosts the controlled edit/run gates (canvas sub-project; state ledger in `docs/CANVAS_PROJECT_STATE.md`).
 - `reports/` stores current state, validation results, stage reports, final prompt integrity reports, rendering reports, and QC reports. For most questions about "where are we now?", start here.
 - `tests/` contains test fixtures used to check script behavior.
 - `_archive/` keeps stale or migrated files for history. It is not the active working area.

@@ -10,6 +10,7 @@ This repository is the source of truth for the e-commerce AI image workflow migr
 4. For workflow-stage work, also read `docs/STAGE_PLAN.md`, `docs/CURRENT_PROGRESS.md`, and the relevant files under `reports/`.
 5. For product-batch work, read `manifests/<product_id>.batch_manifest.json` before using any input, artifact, or external workspace path.
 6. For Skill work, use `.agents/skills/` as the canonical Skill tree and read the relevant `SKILL.md` before acting.
+7. For canvas work (anything touching `canvas-bridge/`, the workflow projection, or the infinite-canvas fork), read `docs/CANVAS_PROJECT_STATE.md` first — it is the authoritative state ledger for that sub-project. Fork work additionally requires reading `FORK_NOTES.md` at the fork root (`D:\dev\infinite-canvas`).
 
 ## Operating Rules
 
@@ -19,6 +20,7 @@ This repository is the source of truth for the e-commerce AI image workflow migr
 - Do not rewrite original business rule prompt files in the repository root.
 - Do not treat upstream prompt files as final image-generation prompts.
 - Do not infer external workspace state from chat history; read paths from the batch manifest.
+- The canvas is a projection only: repository files stay the single source of truth, canvas writes go exclusively through the whitelisted gates in `canvas-bridge/` (see `docs/CANVAS_PROJECT_STATE.md`), and infinite-canvas fork changes must follow the anchor discipline in the fork's `FORK_NOTES.md`.
 - Default `batch_type` is `single`.
 - Enable set-product Skills only when a user explicitly declares a set product or asks for set-product main/detail variable configuration.
 - Do not invent product facts, dimensions, materials, capacities, or visual details that are not present in approved inputs.

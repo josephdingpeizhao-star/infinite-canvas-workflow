@@ -38,6 +38,14 @@ Use this page as the starting point for understanding the project.
 - `.codex/skills/`: legacy compatibility Skills. Do not edit unless explicitly asked.
 - Root `.txt` files: original business rule prompt files. They explain the business rules, but they are not final image-generation prompts.
 
+## Canvas Sub-Project (画布化)
+
+- `docs/CANVAS_PROJECT_STATE.md`: **start here for anything canvas-related** — authoritative state ledger (goals, decisions, phase progress, runtime manual, known pitfalls, roadmap, maintenance protocol).
+- `canvas-bridge/README.md`: bridge module responsibilities and CLI usage.
+- `docs/CANVAS_SPIKE_REPORT.md`: stage-0 spike history (six spike questions).
+- `manifests/<product_id>.canvas_layout.json`: persisted canvas layouts (phase 2).
+- Fork: `D:\dev\infinite-canvas` (branch `workflow-editor`), change registry in its root `FORK_NOTES.md`.
+
 ## Scripts, Schemas, And Checks
 
 - `scripts/validate_skill_tree.py`: checks Skill tree structure.
