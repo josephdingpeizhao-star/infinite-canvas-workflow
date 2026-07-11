@@ -19,6 +19,7 @@ import sys
 import time
 from pathlib import Path
 
+import batch_editor
 import ic_client
 import layout_store
 import projector
@@ -26,7 +27,7 @@ import state_reader
 
 STRESS_PREFIX = "wfstress:"
 IMAGE_PREFIX = "wfimg:"
-MINE_PREFIXES = (f"{projector.NODE_ID_PREFIX}:", STRESS_PREFIX, IMAGE_PREFIX)
+MINE_PREFIXES = (f"{projector.NODE_ID_PREFIX}:", STRESS_PREFIX, IMAGE_PREFIX, f"{batch_editor.EDITOR_PREFIX}:")
 
 
 def build_live_view(manifest_path: Path):
@@ -46,8 +47,11 @@ def resolve_layout(batch: dict, layout_path: Path | None) -> tuple[Path, dict | 
 
 def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
     graph, batch, route, view = build_live_view(manifest_path)
+    product_id = str(batch.get("product_id") or "unknown")
     target, layout = resolve_layout(batch, layout_path)
     ops = projector.project_batch(graph, batch, view=view, layout=layout)
+    ops.append({"type": "delete_node", "ids": [batch_editor.editor_node_id(product_id)]})
+    ops.append(batch_editor.editor_node_op(product_id, batch))
     ic_client.apply_ops(ops)
     if restore_viewport and layout and layout.get("viewport"):
         ic_client.apply_ops([{"type": "set_viewport", "viewport": layout["viewport"]}])
@@ -83,11 +87,37 @@ def cmd_layout_save(manifest_path: Path, layout_path: Path | None = None) -> Non
     print(json.dumps({"layout_saved": str(target), "node_count": len(layout["nodes"])}, ensure_ascii=False))
 
 
+def cmd_apply_edits(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
+    manifest = projector.load_batch_manifest(manifest_path)
+    product_id = str(manifest.get("product_id") or "unknown")
+    node_id = batch_editor.editor_node_id(product_id)
+    state = ic_client.call_tool("canvas_get_state")
+    node = next((item for item in state.get("nodes") or [] if item.get("id") == node_id), None)
+    if not node:
+        print(json.dumps({"applied": False, "error": f"画布上没有批次配置节点 {node_id}，请先 --push-live"}, ensure_ascii=False))
+        raise SystemExit(1)
+    content = str((node.get("metadata") or {}).get("content") or "")
+    try:
+        fields = batch_editor.parse_editor_content(content)
+        result = batch_editor.apply_edits(manifest_path, fields)
+    except batch_editor.EditValidationError as exc:
+        ic_client.apply_ops([
+            {"type": "update_node", "id": node_id, "metadata": {"status": "error", "errorDetails": str(exc)}}
+        ])
+        print(json.dumps({"applied": False, "error": str(exc)}, ensure_ascii=False))
+        raise SystemExit(1)
+    cmd_push_live(manifest_path, layout_path, restore_viewport)
+    print(json.dumps({"applied": True, **result}, ensure_ascii=False))
+
+
 def cmd_watch(manifest_path: Path, interval: float, layout_path: Path | None = None) -> None:
     graph, batch, route, view = build_live_view(manifest_path)
     product_id = str(batch.get("product_id") or "unknown")
     _target, layout = resolve_layout(batch, layout_path)
-    ic_client.apply_ops(projector.project_batch(graph, batch, view=view, layout=layout))
+    initial_ops = projector.project_batch(graph, batch, view=view, layout=layout)
+    initial_ops.append({"type": "delete_node", "ids": [batch_editor.editor_node_id(product_id)]})
+    initial_ops.append(batch_editor.editor_node_op(product_id, batch))
+    ic_client.apply_ops(initial_ops)
     print(json.dumps({"watch": "started", "interval": interval, "current_stage": route.get("current_stage")}, ensure_ascii=False), flush=True)
     previous = view
     try:
@@ -236,6 +266,7 @@ def main() -> int:
     parser.add_argument("--push-live", type=Path, metavar="MANIFEST", help="投影真实批次状态（阶段1只读画布）")
     parser.add_argument("--watch", type=Path, metavar="MANIFEST", help="轮询批次状态并增量更新画布")
     parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--apply-edits", type=Path, metavar="MANIFEST", help="读取画布上的批次配置节点，三段校验后写回 manifest（阶段3）")
     parser.add_argument("--layout-save", type=Path, metavar="MANIFEST", help="把当前画布布局保存为 canvas_layout 文件（阶段2）")
     parser.add_argument("--layout-path", type=Path, help="布局文件路径，默认 manifests/<product_id>.canvas_layout.json")
     parser.add_argument("--restore-viewport", action="store_true", help="push-live 时恢复布局文件中的视口")
@@ -259,6 +290,9 @@ def main() -> int:
         ran = True
     if args.push_live:
         cmd_push_live(args.push_live, args.layout_path, args.restore_viewport)
+        ran = True
+    if args.apply_edits:
+        cmd_apply_edits(args.apply_edits, args.layout_path, args.restore_viewport)
         ran = True
     if args.layout_save:
         cmd_layout_save(args.layout_save, args.layout_path)

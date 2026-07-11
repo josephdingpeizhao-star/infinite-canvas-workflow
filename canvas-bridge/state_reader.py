@@ -27,6 +27,12 @@ def read_batch_route(manifest_path: Path) -> dict[str, Any]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError(f"batch manifest is not an object: {manifest_path}")
+    return route_manifest(manifest, manifest_path)
+
+
+def route_manifest(manifest: dict[str, Any], manifest_path: Path) -> dict[str, Any]:
+    """Route an in-memory manifest dict (used both for reads and for the
+    pre-write dry run of canvas edits)."""
     product_id = str(manifest.get("product_id") or manifest_path.stem)
 
     def section(name: str, defaults: dict[str, str]) -> dict[str, Any]:
