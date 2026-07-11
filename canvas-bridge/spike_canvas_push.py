@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import ic_client
+import layout_store
 import projector
 import state_reader
 
@@ -37,10 +38,19 @@ def build_live_view(manifest_path: Path):
     return graph, batch, route, view
 
 
-def cmd_push_live(manifest_path: Path) -> None:
+def resolve_layout(batch: dict, layout_path: Path | None) -> tuple[Path, dict | None]:
+    product_id = str(batch.get("product_id") or "unknown")
+    target = layout_path or layout_store.default_layout_path(product_id)
+    return target, layout_store.load_layout(target)
+
+
+def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
     graph, batch, route, view = build_live_view(manifest_path)
-    ops = projector.project_batch(graph, batch, view=view)
+    target, layout = resolve_layout(batch, layout_path)
+    ops = projector.project_batch(graph, batch, view=view, layout=layout)
     ic_client.apply_ops(ops)
+    if restore_viewport and layout and layout.get("viewport"):
+        ic_client.apply_ops([{"type": "set_viewport", "viewport": layout["viewport"]}])
     print(
         json.dumps(
             {
@@ -49,16 +59,35 @@ def cmd_push_live(manifest_path: Path) -> None:
                 "next_required_skill": route.get("next_required_skill"),
                 "blocked_reasons": route.get("blocked_reasons"),
                 "available_artifacts": route.get("available_artifacts"),
+                "layout_applied": bool(layout),
+                "layout_path": str(target),
             },
             ensure_ascii=False,
         )
     )
 
 
-def cmd_watch(manifest_path: Path, interval: float) -> None:
+def cmd_layout_save(manifest_path: Path, layout_path: Path | None = None) -> None:
+    graph = projector.load_graph()
+    batch = projector.load_batch_manifest(manifest_path)
+    product_id = str(batch.get("product_id") or "unknown")
+    state = ic_client.call_tool("canvas_get_state")
+    layout = layout_store.build_layout(
+        product_id,
+        str(graph.get("graph_id") or ""),
+        state.get("nodes") or [],
+        state.get("viewport"),
+    )
+    target = layout_path or layout_store.default_layout_path(product_id)
+    layout_store.save_layout(target, layout)
+    print(json.dumps({"layout_saved": str(target), "node_count": len(layout["nodes"])}, ensure_ascii=False))
+
+
+def cmd_watch(manifest_path: Path, interval: float, layout_path: Path | None = None) -> None:
     graph, batch, route, view = build_live_view(manifest_path)
     product_id = str(batch.get("product_id") or "unknown")
-    ic_client.apply_ops(projector.project_batch(graph, batch, view=view))
+    _target, layout = resolve_layout(batch, layout_path)
+    ic_client.apply_ops(projector.project_batch(graph, batch, view=view, layout=layout))
     print(json.dumps({"watch": "started", "interval": interval, "current_stage": route.get("current_stage")}, ensure_ascii=False), flush=True)
     previous = view
     try:
@@ -207,6 +236,9 @@ def main() -> int:
     parser.add_argument("--push-live", type=Path, metavar="MANIFEST", help="投影真实批次状态（阶段1只读画布）")
     parser.add_argument("--watch", type=Path, metavar="MANIFEST", help="轮询批次状态并增量更新画布")
     parser.add_argument("--interval", type=float, default=2.0)
+    parser.add_argument("--layout-save", type=Path, metavar="MANIFEST", help="把当前画布布局保存为 canvas_layout 文件（阶段2）")
+    parser.add_argument("--layout-path", type=Path, help="布局文件路径，默认 manifests/<product_id>.canvas_layout.json")
+    parser.add_argument("--restore-viewport", action="store_true", help="push-live 时恢复布局文件中的视口")
     parser.add_argument("--stress", type=int, metavar="N")
     parser.add_argument("--status-demo", action="store_true")
     parser.add_argument("--status-manifest", type=Path, default=Path("tests/fixtures/external_workspace_batch_manifest.fixture.json"))
@@ -226,10 +258,13 @@ def main() -> int:
         cmd_push_batch(args.push_batch)
         ran = True
     if args.push_live:
-        cmd_push_live(args.push_live)
+        cmd_push_live(args.push_live, args.layout_path, args.restore_viewport)
+        ran = True
+    if args.layout_save:
+        cmd_layout_save(args.layout_save, args.layout_path)
         ran = True
     if args.watch:
-        cmd_watch(args.watch, args.interval)
+        cmd_watch(args.watch, args.interval, args.layout_path)
         ran = True
     if args.stress:
         cmd_stress(args.stress)

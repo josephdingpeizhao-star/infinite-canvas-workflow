@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "canvas_layout.schema.json",
+  "title": "Canvas Layout",
+  "description": "Per-batch canvas layout (node positions/sizes and viewport) for the workflow projection. Pure UI state: never a source of truth for workflow execution or dependencies. Node keys are workflow graph node ids (e.g. stage_product_identity), independent of canvas instance ids, so a layout survives full re-projection.",
+  "type": "object",
+  "required": ["artifact_type", "layout_version", "product_id", "graph_id", "nodes"],
+  "properties": {
+    "artifact_type": { "const": "canvas_layout" },
+    "layout_version": { "type": "integer", "minimum": 1 },
+    "product_id": { "type": "string", "minLength": 1 },
+    "graph_id": { "type": "string", "minLength": 1 },
+    "saved_at": { "type": "string" },
+    "viewport": {
+      "type": "object",
+      "required": ["x", "y", "k"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "k": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "nodes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["position"],
+        "properties": {
+          "position": {
+            "type": "object",
+            "required": ["x", "y"],
+            "properties": {
+              "x": { "type": "number" },
+              "y": { "type": "number" }
+            },
+            "additionalProperties": false
+          },
+          "width": { "type": "number" },
+          "height": { "type": "number" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -249,11 +249,13 @@ def project_batch(
     origin_x: int = 80,
     origin_y: int = 80,
     view: dict[str, dict[str, str]] | None = None,
+    layout: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Return canvas ops that render the batch pipeline. Idempotent: deletes
     previously projected nodes for the same product before re-adding them.
     When ``view`` is given (from node_runtime_view), statuses/titles/content
-    reflect real batch state."""
+    reflect real batch state. When ``layout`` is given (canvas_layout file),
+    saved positions/sizes override the computed layered layout."""
     product_id = str(batch.get("product_id") or "unknown")
     nodes, edges = active_subgraph(graph, batch)
     layers = longest_path_layers(nodes, edges)
@@ -273,6 +275,9 @@ def project_batch(
             node = nodes[node_id]
             node_view = (view or {}).get(node_id) or {}
             width, height = NODE_SIZES[node["kind"]]
+            layout_entry = ((layout or {}).get("nodes") or {}).get(node_id) or {}
+            width = layout_entry.get("width", width)
+            height = layout_entry.get("height", height)
             metadata: dict[str, Any] = {
                 "content": node_view.get("content") or node_content(batch, node),
                 "fontSize": 13,
@@ -296,7 +301,7 @@ def project_batch(
                     "id": canvas_node_id(product_id, node_id),
                     "nodeType": "text",
                     "title": node_view.get("title") or f"{KIND_MARKS[node['kind']]} {node['title']}",
-                    "position": {"x": origin_x + layer_index * X_GAP, "y": origin_y + row * Y_GAP},
+                    "position": layout_entry.get("position") or {"x": origin_x + layer_index * X_GAP, "y": origin_y + row * Y_GAP},
                     "width": width,
                     "height": height,
                     "metadata": metadata,

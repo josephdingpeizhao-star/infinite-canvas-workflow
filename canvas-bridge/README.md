@@ -11,9 +11,12 @@
 
 ## 模块
 
-- `projector.py`：纯函数投影。`manifests/workflow_graph.template.json` + 批次 manifest → `canvas_apply_ops` 操作列表（分层布局，节点 id 以 `wf:<product_id>:` 前缀命名，重推自动先删后建，幂等）。
+- `projector.py`：纯函数投影。图模板 + 批次 manifest →`canvas_apply_ops` 操作列表（分层布局、`wf:<product_id>:` 前缀 id、先删后建幂等）；`node_runtime_view` 从 `route_batch()` 结果推导节点状态（产物在=success、下一步=▶、阻塞=error+原因、门禁镜像完整性报告）；`runtime_update_ops` 生成增量更新。
+- `state_reader.py`：镜像 `detect_current_state.inspect_batch()`，支持任意路径的批次 manifest；附完整性报告定位。
+- `layout_store.py`：布局持久化（阶段2）。按图节点 id 记录位置/尺寸/视口，默认存 `manifests/<product_id>.canvas_layout.json`（可 Git diff），schema 见 `schemas/canvas_layout.schema.json`。布局是纯 UI 状态，不影响执行依赖。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
-- `spike_canvas_push.py`：Spike 驱动脚本，见 `--help`。
+- `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）。
+- `spike_canvas_push.py`：驱动脚本，见 `--help`。
 
 ## 前置条件
 
@@ -25,14 +28,20 @@
 
 ```powershell
 python canvas-bridge/spike_canvas_push.py --health
-python canvas-bridge/spike_canvas_push.py --push-batch tests/fixtures/external_workspace_batch_manifest.fixture.json
-python canvas-bridge/spike_canvas_push.py --stress 300
+python canvas-bridge/spike_canvas_push.py --push-live <批次manifest> [--layout-path P] [--restore-viewport]
+python canvas-bridge/spike_canvas_push.py --watch <批次manifest> --interval 2 [--layout-path P]
+python canvas-bridge/spike_canvas_push.py --layout-save <批次manifest> [--layout-path P]
 python canvas-bridge/spike_canvas_push.py --status-demo
 python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
-python canvas-bridge/spike_canvas_push.py --get-state --save-layout <路径>
 python canvas-bridge/spike_canvas_push.py --clear-mine
+
+# 演示工作区（逐阶段点亮）
+python canvas-bridge/make_demo_workspace.py --init
+python canvas-bridge/make_demo_workspace.py --add-inputs
+python canvas-bridge/make_demo_workspace.py --advance identity   # ...直到 qc
+python canvas-bridge/make_demo_workspace.py --reset
 ```
 
 ## 状态
 
-阶段 0 技术 Spike 原型。阶段 1（只读画布）验收前不应作为常规工具使用。
+阶段 1（只读实时投影）与阶段 2（布局持久化）机制已跑通并有测试与现场验证。阶段 3（受控编辑）之前，画布对业务数据保持零写入。
