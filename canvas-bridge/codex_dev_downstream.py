@@ -977,6 +977,19 @@ def _validate_bound_angle(
         raise ExecutorExecutionError(f"codex-dev 收到的{label}使用了缺失的 D 槽位")
 
 
+def _resolve_bound_angle_literal(
+    binding: str,
+    qualified: Mapping[str, Mapping[str, Any]],
+    label: str,
+) -> tuple[str, str]:
+    """Return the unique source asset and A/B/C slot after existing validation."""
+
+    _validate_bound_angle(binding, qualified, label)
+    asset_id = next(asset_id for asset_id in qualified if asset_id in binding)
+    slot = str(qualified[asset_id].get("angle_slot") or "")
+    return asset_id, slot
+
+
 def _validate_detail_chunk_business_content(
     value: Mapping[str, Any],
     *,
@@ -1279,13 +1292,76 @@ def build_final_prompt_batch_prompt(
     )
     qualified = qualified_angle_assets(angle_inventory)
     allowed_angles = [qualified[key] for key in sorted(qualified)]
-    expected_ids = (
-        [f"main_{index:02d}" for index in range(1, 7)]
-        if mode == "main"
-        else [f"detail_{index:02d}" for index in range(1, 9)]
+    configs = _validate_variable_config_document(
+        variable_config,
+        mode=mode,
+        product_id=product_id,
     )
+    expected_ids = [str(config["config_id"]) for config in configs]
     expected_ratio = "1:1" if mode == "main" else "3:4"
     expected_handheld = requirements.handheld_main if mode == "main" else requirements.handheld_detail
+    handheld_contract_lines: list[str] = []
+    binding_contract_lines: list[str] = []
+    for config in configs:
+        config_id = str(config["config_id"])
+        overrides = config["per_image_overrides"]
+        handheld_declaration = str(overrides.get("手持交互声明") or "")
+        if "本张图不启用手持场景" in handheld_declaration:
+            handheld_contract_lines.append(
+                f"- {config_id}：final_prompt 正文必须原样出现完整否定短语"
+                "“本张图不启用手持场景”。"
+            )
+        else:
+            handheld_contract_lines.append(
+                f"- {config_id}：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”，"
+                "且该正文不得出现完整否定短语“本张图不启用手持场景”。"
+            )
+
+        binding = str(overrides.get("绑定角度槽位") or "")
+        asset_id, slot = _resolve_bound_angle_literal(binding, qualified, "最终提示词编译")
+        binding_contract_lines.append(
+            f"- {config_id}：final_prompt 正文必须原样出现源图编号“{asset_id}”，"
+            f"并且必须原样出现“{slot} 槽位”或“槽位 {slot}”中的至少一种。"
+        )
+
+    all_angle_assets = {
+        str(item.get("source_asset_id") or "").strip()
+        for item in angle_inventory.get("angle_slots", [])
+        if isinstance(item, Mapping)
+    }
+    rejected_assets = sorted(
+        asset_id for asset_id in all_angle_assets if asset_id and asset_id not in qualified
+    )
+    if rejected_assets:
+        forbidden_angle_contract = (
+            "全批每一份 final_prompt 正文均不得出现以下任何被拒源图编号："
+            f"{json.dumps(rejected_assets, ensure_ascii=False)}；"
+            "也不得出现“D 槽位”或“槽位 D”。"
+        )
+    else:
+        forbidden_angle_contract = (
+            "全批每一份 final_prompt 正文均不得出现“D 槽位”或“槽位 D”；"
+            "本次角度表没有需要另列的被拒源图编号。"
+        )
+    literal_contract = "\n".join(
+        (
+            "【逐编号字面契约】",
+            "以下每条只允许由同一 config_id 的 final_prompt 正文满足；negative_prompt、"
+            "其他配置正文、【正式变量配置】或其他上游内容中出现相同字样，均不算满足。",
+            "",
+            "【手持状态】",
+            *handheld_contract_lines,
+            "",
+            "注意：“本张图不启用手持场景”包含“启用手持场景”作为子串。"
+            "对启用手持的配置，完整否定短语一旦出现即为不合格，"
+            "不能用其中的肯定子串充当肯定要求。",
+            "",
+            "【角度绑定】",
+            *binding_contract_lines,
+            "",
+            forbidden_angle_contract,
+        )
+    )
     facts = {
         "product_type": requirements.product_type,
         "height": f"约 {requirements.height_cm} 厘米",
@@ -1312,6 +1388,8 @@ def build_final_prompt_batch_prompt(
 恰好 {expected_handheld} 份保持启用手持；禁止 D、被拒绝源图、倾倒、加热、沸腾、热水动作，以及容量、其他尺寸、重量、具体材质、耐热、认证、品牌和型号等未确认事实。
 不得新增变量配置没有的道具、文字、卖点或页面任务，不得把 Skill 或运行规则正文复制成最终画面要求。
 只返回一个 JSON 对象，形状必须严格为 {{"prompts":[{{"config_id":"...","final_prompt":"...","negative_prompt":"..."}}]}}，不要 Markdown、说明、上游路径、图片、QC 或其他字段。
+
+{literal_contract}
 
 【Skill 原文】
 {skill_text}

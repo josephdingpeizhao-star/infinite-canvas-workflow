@@ -16,6 +16,7 @@ if str(BRIDGE) not in sys.path:
 
 from codex_dev_downstream import (  # noqa: E402
     artifact_file_under_root,
+    build_final_prompt_batch_prompt,
     load_skill_runtime_package,
     load_typed_artifact,
     parse_user_confirmed_requirements,
@@ -34,6 +35,94 @@ NOTES = (
 )
 
 
+FINAL_PROMPT_BINDINGS = {
+    "main": (
+        ("img_002", "A"),
+        ("img_006", "B"),
+        ("img_007", "C"),
+        ("img_003", "A"),
+        ("img_006", "B"),
+        ("img_004", "A"),
+    ),
+    "detail": (
+        ("img_002", "A"),
+        ("img_006", "B"),
+        ("img_007", "C"),
+        ("img_003", "A"),
+        ("img_004", "A"),
+        ("img_001", "A"),
+        ("img_006", "B"),
+        ("img_002", "A"),
+    ),
+}
+
+
+def final_prompt_angle_inventory() -> dict[str, object]:
+    records = [
+        {
+            "source_asset_id": asset_id,
+            "angle_slot": slot,
+            "admission_result": "合格，可进入对应槽位",
+        }
+        for asset_id, slot in (
+            ("img_001", "A"),
+            ("img_002", "A"),
+            ("img_003", "A"),
+            ("img_004", "A"),
+            ("img_006", "B"),
+            ("img_007", "C"),
+        )
+    ]
+    records.extend(
+        {
+            "source_asset_id": asset_id,
+            "angle_slot": "不适合归入现有槽位",
+            "admission_result": "不适合入库，需重拍",
+        }
+        for asset_id in ("img_005", "img_008", "img_009", "img_010", "img_011", "img_012")
+    )
+    return {"angle_slots": records, "missing_angle_slots": ["D"]}
+
+
+def final_prompt_variable_config(mode: str, enabled_ids: set[str]) -> dict[str, object]:
+    common = {
+        "产品类型": "家居盛水水壶",
+        "已确认高度": "约 25 厘米",
+        "动作边界": "允许清水静置；禁止倾倒、加热、沸腾或热水动作",
+    }
+    configs: list[dict[str, object]] = []
+    for index, (asset_id, slot) in enumerate(FINAL_PROMPT_BINDINGS[mode], start=1):
+        config_id = f"{mode}_{index:02d}"
+        overrides = {
+            "绑定角度槽位": f"{slot} 槽位，绑定源图 {asset_id}；本张仅调用这一张白底图。",
+            "手持交互声明": (
+                "本张图启用手持场景。手持子场景类型：静态握持"
+                if config_id in enabled_ids
+                else "本张图不启用手持场景"
+            ),
+        }
+        resolved = dict(common)
+        resolved.update(overrides)
+        configs.append(
+            {
+                "config_id": config_id,
+                "output_type": mode,
+                "per_image_overrides": overrides,
+                "resolved_variable_config_sha256": stable_json_sha256(resolved),
+                "notes": "正式变量配置测试夹具",
+            }
+        )
+    return {
+        "product_id": "p1",
+        "artifact_type": f"{mode}_variable_config",
+        "config_count": len(configs),
+        "upstream_artifacts": {},
+        "common_constraints": common,
+        "configs": configs,
+        "notes": "正式变量配置测试夹具",
+    }
+
+
 class CodexDevDownstreamTest(unittest.TestCase):
     def make_manifest(self, root: Path) -> dict[str, object]:
         artifacts_root = root / "workspace" / "artifacts"
@@ -46,6 +135,152 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 "product_identity_archive": str(artifacts_root / "identity"),
             },
         }
+
+    def build_final_prompt(
+        self,
+        mode: str,
+        enabled_ids: set[str],
+        *,
+        angle_inventory: dict[str, object] | None = None,
+        variable_config: dict[str, object] | None = None,
+    ) -> str:
+        return build_final_prompt_batch_prompt(
+            mode=mode,
+            product_id="p1",
+            repository_root=ROOT,
+            identity={"artifact_type": "product_identity_archive"},
+            style_master={"artifact_type": "style_master"},
+            angle_inventory=angle_inventory or final_prompt_angle_inventory(),
+            variable_config=variable_config or final_prompt_variable_config(mode, enabled_ids),
+            requirements=parse_user_confirmed_requirements({"notes": NOTES}),
+        )
+
+    def test_final_prompt_builder_lists_main_handheld_literal_contract_per_config(self) -> None:
+        prompt = self.build_final_prompt("main", {"main_02", "main_05"})
+
+        for config_id in ("main_02", "main_05"):
+            self.assertIn(
+                f"- {config_id}：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”，"
+                "且该正文不得出现完整否定短语“本张图不启用手持场景”。",
+                prompt,
+            )
+        for config_id in ("main_01", "main_03", "main_04", "main_06"):
+            self.assertIn(
+                f"- {config_id}：final_prompt 正文必须原样出现完整否定短语"
+                "“本张图不启用手持场景”。",
+                prompt,
+            )
+
+    def test_final_prompt_builder_lists_detail_handheld_literal_contract_per_config(self) -> None:
+        prompt = self.build_final_prompt("detail", {"detail_02"})
+
+        self.assertIn(
+            "- detail_02：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”，"
+            "且该正文不得出现完整否定短语“本张图不启用手持场景”。",
+            prompt,
+        )
+        for index in (1, 3, 4, 5, 6, 7, 8):
+            self.assertIn(
+                f"- detail_{index:02d}：final_prompt 正文必须原样出现完整否定短语"
+                "“本张图不启用手持场景”。",
+                prompt,
+            )
+
+    def test_final_prompt_builder_lists_bound_asset_and_slot_contract_per_config(self) -> None:
+        enabled = {"main": {"main_02", "main_05"}, "detail": {"detail_02"}}
+        for mode in ("main", "detail"):
+            prompt = self.build_final_prompt(mode, enabled[mode])
+            for index, (asset_id, slot) in enumerate(FINAL_PROMPT_BINDINGS[mode], start=1):
+                with self.subTest(mode=mode, index=index):
+                    self.assertIn(
+                        f"- {mode}_{index:02d}：final_prompt 正文必须原样出现源图编号“{asset_id}”，"
+                        f"并且必须原样出现“{slot} 槽位”或“槽位 {slot}”中的至少一种。",
+                        prompt,
+                    )
+
+    def test_final_prompt_builder_derives_handheld_contract_from_variable_config(self) -> None:
+        prompt = self.build_final_prompt("main", {"main_01", "main_03"})
+
+        for config_id in ("main_01", "main_03"):
+            self.assertIn(
+                f"- {config_id}：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”，"
+                "且该正文不得出现完整否定短语“本张图不启用手持场景”。",
+                prompt,
+            )
+        for config_id in ("main_02", "main_05"):
+            self.assertIn(
+                f"- {config_id}：final_prompt 正文必须原样出现完整否定短语"
+                "“本张图不启用手持场景”。",
+                prompt,
+            )
+            self.assertNotIn(
+                f"- {config_id}：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”",
+                prompt,
+            )
+
+    def test_final_prompt_builder_preserves_existing_batch_requirements(self) -> None:
+        for mode, enabled_ids, ratio, handheld_count in (
+            ("main", {"main_02", "main_05"}, "1:1", 2),
+            ("detail", {"detail_02"}, "3:4", 1),
+        ):
+            with self.subTest(mode=mode):
+                prompt = self.build_final_prompt(mode, enabled_ids)
+                self.assertIn(f"画布比例 {ratio}", prompt)
+                self.assertIn("产品高度约 25 厘米", prompt)
+                self.assertIn(f"恰好 {handheld_count} 份保持启用手持", prompt)
+                self.assertIn("禁止 D、被拒绝源图、倾倒、加热", prompt)
+                self.assertIn("必须且只返回这些配置", prompt)
+                self.assertIn("只返回一个 JSON 对象", prompt)
+
+    def test_final_prompt_builder_disambiguates_negative_handheld_substring(self) -> None:
+        prompt = self.build_final_prompt("main", {"main_02", "main_05"})
+
+        self.assertIn(
+            "注意：“本张图不启用手持场景”包含“启用手持场景”作为子串。"
+            "对启用手持的配置，完整否定短语一旦出现即为不合格，"
+            "不能用其中的肯定子串充当肯定要求。",
+            prompt,
+        )
+
+    def test_final_prompt_builder_rejects_binding_with_no_qualified_asset(self) -> None:
+        variable_config = final_prompt_variable_config("main", {"main_02", "main_05"})
+        first = variable_config["configs"][0]
+        first["per_image_overrides"]["绑定角度槽位"] = (
+            "PRIVATE_BINDING；A 槽位，绑定源图 img_999"
+        )
+        resolved = dict(variable_config["common_constraints"])
+        resolved.update(first["per_image_overrides"])
+        first["resolved_variable_config_sha256"] = stable_json_sha256(resolved)
+
+        with self.assertRaises(ExecutorExecutionError) as caught:
+            self.build_final_prompt(
+                "main",
+                {"main_02", "main_05"},
+                variable_config=variable_config,
+            )
+
+        self.assertEqual("codex-dev 收到的最终提示词编译角度绑定异常", str(caught.exception))
+        self.assertNotIn("PRIVATE_BINDING", str(caught.exception))
+
+    def test_final_prompt_builder_rejects_binding_with_multiple_qualified_assets(self) -> None:
+        variable_config = final_prompt_variable_config("main", {"main_02", "main_05"})
+        first = variable_config["configs"][0]
+        first["per_image_overrides"]["绑定角度槽位"] = (
+            "PRIVATE_BINDING；A 槽位，绑定源图 img_001 和 img_002"
+        )
+        resolved = dict(variable_config["common_constraints"])
+        resolved.update(first["per_image_overrides"])
+        first["resolved_variable_config_sha256"] = stable_json_sha256(resolved)
+
+        with self.assertRaises(ExecutorExecutionError) as caught:
+            self.build_final_prompt(
+                "main",
+                {"main_02", "main_05"},
+                variable_config=variable_config,
+            )
+
+        self.assertEqual("codex-dev 收到的最终提示词编译角度绑定异常", str(caught.exception))
+        self.assertNotIn("PRIVATE_BINDING", str(caught.exception))
 
     def test_user_requirements_are_parsed_from_manifest_notes(self) -> None:
         requirements = parse_user_confirmed_requirements({"notes": NOTES})
