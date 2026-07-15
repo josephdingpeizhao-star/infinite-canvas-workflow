@@ -16,19 +16,19 @@ The projection gains two control nodes:
   (``<manifest_dir>/<pid>.events.jsonl``). The journal file, not the canvas,
   is the source of truth for execution history.
 
-Steps are named after the demo pipeline vocabulary (make_demo_workspace
-STEPS); phase 4 ships the demo executor only. Real executors (Codex threads,
-ComfyUI submission) plug into EXECUTORS later without touching the gates.
+Steps are named after the workflow vocabulary. Concrete providers implement a
+shared executor contract and are selected through a registry-backed composition
+root without changing these gates.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import time
 from pathlib import Path
 from typing import Any
+
+from executor_contract import ExecutionRequest, ExecutionResult, Executor, ExecutorExecutionError
 
 BRIDGE_DIR = Path(__file__).resolve().parent
 
@@ -76,8 +76,7 @@ class RunValidationError(ValueError):
     """Command rejected by gate 1 (parse) or gate 2 (route check)."""
 
 
-class RunExecutionError(RuntimeError):
-    """Executor subprocess failed (gate 3)."""
+RunExecutionError = ExecutorExecutionError
 
 
 def run_node_id(product_id: str) -> str:
@@ -302,49 +301,7 @@ def log_node_op(product_id: str, events: list[dict[str, Any]], *, x: int = 1160,
     }
 
 
-class DemoWorkspaceExecutor:
-    """Phase-4 default executor: advances the throwaway demo workspace.
+def execute_step(executor: Executor, step: str, payload: Any = None) -> ExecutionResult:
+    """Invoke an executor without exposing provider details to orchestration."""
 
-    Runs ``make_demo_workspace.py --advance <step> --root <workspace_root>``
-    as a subprocess; that script refuses roots without the demo marker, so
-    real repository data can never be touched by canvas commands."""
-
-    name = "demo"
-
-    def __init__(self, workspace_root: Path):
-        self.workspace_root = workspace_root
-
-    def run(self, step: str) -> str:
-        if step not in STEP_GRAPH_NODES:
-            raise RunExecutionError(f"executor 不认识步骤：{step}")
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    str(BRIDGE_DIR / "make_demo_workspace.py"),
-                    "--advance",
-                    step,
-                    "--root",
-                    str(self.workspace_root),
-                ],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=120,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise RunExecutionError(f"步骤 {step} 执行超时（120s）") from exc
-        if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "").strip().splitlines()
-            raise RunExecutionError(tail[-1] if tail else f"exit {result.returncode}")
-        return (result.stdout or "").strip().splitlines()[-1] if result.stdout.strip() else "ok"
-
-
-def build_executor(name: str, manifest: dict[str, Any]) -> DemoWorkspaceExecutor:
-    if name != "demo":
-        raise RunValidationError(f"未注册的执行器：{name}（阶段4仅内置 demo）")
-    workspace = manifest.get("workspace") or {}
-    root = workspace.get("root")
-    if not root:
-        raise RunValidationError("manifest.workspace.root 缺失，demo 执行器无法定位工作区")
-    return DemoWorkspaceExecutor(Path(str(root)))
+    return executor.execute(ExecutionRequest(step=step, payload=payload))

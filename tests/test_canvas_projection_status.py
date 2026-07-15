@@ -13,6 +13,7 @@ for extra in (ROOT / "scripts", ROOT / "canvas-bridge"):
 
 import detect_current_state  # noqa: E402
 import projector  # noqa: E402
+import spike_canvas_push  # noqa: E402
 
 
 GRAPH = json.loads((ROOT / "manifests" / "workflow_graph.template.json").read_text(encoding="utf-8"))
@@ -121,6 +122,37 @@ class NodeRuntimeViewTest(unittest.TestCase):
         self.assertIn("wf:status_test:art_product_identity", changed_ids)
         self.assertIn("wf:status_test:stage_style_master", changed_ids)
         self.assertLess(len(ops), 8, sorted(changed_ids))
+
+
+class ServeProjectionFallbackTest(unittest.TestCase):
+    def test_fallback_batches_split_large_deletes_and_preserve_operation_order(self) -> None:
+        ops = [
+            {"type": "delete_node", "ids": ["a", "b", "c", "d", "e"]},
+            {"type": "add_node", "id": "node-1"},
+            {"type": "connect_nodes", "fromNodeId": "node-1", "toNodeId": "node-2"},
+            {"type": "delete_node", "ids": ["x", "y"]},
+            {"type": "add_node", "id": "node-2"},
+        ]
+
+        batches = spike_canvas_push.projection_fallback_batches(
+            ops,
+            batch_size=2,
+            delete_chunk_size=2,
+        )
+
+        self.assertTrue(all(len(batch) <= 2 for batch in batches))
+        self.assertEqual(
+            [
+                {"type": "delete_node", "ids": ["a", "b"]},
+                {"type": "delete_node", "ids": ["c", "d"]},
+                {"type": "delete_node", "ids": ["e"]},
+                {"type": "add_node", "id": "node-1"},
+                {"type": "connect_nodes", "fromNodeId": "node-1", "toNodeId": "node-2"},
+                {"type": "delete_node", "ids": ["x", "y"]},
+                {"type": "add_node", "id": "node-2"},
+            ],
+            [op for batch in batches for op in batch],
+        )
 
 
 if __name__ == "__main__":

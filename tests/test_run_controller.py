@@ -14,6 +14,10 @@ for extra in (ROOT / "scripts", ROOT / "canvas-bridge"):
         sys.path.insert(0, str(extra))
 
 import run_controller  # noqa: E402
+from demo_executor import DemoWorkspaceExecutor  # noqa: E402
+from executor_contract import ExecutionRequest, ExecutionResult  # noqa: E402
+from executor_factory import build_executor  # noqa: E402
+from executor_registry import UnknownExecutorError  # noqa: E402
 
 
 def make_route(
@@ -197,36 +201,51 @@ class DemoExecutorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "ws"
             self._init_workspace(root)
-            executor = run_controller.DemoWorkspaceExecutor(root)
-            detail = executor.run("identity")
-            self.assertIn("advanced", detail)
+            executor = DemoWorkspaceExecutor(root)
+            result = executor.execute(ExecutionRequest(step="identity"))
+            self.assertIn("advanced", result.detail)
+            self.assertEqual("demo", result.provider)
             artifact = root / "artifacts" / "identity" / "product_identity_archive.json"
             data = json.loads(artifact.read_text(encoding="utf-8"))
             self.assertEqual("product_identity_archive", data["artifact_type"])
 
     def test_root_without_marker_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            executor = run_controller.DemoWorkspaceExecutor(Path(tmp))
+            executor = DemoWorkspaceExecutor(Path(tmp))
             with self.assertRaises(run_controller.RunExecutionError):
-                executor.run("identity")
+                executor.execute(ExecutionRequest(step="identity"))
 
     def test_unknown_step_refused_without_subprocess(self) -> None:
-        executor = run_controller.DemoWorkspaceExecutor(Path("Z:/nowhere"))
+        executor = DemoWorkspaceExecutor(Path("Z:/nowhere"))
         with self.assertRaises(run_controller.RunExecutionError):
-            executor.run("banana")
+            executor.execute(ExecutionRequest(step="banana"))
+
+
+class UpperLayerExecutorBoundaryTest(unittest.TestCase):
+    def test_controller_uses_protocol_without_provider_knowledge(self) -> None:
+        class FakeExecutor:
+            name = "future-provider"
+
+            def execute(self, request: ExecutionRequest) -> ExecutionResult:
+                return ExecutionResult(detail=f"future handled {request.step}", provider=self.name)
+
+        result = run_controller.execute_step(FakeExecutor(), "identity")
+
+        self.assertEqual("future handled identity", result.detail)
+        self.assertEqual("future-provider", result.provider)
 
 
 class BuildExecutorTest(unittest.TestCase):
     def test_unregistered_executor_rejected(self) -> None:
-        with self.assertRaises(run_controller.RunValidationError):
-            run_controller.build_executor("codex", {"workspace": {"root": "D:/x"}})
+        with self.assertRaises(UnknownExecutorError):
+            build_executor("codex", {"workspace": {"root": "D:/x"}})
 
     def test_missing_workspace_root_rejected(self) -> None:
-        with self.assertRaises(run_controller.RunValidationError):
-            run_controller.build_executor("demo", {})
+        with self.assertRaises(ValueError):
+            build_executor("demo", {})
 
     def test_demo_executor_built(self) -> None:
-        executor = run_controller.build_executor("demo", {"workspace": {"root": "D:/dev/canvas-demo-workspace"}})
+        executor = build_executor("demo", {"workspace": {"root": "D:/dev/canvas-demo-workspace"}})
         self.assertEqual(Path("D:/dev/canvas-demo-workspace"), executor.workspace_root)
 
 

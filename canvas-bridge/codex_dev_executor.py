@@ -1,0 +1,1853 @@
+"""Optional development adapter backed by canvas-agent's Codex HTTP/SSE API.
+
+The canvas runtime still depends only on the provider-neutral executor contract.
+All Codex thread, transport, prompt, attachment, and response details stay here.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import re
+import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Callable, Mapping, Protocol
+
+from codex_dev_downstream import (
+    DETAIL_CHUNK_COUNT,
+    DetailChunkEnvelopeCorrection,
+    DetailChunkTransportCorruption,
+    artifact_file_under_root,
+    assemble_detail_variable_config_chunks,
+    build_detail_variable_config_chunk_prompt,
+    detail_chunk_business_fingerprint,
+    build_final_prompt_batch_prompt,
+    build_final_prompt_bundle,
+    build_variable_config_prompt,
+    final_prompt_bundle_targets,
+    load_typed_artifact,
+    parse_final_prompt_batch_response,
+    parse_detail_variable_config_chunk,
+    parse_user_confirmed_requirements,
+    parse_variable_config_response,
+    write_bundle_exclusive,
+    write_json_exclusive,
+)
+from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext, ExecutorExecutionError
+
+
+DEFAULT_CONFIG_PATH = Path.home() / ".infinite-canvas" / "canvas-agent.json"
+SUPPORTED_IMAGE_SUFFIXES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+REQUIRED_EVIDENCE_FIELDS = (
+    "confirmed_facts",
+    "visible_inferences",
+    "unknowns",
+    "prohibited_inventions",
+)
+SUPPORTED_STEPS = frozenset(
+    {
+        "identity",
+        "style_master",
+        "angle_inventory",
+        "main_vc",
+        "detail_vc",
+        "final_prompts",
+    }
+)
+FORBIDDEN_OUTPUT_FIELDS = {
+    "style_master",
+    "angle_inventory",
+    "angle_slots",
+    "variable_configs",
+    "main_variable_configs",
+    "detail_variable_configs",
+    "final_prompt",
+    "final_prompts",
+    "images",
+    "qc_results",
+}
+STYLE_MASTER_FORBIDDEN_OUTPUT_FIELDS = {
+    "product_identity_archive",
+    "identity",
+    "angle_inventory",
+    "angle_slots",
+    "variable_configs",
+    "main_variable_configs",
+    "detail_variable_configs",
+    "final_prompt",
+    "final_prompts",
+    "images",
+    "qc_results",
+}
+REQUIRED_STYLE_MASTER_FIELDS = (
+    "visual_positioning",
+    "composition_and_layout",
+    "background_rules",
+    "color_rules",
+    "lighting_rules",
+    "subject_presentation_rules",
+    "prop_rules",
+    "typography_rules",
+    "negative_space_rules",
+    "visual_mood",
+    "reusable_rules",
+    "fidelity_enhancements",
+    "forbidden_elements",
+    "concise_style_master",
+)
+ANGLE_SLOT_VALUES = frozenset({"A", "B", "C", "D", "不适合归入现有槽位"})
+ANGLE_ADMISSION_VALUES = frozenset(
+    {
+        "合格，可进入对应槽位",
+        "勉强可用，但建议重拍",
+        "不适合入库，需重拍",
+    }
+)
+ANGLE_SUITABILITY_PREFIXES = ("适合", "勉强适合", "不适合")
+ANGLE_SLOT_REQUIRED_FIELDS = (
+    "angle_slot",
+    "source_asset_id",
+    "camera_angle",
+    "decision_basis",
+    "naturally_visible_content",
+    "must_not_force_content",
+    "suitable_page_tasks",
+    "unsuitable_page_tasks",
+    "main_image_suitability",
+    "detail_image_suitability",
+    "risk_notes",
+    "recommended_task_binding",
+    "admission_result",
+    "merged_reference_note",
+    "usable_for",
+    "notes",
+)
+ANGLE_LIST_FIELDS = (
+    "naturally_visible_content",
+    "must_not_force_content",
+    "suitable_page_tasks",
+    "unsuitable_page_tasks",
+    "usable_for",
+)
+ANGLE_FORBIDDEN_OUTPUT_FIELDS = {
+    "product_identity_archive",
+    "identity",
+    "style_master",
+    "set_product_identity",
+    "set_angle_layout_inventory",
+    "set_layouts",
+    "set_arrangements",
+    "variable_configs",
+    "main_variable_configs",
+    "detail_variable_configs",
+    "final_prompt",
+    "final_prompts",
+    "images",
+    "qc_results",
+}
+ANGLE_ALLOWED_OUTPUT_FIELDS = {
+    "product_id",
+    "artifact_type",
+    "image_assets",
+    "angle_slots",
+    "missing_angle_slots",
+    "retake_recommendations",
+    "notes",
+}
+
+
+@dataclass(frozen=True)
+class CodexAttachment:
+    """One image attachment accepted by canvas-agent's Codex endpoint."""
+
+    name: str
+    mime_type: str
+    data_url: str
+
+    def as_payload(self) -> dict[str, str]:
+        return {"name": self.name, "type": self.mime_type, "dataUrl": self.data_url}
+
+
+@dataclass(frozen=True)
+class CodexTurnResult:
+    """The final assistant text and the dedicated canvas-agent thread id."""
+
+    text: str
+    thread_id: str
+
+
+class CodexTransport(Protocol):
+    def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+        """Run one Codex turn through canvas-agent."""
+
+    def continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        """Continue an existing dedicated canvas-agent Codex thread."""
+
+
+class CanvasAgentTransportError(RuntimeError):
+    """Sanitized canvas-agent failure classified for the adapter boundary."""
+
+    _MESSAGES = {
+        "missing_config": "canvas-agent 配置缺失",
+        "unsafe_config": "canvas-agent 配置不是安全的本机地址",
+        "connection": "canvas-agent 连接失败",
+        "thread": "Codex 线程失败",
+        "response": "canvas-agent 返回异常",
+        "timeout": "Codex 线程等待超时",
+    }
+
+    def __init__(self, code: str, _private_detail: str = ""):
+        self.code = code
+        super().__init__(self._MESSAGES.get(code, "canvas-agent 执行失败"))
+
+
+class CanvasAgentCodexTransport:
+    """Standard-library HTTP/SSE client for canvas-agent's existing Codex API."""
+
+    def __init__(
+        self,
+        *,
+        config_path: Path | None = None,
+        config: Mapping[str, str] | None = None,
+        opener: Callable[..., Any] | None = None,
+        timeout: float = 300.0,
+        model: str = "gpt-5.5",
+        max_attachment_payload_bytes: int = 20 * 1024 * 1024,
+        max_request_body_bytes: int = 28 * 1024 * 1024,
+    ) -> None:
+        self.config_path = config_path or DEFAULT_CONFIG_PATH
+        self.config = dict(config) if config is not None else None
+        self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({})).open
+        self.timeout = timeout
+        self.model = model
+        self.max_attachment_payload_bytes = max_attachment_payload_bytes
+        self.max_request_body_bytes = max_request_body_bytes
+
+    def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+        error_code = ""
+        try:
+            return self._run_turn(prompt, attachments)
+        except CanvasAgentTransportError as exc:
+            error_code = exc.code
+        except Exception:
+            error_code = "thread"
+        raise CanvasAgentTransportError(error_code or "thread")
+
+    def continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        error_code = ""
+        try:
+            return self._continue_turn(thread_id, prompt, attachments)
+        except CanvasAgentTransportError as exc:
+            error_code = exc.code
+        except Exception:
+            error_code = "thread"
+        raise CanvasAgentTransportError(error_code or "thread")
+
+    def _run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+        chunks = self._attachment_chunks(attachments)
+        config = self._load_config()
+        base_url = config["url"].rstrip("/")
+        token = config["token"]
+        client_id = f"codex-dev-{uuid.uuid4()}"
+        events_url = f"{base_url}/events?{urllib.parse.urlencode({'clientId': client_id})}"
+        events_request = self._request("GET", events_url, token)
+
+        try:
+            events_response = self.opener(events_request, timeout=self.timeout)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise CanvasAgentTransportError("connection") from None
+
+        try:
+            with events_response as event_stream:
+                thread_response = self._json_request(
+                    "POST",
+                    f"{base_url}/agent/codex/threads/new",
+                    token,
+                    {"model": self.model},
+                    error_code="thread",
+                )
+                thread = thread_response.get("thread") if isinstance(thread_response, dict) else None
+                thread_id = str(thread.get("id") or "") if isinstance(thread, dict) else ""
+                if not thread_response.get("ok") or not thread_id:
+                    raise CanvasAgentTransportError("thread")
+
+                if len(chunks) == 1:
+                    self._start_turn(base_url, token, thread_id, prompt, chunks[0])
+                    final_text, _assistant_count, _user_count = self._read_new_assistant(
+                        event_stream,
+                        base_url,
+                        token,
+                        thread_id,
+                        previous_assistant_count=0,
+                        previous_user_count=0,
+                    )
+                    return CodexTurnResult(text=final_text, thread_id=thread_id)
+
+                assistant_count = 0
+                user_count = 0
+                total = len(chunks)
+                for index, chunk in enumerate(chunks, start=1):
+                    if index == 1:
+                        batch_prompt = prompt
+                    else:
+                        batch_prompt = "继续同一 identity 产品身份建档任务。"
+                    batch_prompt += (
+                        f"\n\n由于图片总量超过本地接口单次上限，这是第 {index}/{total} 批图片。"
+                        "本轮只观察并记录这些图片中的产品事实、可见推断、无法确认项和禁止虚构项；"
+                        "不要提前生成最终档案或其他工作流产物。"
+                        "本轮必须返回非空 JSON，对象顶层键为 batch_observation，"
+                        "其内容明确包含 confirmed_facts、visible_inferences、unknowns、prohibited_inventions 四个数组，"
+                        "仅记录本批图片观察，不得虚构。"
+                    )
+                    self._start_turn(base_url, token, thread_id, batch_prompt, chunk)
+                    _text, assistant_count, user_count = self._read_new_assistant(
+                        event_stream,
+                        base_url,
+                        token,
+                        thread_id,
+                        previous_assistant_count=assistant_count,
+                        previous_user_count=user_count,
+                    )
+
+                final_prompt = (
+                    prompt
+                    + "\n\n全部图片批次已经提供完毕。现在综合本线程全部图片观察，"
+                    "严格按上述 Skill、required reference 和 JSON 结构要求，只返回最终产品身份档案 JSON。"
+                )
+                self._start_turn(base_url, token, thread_id, final_prompt, ())
+                final_text, _assistant_count, _user_count = self._read_new_assistant(
+                    event_stream,
+                    base_url,
+                    token,
+                    thread_id,
+                    previous_assistant_count=assistant_count,
+                    previous_user_count=user_count,
+                )
+                return CodexTurnResult(text=final_text, thread_id=thread_id)
+        except CanvasAgentTransportError:
+            raise
+        except (TimeoutError, OSError) as exc:
+            raise CanvasAgentTransportError("timeout") from None
+
+    def _continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        if not thread_id:
+            raise CanvasAgentTransportError("thread")
+        chunks = self._attachment_chunks(attachments)
+        if len(chunks) != 1:
+            raise CanvasAgentTransportError("response")
+        config = self._load_config()
+        base_url = config["url"].rstrip("/")
+        token = config["token"]
+        client_id = f"codex-dev-{uuid.uuid4()}"
+        events_url = f"{base_url}/events?{urllib.parse.urlencode({'clientId': client_id})}"
+        events_request = self._request("GET", events_url, token)
+        try:
+            events_response = self.opener(events_request, timeout=self.timeout)
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+            raise CanvasAgentTransportError("connection") from None
+
+        try:
+            with events_response as event_stream:
+                previous_messages, previous_user_count = self._thread_message_summary(
+                    base_url,
+                    token,
+                    thread_id,
+                )
+                self._start_turn(base_url, token, thread_id, prompt, chunks[0])
+                final_text, _assistant_count, _user_count = self._read_new_assistant(
+                    event_stream,
+                    base_url,
+                    token,
+                    thread_id,
+                    previous_assistant_count=len(previous_messages),
+                    previous_user_count=previous_user_count,
+                )
+                return CodexTurnResult(text=final_text, thread_id=thread_id)
+        except CanvasAgentTransportError:
+            raise
+        except (TimeoutError, OSError):
+            raise CanvasAgentTransportError("timeout") from None
+
+    def _load_config(self) -> dict[str, str]:
+        data: Any = self.config
+        if data is None:
+            try:
+                data = json.loads(self.config_path.read_text(encoding="utf-8"))
+            except (FileNotFoundError, OSError, json.JSONDecodeError) as exc:
+                raise CanvasAgentTransportError("missing_config") from None
+        if not isinstance(data, Mapping):
+            raise CanvasAgentTransportError("missing_config")
+        url = str(data.get("url") or "").rstrip("/")
+        token = str(data.get("token") or "")
+        if not url or not token:
+            raise CanvasAgentTransportError("missing_config")
+        parsed = urllib.parse.urlparse(url)
+        if (
+            parsed.scheme != "http"
+            or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
+            raise CanvasAgentTransportError("unsafe_config")
+        return {"url": url, "token": token}
+
+    def _request(self, method: str, url: str, token: str, payload: Any | None = None) -> urllib.request.Request:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
+        request = urllib.request.Request(url, data=body, method=method)
+        request.add_header("x-canvas-agent-token", token)
+        if body is not None:
+            request.add_header("content-type", "application/json")
+        return request
+
+    def _json_request(
+        self,
+        method: str,
+        url: str,
+        token: str,
+        payload: Any,
+        *,
+        error_code: str,
+    ) -> dict[str, Any]:
+        request = self._request(method, url, token, payload)
+        try:
+            with self.opener(request, timeout=self.timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise CanvasAgentTransportError(error_code) from None
+        if not isinstance(result, dict):
+            raise CanvasAgentTransportError(error_code)
+        return result
+
+    def _start_turn(
+        self,
+        base_url: str,
+        token: str,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> None:
+        payload = {
+            "threadId": thread_id,
+            "prompt": prompt,
+            "attachments": [item.as_payload() for item in attachments],
+        }
+        body_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+        if body_size > self.max_request_body_bytes:
+            raise CanvasAgentTransportError("response")
+        turn_response = self._json_request(
+            "POST",
+            f"{base_url}/agent/codex/turn",
+            token,
+            payload,
+            error_code="thread",
+        )
+        if not turn_response.get("ok") or str(turn_response.get("threadId") or "") != thread_id:
+            raise CanvasAgentTransportError("thread")
+
+    def _attachment_chunks(
+        self, attachments: tuple[CodexAttachment, ...]
+    ) -> tuple[tuple[CodexAttachment, ...], ...]:
+        if not attachments:
+            return ((),)
+        chunks: list[tuple[CodexAttachment, ...]] = []
+        current: list[CodexAttachment] = []
+        current_size = 0
+        for attachment in attachments:
+            attachment_size = len(attachment.data_url.encode("ascii"))
+            if attachment_size > self.max_attachment_payload_bytes:
+                raise CanvasAgentTransportError("response")
+            if current and current_size + attachment_size > self.max_attachment_payload_bytes:
+                chunks.append(tuple(current))
+                current = []
+                current_size = 0
+            current.append(attachment)
+            current_size += attachment_size
+        if current:
+            chunks.append(tuple(current))
+        return tuple(chunks)
+
+    def _read_new_assistant(
+        self,
+        stream: Any,
+        base_url: str,
+        token: str,
+        thread_id: str,
+        *,
+        previous_assistant_count: int,
+        previous_user_count: int,
+    ) -> tuple[str, int, int]:
+        event_name = ""
+        data_lines: list[str] = []
+
+        while True:
+            raw_line = stream.readline()
+            if not raw_line:
+                raise CanvasAgentTransportError("thread")
+            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+            if line.startswith("event:"):
+                event_name = line[6:].strip()
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+                continue
+            if line:
+                continue
+
+            payload = self._event_payload(data_lines)
+            if event_name == "agent_done" and payload.get("agent") == "codex":
+                status = str(payload.get("status") or "")
+                if status and status != "completed":
+                    raise CanvasAgentTransportError("thread")
+                messages, user_count = self._thread_message_summary(base_url, token, thread_id)
+                if len(messages) > previous_assistant_count:
+                    return messages[-1], len(messages), user_count
+                if user_count > previous_user_count:
+                    raise CanvasAgentTransportError("response")
+
+            event_name = ""
+            data_lines = []
+
+    def _thread_message_summary(
+        self, base_url: str, token: str, thread_id: str
+    ) -> tuple[tuple[str, ...], int]:
+        safe_thread_id = urllib.parse.quote(thread_id, safe="")
+        response = self._json_request(
+            "GET",
+            f"{base_url}/agent/codex/threads/{safe_thread_id}",
+            token,
+            None,
+            error_code="thread",
+        )
+        if not response.get("ok"):
+            raise CanvasAgentTransportError("thread")
+        thread = response.get("thread")
+        if isinstance(thread, dict) and thread.get("id") and str(thread.get("id")) != thread_id:
+            raise CanvasAgentTransportError("response")
+        messages = response.get("messages")
+        if not isinstance(messages, list):
+            raise CanvasAgentTransportError("response")
+        assistant_messages: list[str] = []
+        user_count = 0
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            if message.get("role") == "user":
+                user_count += 1
+            if message.get("role") == "assistant":
+                text = str(message.get("text") or "").strip()
+                if text:
+                    assistant_messages.append(text)
+        return tuple(assistant_messages), user_count
+
+    @staticmethod
+    def _event_payload(data_lines: list[str]) -> dict[str, Any]:
+        if not data_lines:
+            return {}
+        try:
+            value = json.loads("\n".join(data_lines))
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+
+class CodexDevExecutor:
+    """Development-only structured-artifact executor using canvas-agent Codex turns."""
+
+    name = "codex-dev"
+
+    def __init__(
+        self,
+        context: ExecutorContext,
+        *,
+        transport: CodexTransport | None = None,
+        repository_root: Path | None = None,
+    ) -> None:
+        self.context = context
+        self.transport = transport or CanvasAgentCodexTransport()
+        self.repository_root = repository_root or self._default_repository_root(context.manifest_path)
+
+    def execute(self, request: ExecutionRequest) -> ExecutionResult:
+        safe_message = ""
+        try:
+            return self._execute(request)
+        except ExecutorExecutionError as exc:
+            safe_message = str(exc)
+        except Exception:
+            safe_message = "codex-dev 执行失败"
+        raise ExecutorExecutionError(safe_message or "codex-dev 执行失败")
+
+    def _execute(self, request: ExecutionRequest) -> ExecutionResult:
+        if request.step not in SUPPORTED_STEPS:
+            raise ExecutorExecutionError(
+                "codex-dev 仅支持 identity、style_master、angle_inventory、main_vc，"
+                f"detail_vc、final_prompts，拒绝步骤：{request.step}"
+            )
+        if self.context.environment.get("CODEX_DEV_ALLOW_REAL_EXECUTION") != "1":
+            raise ExecutorExecutionError("codex-dev 未获准真实执行；阶段 B 批准前保持禁用")
+
+        product_id = str(self.context.manifest.get("product_id") or "").strip()
+        if not product_id:
+            raise ExecutorExecutionError("codex-dev 无法执行：manifest.product_id 缺失")
+
+        if request.step == "style_master":
+            return self._execute_style_master(product_id)
+        if request.step == "angle_inventory":
+            return self._execute_angle_inventory(product_id)
+        if request.step == "main_vc":
+            return self._execute_main_variable_config(product_id)
+        if request.step == "detail_vc":
+            return self._execute_detail_variable_config(product_id)
+        if request.step == "final_prompts":
+            return self._execute_final_prompts(product_id)
+        return self._execute_identity(product_id)
+
+    def _execute_identity(self, product_id: str) -> ExecutionResult:
+        skill_text, reference_text = self._load_required_rules()
+        output_path = self._identity_output_path()
+        if output_path.exists():
+            raise ExecutorExecutionError("产品身份档案已存在，codex-dev 不会覆盖")
+        attachments, source_inputs = self._load_white_background_images()
+        prompt = self._build_prompt(product_id, source_inputs, skill_text, reference_text)
+        turn = self._run_transport(prompt, attachments)
+
+        archive = self._parse_archive(turn.text, product_id, source_inputs)
+        self._write_archive(output_path, archive)
+        return ExecutionResult(
+            detail="产品身份档案已生成",
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_style_master(self, product_id: str) -> ExecutionResult:
+        skill_text, reference_text = self._load_style_master_rules()
+        output_path = self._style_master_output_path()
+        if output_path.exists():
+            raise ExecutorExecutionError("风格母版已存在，codex-dev 不会覆盖")
+        attachments, source_references = self._load_style_reference_images()
+        identity_archive = self._load_product_identity_archive()
+        prompt = self._build_style_master_prompt(
+            product_id,
+            source_references,
+            identity_archive,
+            skill_text,
+            reference_text,
+        )
+        turn = self._run_transport(prompt, attachments)
+        artifact = self._parse_style_master(turn.text, product_id, source_references)
+        self._write_style_master(output_path, artifact)
+        return ExecutionResult(
+            detail="风格母版已生成",
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_angle_inventory(self, product_id: str) -> ExecutionResult:
+        self._validate_single_product_batch()
+        skill_text, reference_text = self._load_angle_inventory_rules()
+        output_path = self._angle_inventory_output_path()
+        if output_path.exists():
+            raise ExecutorExecutionError("角度槽位入库表已存在，codex-dev 不会覆盖")
+        attachments, source_inputs = self._load_white_background_images("angle_inventory")
+        identity_archive = self._load_product_identity_archive()
+        image_assets = self._build_angle_image_assets(source_inputs)
+        display_orientations = self._load_angle_display_orientations(source_inputs)
+        prompt = self._build_angle_inventory_prompt(
+            product_id,
+            image_assets,
+            display_orientations,
+            identity_archive,
+            skill_text,
+            reference_text,
+        )
+        turn = self._run_transport(prompt, attachments)
+        artifact = self._parse_angle_inventory(turn.text, product_id, image_assets)
+        self._write_angle_inventory(output_path, artifact)
+        return ExecutionResult(
+            detail="角度槽位入库表已生成",
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_main_variable_config(self, product_id: str) -> ExecutionResult:
+        self._validate_single_product_batch()
+        output_path = artifact_file_under_root(
+            self.context.manifest,
+            "main_variable_configs",
+            "main_variable_configs.json",
+        )
+        if output_path.exists():
+            raise ExecutorExecutionError("正式主图变量配置已存在，codex-dev 不会覆盖")
+
+        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        identity, identity_path = load_typed_artifact(
+            self.context.manifest,
+            "product_identity_archive",
+            "product_identity_archive.json",
+            "product_identity_archive",
+            "产品身份档案",
+        )
+        style_master, style_path = load_typed_artifact(
+            self.context.manifest,
+            "style_master",
+            "style_master.json",
+            "style_master",
+            "风格母版",
+        )
+        angle_inventory, angle_path = load_typed_artifact(
+            self.context.manifest,
+            "angle_inventory",
+            "angle_inventory.json",
+            "angle_inventory",
+            "角度槽位入库表",
+        )
+        prompt = build_variable_config_prompt(
+            mode="main",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            identity=identity,
+            style_master=style_master,
+            angle_inventory=angle_inventory,
+            requirements=requirements,
+        )
+        turn = self._run_transport(prompt, ())
+        artifact = parse_variable_config_response(
+            turn.text,
+            mode="main",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            upstream_paths={
+                "product_identity_archive": identity_path,
+                "style_master": style_path,
+                "angle_inventory": angle_path,
+            },
+        )
+        write_json_exclusive(output_path, artifact, "主图变量配置")
+        return ExecutionResult(
+            detail="主图变量配置已生成",
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_detail_variable_config(self, product_id: str) -> ExecutionResult:
+        self._validate_single_product_batch()
+        output_path = artifact_file_under_root(
+            self.context.manifest,
+            "detail_variable_configs",
+            "detail_variable_configs.json",
+        )
+        if output_path.exists():
+            raise ExecutorExecutionError("正式详情图变量配置已存在，codex-dev 不会覆盖")
+
+        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        identity, identity_path = load_typed_artifact(
+            self.context.manifest,
+            "product_identity_archive",
+            "product_identity_archive.json",
+            "product_identity_archive",
+            "产品身份档案",
+        )
+        style_master, style_path = load_typed_artifact(
+            self.context.manifest,
+            "style_master",
+            "style_master.json",
+            "style_master",
+            "风格母版",
+        )
+        angle_inventory, angle_path = load_typed_artifact(
+            self.context.manifest,
+            "angle_inventory",
+            "angle_inventory.json",
+            "angle_inventory",
+            "角度槽位入库表",
+        )
+        main_variable_config, main_path = load_typed_artifact(
+            self.context.manifest,
+            "main_variable_configs",
+            "main_variable_configs.json",
+            "main_variable_config",
+            "正式主图变量配置",
+        )
+        base_prompt = build_variable_config_prompt(
+            mode="detail",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            identity=identity,
+            style_master=style_master,
+            angle_inventory=angle_inventory,
+            requirements=requirements,
+            main_variable_config=main_variable_config,
+        )
+        chunks: list[Mapping[str, Any]] = []
+        recovery_attempts = 0
+        structure_correction_attempts = 0
+        thread_id = ""
+        for chunk_index in range(1, DETAIL_CHUNK_COUNT + 1):
+            expected_business_fingerprint = ""
+            prompt = build_detail_variable_config_chunk_prompt(base_prompt, chunk_index)
+            turn = (
+                self._run_transport(prompt, ())
+                if chunk_index == 1
+                else self._continue_transport(thread_id, prompt, ())
+            )
+            if chunk_index == 1:
+                thread_id = turn.thread_id
+            elif turn.thread_id != thread_id:
+                raise ExecutorExecutionError("codex-dev 收到无效的详情图变量配置线程返回")
+
+            while True:
+                try:
+                    chunk = parse_detail_variable_config_chunk(
+                        turn.text,
+                        chunk_index,
+                        requirements=requirements,
+                        angle_inventory=angle_inventory,
+                        prior_chunks=chunks,
+                    )
+                    if (
+                        expected_business_fingerprint
+                        and detail_chunk_business_fingerprint(chunk, chunk_index)
+                        != expected_business_fingerprint
+                    ):
+                        raise ExecutorExecutionError(
+                            "codex-dev 详情图变量配置格式纠正改变了业务内容"
+                        )
+                    break
+                except DetailChunkTransportCorruption:
+                    if recovery_attempts >= 2:
+                        raise ExecutorExecutionError(
+                            "codex-dev 详情图变量配置传输恢复已达到上限"
+                        ) from None
+                    recovery_attempts += 1
+                    repair_prompt = build_detail_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        repair=True,
+                    )
+                    turn = self._continue_transport(thread_id, repair_prompt, ())
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的详情图变量配置线程返回"
+                        )
+                except DetailChunkEnvelopeCorrection as error:
+                    if structure_correction_attempts >= 1:
+                        raise ExecutorExecutionError(
+                            "codex-dev 详情图变量配置格式纠正已达到上限"
+                        ) from None
+                    structure_correction_attempts += 1
+                    expected_business_fingerprint = error.business_fingerprint
+                    correction_prompt = build_detail_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        structure_correction=True,
+                    )
+                    turn = self._continue_transport(thread_id, correction_prompt, ())
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的详情图变量配置线程返回"
+                        )
+            chunks.append(chunk)
+
+        assembled_response = assemble_detail_variable_config_chunks(chunks)
+        artifact = parse_variable_config_response(
+            json.dumps(assembled_response, ensure_ascii=False),
+            mode="detail",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            upstream_paths={
+                "product_identity_archive": identity_path,
+                "style_master": style_path,
+                "angle_inventory": angle_path,
+                "main_variable_configs": main_path,
+            },
+        )
+        write_json_exclusive(output_path, artifact, "详情图变量配置")
+        detail = "详情图变量配置已生成"
+        recovery_notes: list[str] = []
+        if recovery_attempts:
+            recovery_notes.append(f"受控恢复 {recovery_attempts} 次")
+        if structure_correction_attempts:
+            recovery_notes.append(f"格式纠正 {structure_correction_attempts} 次")
+        if recovery_notes:
+            detail += f"（{'，'.join(recovery_notes)}）"
+        return ExecutionResult(
+            detail=detail,
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={
+                "thread_id": thread_id,
+                "recovery_attempts": recovery_attempts,
+                "structure_correction_attempts": structure_correction_attempts,
+            },
+        )
+
+    def _execute_final_prompts(self, product_id: str) -> ExecutionResult:
+        self._validate_single_product_batch()
+        index_path = artifact_file_under_root(
+            self.context.manifest,
+            "final_prompts",
+            "final_prompt_index.json",
+        )
+        output_dir = index_path.parent
+        if any(path.exists() for path in final_prompt_bundle_targets(output_dir)):
+            raise ExecutorExecutionError("正式最终提示词已存在，codex-dev 不会覆盖")
+
+        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        identity, identity_path = load_typed_artifact(
+            self.context.manifest,
+            "product_identity_archive",
+            "product_identity_archive.json",
+            "product_identity_archive",
+            "产品身份档案",
+        )
+        style_master, style_path = load_typed_artifact(
+            self.context.manifest,
+            "style_master",
+            "style_master.json",
+            "style_master",
+            "风格母版",
+        )
+        angle_inventory, angle_path = load_typed_artifact(
+            self.context.manifest,
+            "angle_inventory",
+            "angle_inventory.json",
+            "angle_inventory",
+            "角度槽位入库表",
+        )
+        main_variable_config, main_path = load_typed_artifact(
+            self.context.manifest,
+            "main_variable_configs",
+            "main_variable_configs.json",
+            "main_variable_config",
+            "正式主图变量配置",
+        )
+        detail_variable_config, detail_path = load_typed_artifact(
+            self.context.manifest,
+            "detail_variable_configs",
+            "detail_variable_configs.json",
+            "detail_variable_config",
+            "正式详情图变量配置",
+        )
+
+        main_prompt = build_final_prompt_batch_prompt(
+            mode="main",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            identity=identity,
+            style_master=style_master,
+            angle_inventory=angle_inventory,
+            variable_config=main_variable_config,
+            requirements=requirements,
+        )
+        main_turn = self._run_transport(main_prompt, ())
+        main_batch = parse_final_prompt_batch_response(
+            main_turn.text,
+            mode="main",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            variable_config=main_variable_config,
+        )
+
+        detail_prompt = build_final_prompt_batch_prompt(
+            mode="detail",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            identity=identity,
+            style_master=style_master,
+            angle_inventory=angle_inventory,
+            variable_config=detail_variable_config,
+            requirements=requirements,
+        )
+        detail_turn = self._run_transport(detail_prompt, ())
+        detail_batch = parse_final_prompt_batch_response(
+            detail_turn.text,
+            mode="detail",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            variable_config=detail_variable_config,
+        )
+
+        bundle = build_final_prompt_bundle(
+            product_id=product_id,
+            output_dir=output_dir,
+            prompt_batches={"main": main_batch, "detail": detail_batch},
+            variable_configs={
+                "main": (main_variable_config, main_path),
+                "detail": (detail_variable_config, detail_path),
+            },
+            upstream_paths={
+                "product_identity_archive": identity_path,
+                "style_master": style_path,
+                "angle_inventory": angle_path,
+            },
+            angle_inventory=angle_inventory,
+        )
+        write_bundle_exclusive(bundle, "最终提示词")
+        return ExecutionResult(
+            detail="最终提示词已生成",
+            outputs=(index_path,),
+            provider=self.name,
+            metadata={
+                "main_thread_id": main_turn.thread_id,
+                "detail_thread_id": detail_turn.thread_id,
+            },
+        )
+
+    def _run_transport(
+        self,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        try:
+            return self.transport.run_turn(prompt, attachments)
+        except CanvasAgentTransportError as exc:
+            messages = {
+                "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
+                "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
+                "connection": "codex-dev 无法连接 canvas-agent",
+                "thread": "codex-dev 的 Codex 线程执行失败",
+                "response": "codex-dev 收到无效的 canvas-agent 返回",
+                "timeout": "codex-dev 等待 Codex 线程超时",
+            }
+            raise ExecutorExecutionError(messages.get(exc.code, "codex-dev 执行失败")) from None
+        except Exception:
+            raise ExecutorExecutionError("codex-dev 的 Codex 线程执行失败") from None
+
+    def _continue_transport(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        try:
+            return self.transport.continue_turn(thread_id, prompt, attachments)
+        except CanvasAgentTransportError as exc:
+            messages = {
+                "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
+                "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
+                "connection": "codex-dev 无法连接 canvas-agent",
+                "thread": "codex-dev 的 Codex 线程执行失败",
+                "response": "codex-dev 收到无效的 canvas-agent 返回",
+                "timeout": "codex-dev 等待 Codex 线程超时",
+            }
+            raise ExecutorExecutionError(messages.get(exc.code, "codex-dev 执行失败")) from None
+        except Exception:
+            raise ExecutorExecutionError("codex-dev 的 Codex 线程执行失败") from None
+
+    @staticmethod
+    def _default_repository_root(manifest_path: Path | None) -> Path:
+        if manifest_path is not None and manifest_path.parent.name == "manifests":
+            return manifest_path.parent.parent
+        return Path(__file__).resolve().parent.parent
+
+    def _load_required_rules(self) -> tuple[str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "product-identity-archive"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            reference_text = (skill_root / "references" / "产品身份档案提示词.txt").read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ExecutorExecutionError("codex-dev 无法加载产品身份建档规则") from None
+        return skill_text, reference_text
+
+    def _load_style_master_rules(self) -> tuple[str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            reference_text = (skill_root / "references" / "反向提取风格母版提示词.txt").read_text(
+                encoding="utf-8"
+            )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法加载风格母版提取规则") from None
+        return skill_text, reference_text
+
+    def _load_angle_inventory_rules(self) -> tuple[str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "angle-inventory"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            reference_text = (skill_root / "references" / "角度槽位入库表生成与识别提示词.txt").read_text(
+                encoding="utf-8"
+            )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法加载角度槽位入库规则") from None
+        return skill_text, reference_text
+
+    def _validate_single_product_batch(self) -> None:
+        batch_type = str(self.context.manifest.get("batch_type") or "single").strip().lower()
+        declared_set = self.context.manifest.get("user_declared_set_product") is True
+        if batch_type != "single" or declared_set:
+            raise ExecutorExecutionError("codex-dev 角度槽位入库只支持单品批次")
+
+    def _load_white_background_images(
+        self,
+        purpose: str = "identity",
+    ) -> tuple[tuple[CodexAttachment, ...], tuple[str, ...]]:
+        image_paths = self._white_background_image_paths(purpose)
+
+        attachments: list[CodexAttachment] = []
+        try:
+            for path in image_paths:
+                mime_type = SUPPORTED_IMAGE_SUFFIXES[path.suffix.lower()]
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                attachments.append(
+                    CodexAttachment(
+                        name=path.name,
+                        mime_type=mime_type,
+                        data_url=f"data:{mime_type};base64,{encoded}",
+                    )
+                )
+        except OSError:
+            raise ExecutorExecutionError(f"codex-dev 无法读取 {purpose} 输入图片") from None
+        return tuple(attachments), tuple(path.name for path in image_paths)
+
+    def _white_background_image_paths(self, purpose: str) -> tuple[Path, ...]:
+        inputs = self.context.manifest.get("inputs")
+        raw_paths = inputs.get("white_bg_images") if isinstance(inputs, Mapping) else None
+        values = raw_paths if isinstance(raw_paths, list) else []
+        image_paths: list[Path] = []
+        for value in values:
+            path = Path(str(value))
+            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
+                image_paths.append(path)
+            elif path.is_dir():
+                image_paths.extend(
+                    item for item in sorted(path.iterdir(), key=lambda item: item.name.lower())
+                    if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+                )
+        if not image_paths:
+            raise ExecutorExecutionError(f"codex-dev 未找到 {purpose} 可用的白底图")
+        return tuple(image_paths)
+
+    def _load_style_reference_images(self) -> tuple[tuple[CodexAttachment, ...], tuple[str, ...]]:
+        inputs = self.context.manifest.get("inputs")
+        raw_paths = inputs.get("style_reference_images") if isinstance(inputs, Mapping) else None
+        values = raw_paths if isinstance(raw_paths, list) else []
+        image_paths: list[Path] = []
+        for value in values:
+            path = Path(str(value))
+            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
+                image_paths.append(path)
+            elif path.is_dir():
+                image_paths.extend(
+                    item for item in sorted(path.iterdir(), key=lambda item: item.name.lower())
+                    if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+                )
+        if not image_paths:
+            raise ExecutorExecutionError("codex-dev 未找到可用的风格参考图")
+
+        attachments: list[CodexAttachment] = []
+        try:
+            for path in image_paths:
+                mime_type = SUPPORTED_IMAGE_SUFFIXES[path.suffix.lower()]
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+                attachments.append(
+                    CodexAttachment(
+                        name=path.name,
+                        mime_type=mime_type,
+                        data_url=f"data:{mime_type};base64,{encoded}",
+                    )
+                )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法读取风格参考图") from None
+        return tuple(attachments), tuple(path.name for path in image_paths)
+
+    def _load_product_identity_archive(self) -> dict[str, Any]:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("product_identity_archive") if isinstance(artifacts, Mapping) else None
+        if not value:
+            raise ExecutorExecutionError("codex-dev 无法定位产品身份档案")
+        target = Path(str(value))
+        identity_path = target if target.suffix.lower() == ".json" else target / "product_identity_archive.json"
+        try:
+            archive = json.loads(identity_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的产品身份档案") from None
+        if not isinstance(archive, dict) or archive.get("artifact_type") != "product_identity_archive":
+            raise ExecutorExecutionError("codex-dev 无法读取有效的产品身份档案")
+        return archive
+
+    def _identity_output_path(self) -> Path:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("product_identity_archive") if isinstance(artifacts, Mapping) else None
+        if not value:
+            raise ExecutorExecutionError("codex-dev 无法定位产品身份档案输出位置")
+        target = Path(str(value))
+        output_path = target if target.suffix.lower() == ".json" else target / "product_identity_archive.json"
+        workspace = self.context.manifest.get("workspace")
+        artifacts_root_value = workspace.get("artifacts_root") if isinstance(workspace, Mapping) else None
+        if not artifacts_root_value:
+            raise ExecutorExecutionError("codex-dev 无法验证 manifest.workspace.artifacts_root")
+        try:
+            artifacts_root = Path(str(artifacts_root_value)).resolve()
+            resolved_output = output_path.resolve()
+            if not resolved_output.is_relative_to(artifacts_root):
+                raise ExecutorExecutionError("产品身份档案输出位置不在 manifest.workspace.artifacts_root 内")
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法验证产品身份档案输出位置") from None
+        return resolved_output
+
+    def _style_master_output_path(self) -> Path:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("style_master") if isinstance(artifacts, Mapping) else None
+        if not value:
+            raise ExecutorExecutionError("codex-dev 无法定位风格母版输出位置")
+        target = Path(str(value))
+        output_path = target if target.suffix.lower() == ".json" else target / "style_master.json"
+        workspace = self.context.manifest.get("workspace")
+        artifacts_root_value = workspace.get("artifacts_root") if isinstance(workspace, Mapping) else None
+        if not artifacts_root_value:
+            raise ExecutorExecutionError("codex-dev 无法验证 manifest.workspace.artifacts_root")
+        try:
+            artifacts_root = Path(str(artifacts_root_value)).resolve()
+            resolved_output = output_path.resolve()
+            if not resolved_output.is_relative_to(artifacts_root):
+                raise ExecutorExecutionError("风格母版输出位置不在 manifest.workspace.artifacts_root 内")
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法验证风格母版输出位置") from None
+        return resolved_output
+
+    def _angle_inventory_output_path(self) -> Path:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("angle_inventory") if isinstance(artifacts, Mapping) else None
+        if not value:
+            raise ExecutorExecutionError("codex-dev 无法定位角度槽位入库表输出位置")
+        target = Path(str(value))
+        output_path = target if target.suffix.lower() == ".json" else target / "angle_inventory.json"
+        workspace = self.context.manifest.get("workspace")
+        artifacts_root_value = workspace.get("artifacts_root") if isinstance(workspace, Mapping) else None
+        if not artifacts_root_value:
+            raise ExecutorExecutionError("codex-dev 无法验证 manifest.workspace.artifacts_root")
+        try:
+            artifacts_root = Path(str(artifacts_root_value)).resolve()
+            resolved_output = output_path.resolve()
+            if not resolved_output.is_relative_to(artifacts_root):
+                raise ExecutorExecutionError("角度槽位入库表输出位置不在 manifest.workspace.artifacts_root 内")
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法验证角度槽位入库表输出位置") from None
+        return resolved_output
+
+    @staticmethod
+    def _build_angle_image_assets(source_inputs: tuple[str, ...]) -> tuple[dict[str, str], ...]:
+        return tuple(
+            {
+                "asset_id": f"img_{index:03d}",
+                "file_path": filename,
+                "notes": "",
+            }
+            for index, filename in enumerate(source_inputs, start=1)
+        )
+
+    def _load_angle_display_orientations(
+        self,
+        source_inputs: tuple[str, ...],
+    ) -> tuple[dict[str, Any], ...]:
+        image_paths = self._white_background_image_paths("angle_inventory")
+        if tuple(path.name for path in image_paths) != source_inputs:
+            raise ExecutorExecutionError("codex-dev 无法核对 angle_inventory 图片方向")
+        rotations = {
+            1: "无需旋转",
+            3: "旋转180°",
+            6: "顺时针旋转90°",
+            8: "逆时针旋转90°",
+        }
+        result: list[dict[str, Any]] = []
+        try:
+            for index, path in enumerate(image_paths, start=1):
+                with path.open("rb") as stream:
+                    orientation = self._jpeg_exif_orientation(stream.read(256 * 1024))
+                if orientation in rotations and orientation != 1:
+                    result.append(
+                        {
+                            "source_asset_id": f"img_{index:03d}",
+                            "file_path": path.name,
+                            "exif_orientation": orientation,
+                            "display_rotation": rotations[orientation],
+                        }
+                    )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法读取 angle_inventory 图片方向") from None
+        return tuple(result)
+
+    @staticmethod
+    def _jpeg_exif_orientation(data: bytes) -> int | None:
+        try:
+            if len(data) < 4 or data[:2] != b"\xff\xd8":
+                return None
+            offset = 2
+            while offset + 4 <= len(data):
+                if data[offset] != 0xFF:
+                    return None
+                while offset < len(data) and data[offset] == 0xFF:
+                    offset += 1
+                if offset >= len(data):
+                    return None
+                marker = data[offset]
+                offset += 1
+                if marker in {0x01, 0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
+                    continue
+                if offset + 2 > len(data):
+                    return None
+                segment_length = int.from_bytes(data[offset : offset + 2], "big")
+                if segment_length < 2 or offset + segment_length > len(data):
+                    return None
+                segment = data[offset + 2 : offset + segment_length]
+                offset += segment_length
+                if marker != 0xE1 or not segment.startswith(b"Exif\x00\x00"):
+                    continue
+                tiff = segment[6:]
+                if len(tiff) < 10 or tiff[:2] not in {b"II", b"MM"}:
+                    return None
+                byteorder = "little" if tiff[:2] == b"II" else "big"
+                if int.from_bytes(tiff[2:4], byteorder) != 42:
+                    return None
+                ifd_offset = int.from_bytes(tiff[4:8], byteorder)
+                if ifd_offset + 2 > len(tiff):
+                    return None
+                entry_count = int.from_bytes(tiff[ifd_offset : ifd_offset + 2], byteorder)
+                for entry_index in range(entry_count):
+                    start = ifd_offset + 2 + entry_index * 12
+                    entry = tiff[start : start + 12]
+                    if len(entry) < 12:
+                        return None
+                    tag = int.from_bytes(entry[0:2], byteorder)
+                    field_type = int.from_bytes(entry[2:4], byteorder)
+                    count = int.from_bytes(entry[4:8], byteorder)
+                    if tag == 0x0112 and field_type == 3 and count == 1:
+                        orientation = int.from_bytes(entry[8:10], byteorder)
+                        return orientation if 1 <= orientation <= 8 else None
+                return None
+        except (IndexError, ValueError):
+            return None
+        return None
+
+    def _build_prompt(
+        self,
+        product_id: str,
+        source_inputs: tuple[str, ...],
+        skill_text: str,
+        reference_text: str,
+    ) -> str:
+        notes = str(self.context.manifest.get("notes") or "")
+        return f"""你正在执行受限的开发适配器任务。只处理 identity（单品《产品身份档案》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+输入图片文件名：{json.dumps(source_inputs, ensure_ascii=False)}
+用户备注：{json.dumps(notes, ensure_ascii=False)}
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+{reference_text}
+--- REFERENCE END ---
+
+仅返回一个 JSON 对象，不要 Markdown 说明。顶层必须包含 artifact_type、identity、missing_information、blocked_reasons、notes。
+artifact_type 必须为 product_identity_archive。identity 必须明确包含四个数组：
+- confirmed_facts：已确认事实
+- visible_inferences：可见推断
+- unknowns：无法确认
+- prohibited_inventions：禁止虚构内容
+
+identity 同时应按 required reference 提供可复用字段，包括 product_name、product_category、components、core_shape、visual_proportions、true_dimensions、color_and_material、texture_and_surface、pattern_and_decoration、structural_details、angle_usage_rules、must_keep、allowed_changes、negative_prompt_constraints、product_lock_description。无法确认的内容必须明确写无法确认，不得虚构尺寸、容量、材质、认证、配件或不可见结构。
+
+不得返回 style_master、angle_inventory、angle_slots、variable_configs、final_prompt、final_prompts、images 或 qc_results。
+"""
+
+    def _build_style_master_prompt(
+        self,
+        product_id: str,
+        source_references: tuple[str, ...],
+        identity_archive: Mapping[str, Any],
+        skill_text: str,
+        reference_text: str,
+    ) -> str:
+        required_fields = json.dumps(REQUIRED_STYLE_MASTER_FIELDS, ensure_ascii=False)
+        identity_json = json.dumps(identity_archive, ensure_ascii=False, indent=2)
+        structure_example = json.dumps(
+            {
+                "artifact_type": "style_master",
+                "style_master": {
+                    "visual_positioning": "按规则填写",
+                    "composition_and_layout": "按规则填写",
+                    "background_rules": "按规则填写",
+                    "color_rules": "按规则填写",
+                    "lighting_rules": "按规则填写",
+                    "subject_presentation_rules": "按规则填写",
+                    "prop_rules": "按规则填写",
+                    "typography_rules": "按规则填写",
+                    "negative_space_rules": "按规则填写",
+                    "visual_mood": "按规则填写",
+                    "reusable_rules": ["按规则填写"],
+                    "fidelity_enhancements": {
+                        "style_anchors": ["按规则填写"],
+                        "reusable_prop_clusters": {
+                            "must_keep": ["按规则填写"],
+                            "replaceable": ["按规则填写"],
+                            "optional": [],
+                        },
+                        "background_layers": {
+                            "foreground": "按规则填写",
+                            "midground": "按规则填写",
+                            "background": "按规则填写",
+                        },
+                        "prop_density_level": "按规则填写",
+                        "contents_and_usage_state": "按规则填写",
+                        "text_inheritance": "按规则填写",
+                        "anti_degradation_rules": ["按规则填写"],
+                    },
+                    "forbidden_elements": ["至少 8 条明确禁项"],
+                    "concise_style_master": "按 required reference 填写 300 至 500 字精简版",
+                },
+                "missing_information": ["无法确认项；没有则返回空数组"],
+                "notes": "",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return f"""你正在执行受限的开发适配器任务。只处理 style_master（单品《风格母版》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+风格参考图文件名：{json.dumps(source_references, ensure_ascii=False)}
+
+以下既有《产品身份档案》是上位约束。只用它防止风格规则覆盖产品结构、比例、颜色、材质、纹理、图案、配件关系或真实尺寸；不得把其中的产品事实复制成风格规则：
+--- PRODUCT IDENTITY START ---
+{identity_json}
+--- PRODUCT IDENTITY END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+{reference_text}
+--- REFERENCE END ---
+
+仅返回一个 JSON 对象，不要 Markdown 说明。顶层只返回 artifact_type、style_master、missing_information、notes。
+artifact_type 必须为 style_master。style_master 必须是对象并完整包含以下键：{required_fields}。
+fidelity_enhancements 必须覆盖风格贴合锚点、可复用道具簇、背景层次结构、道具密度等级、内容物与使用状态、文字有无继承和风格防退化规则。
+forbidden_elements 至少包含 8 条明确禁项。concise_style_master 必须是 required reference 要求的最终可复制精简版。
+
+返回层级必须严格遵循以下有效 JSON 骨架，只替换内容，不改变字段层级或括号位置：
+--- JSON SHAPE START ---
+{structure_example}
+--- JSON SHAPE END ---
+forbidden_elements 和 concise_style_master 必须位于 style_master 对象内部，不能放到顶层。
+missing_information 和 notes 必须在 style_master 对象关闭后、根对象关闭前。
+返回前逐层检查括号：整个回复只能有一个根对象，根对象最后一个字符才是最终右花括号；不得在根对象关闭后追加任何字段或说明。
+
+不得返回 product_identity_archive、identity、angle_inventory、angle_slots、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、images 或 qc_results。
+        不得虚构产品规格、功能、认证、销量或不可见结构；参考图中的具体产品、品牌、文案和图案不得作为固定模板复制。
+"""
+
+    def _build_angle_inventory_prompt(
+        self,
+        product_id: str,
+        image_assets: tuple[Mapping[str, str], ...],
+        display_orientations: tuple[Mapping[str, Any], ...],
+        identity_archive: Mapping[str, Any],
+        skill_text: str,
+        reference_text: str,
+    ) -> str:
+        identity_json = json.dumps(identity_archive, ensure_ascii=False, indent=2)
+        image_assets_json = json.dumps(image_assets, ensure_ascii=False, indent=2)
+        display_orientations_json = json.dumps(display_orientations, ensure_ascii=False, indent=2)
+        structure_example = json.dumps(
+            {
+                "artifact_type": "angle_inventory",
+                "angle_slots": [
+                    {
+                        "angle_slot": "A、B、C、D 或 不适合归入现有槽位",
+                        "source_asset_id": "严格使用上方映射中的 img_编号",
+                        "camera_angle": "按单张白底图实际角度填写",
+                        "decision_basis": "说明朝向、俯仰和可见结构依据",
+                        "naturally_visible_content": ["该角度自然可见内容"],
+                        "must_not_force_content": ["该角度不应强行展示内容"],
+                        "suitable_page_tasks": ["适合承担的页面任务"],
+                        "unsuitable_page_tasks": ["不适合承担的页面任务"],
+                        "main_image_suitability": "适合/勉强适合/不适合：简要理由",
+                        "detail_image_suitability": "适合/勉强适合/不适合：简要理由",
+                        "risk_notes": "风险说明；无明显风险时写无明显风险",
+                        "recommended_task_binding": "建议绑定任务",
+                        "admission_result": "三种固定入库结论之一",
+                        "merged_reference_note": "未提供时写无",
+                        "usable_for": ["主图或详情图用途"],
+                        "notes": "",
+                    }
+                ],
+                "missing_angle_slots": ["A、B、C、D 中缺失的槽位"],
+                "retake_recommendations": ["仅针对角度、清晰度、遮挡和完整性的重拍建议"],
+                "notes": "",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return f"""你正在执行受限的开发适配器任务。只处理 angle_inventory（单品《角度槽位入库表》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+批次类型：single
+
+以下 image_assets 是适配器根据真实附件固定生成的唯一图片映射。每个 source_asset_id 必须恰好使用一次，不得遗漏、重复或新增；不要在返回中改写文件路径：
+--- IMAGE ASSETS START ---
+{image_assets_json}
+--- IMAGE ASSETS END ---
+
+以下是图片文件的 EXIF 正确显示方向。视觉附件可能呈现未应用 EXIF 的原始横向像素；必须先按每项 display_rotation 在脑中旋转到正确显示方向，再判断产品真实姿态。未列出的图片按当前显示方向判断。不得把未应用 EXIF 时看到的侧躺外观当成产品真实横放：
+--- DISPLAY ORIENTATIONS START ---
+{display_orientations_json}
+--- DISPLAY ORIENTATIONS END ---
+
+先按 EXIF 方向纠正显示，再判断产品是否直立、底部是否自然朝下以及镜头俯仰。图片中的品牌、型号、认证或其他小字不可辨认时，不得猜测、转写或拼接字符；不可辨认文字统一写“无法辨认”，不得输出 Unicode 替换字符或其他乱码。
+
+以下既有《产品身份档案》只用于核对产品身份和防止虚构。不得用它改变任何单张白底图的实际角度，也不得输出产品身份档案：
+--- PRODUCT IDENTITY START ---
+{identity_json}
+--- PRODUCT IDENTITY END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下 required reference 的单品主体规则：
+--- REFERENCE START ---
+{reference_text}
+--- REFERENCE END ---
+
+本批次已确认是单品。required reference 末尾出现的“是否套装合影白底图、套装编排槽位判断、件数核对”和 Markdown 代码块要求与本 Skill 的单品职责冲突；必须忽略末尾误植的套装字段，不得输出套装判断或编排。只按 A、B、C、D 固定单品槽位逐张识别；不符合任何槽位时写“不适合归入现有槽位”，不得为了凑齐槽位强行归类。
+
+槽位边界必须按产品在画面中的真实姿态判定：
+- A（正面微俯视）：产品保持直立，正面主体面占主导，左右侧面没有明显展开；镜头略高、只自然看到部分壶口或内侧。仅有轻微立体感或轻微俯视不能据此改判 B。
+- B（45°斜侧视）：产品保持直立，B 必须有明显侧面展开、前后纵深或侧前方透视，能够确认正面与侧面的空间关系；不能只因看到壶口或壶身弧度就判 B。
+- C（顶部俯视）：镜头主要向下观察壶口和内部平面关系，不能用来替代正面或侧面完整展示。
+- D（侧面低角度）：D 只允许产品直立并由自身底部自然支撑，镜头较低，能够观察壶身高度、侧面线条和底部支撑关系。横放、侧躺、倒置或仅拍底部的图片都不是 D；这类图片若也不符合 A/B/C，必须标记“不适合归入现有槽位”，不得以“看见底部”为理由判为 D 或给出合格结论。
+- 先判断产品是否直立、是否完整、镜头俯仰和正侧面展开程度，再选择槽位。局部裁切、只拍结构细节或无法承担该槽位核心展示任务的图片，不得给出“合格，可进入对应槽位”。
+
+仅返回一个 JSON 对象，不要 Markdown 说明或代码块外文字。顶层只返回 artifact_type、angle_slots、missing_angle_slots、retake_recommendations、notes；artifact_type 必须为 angle_inventory。angle_slots 数量必须等于 image_assets 数量，并严格遵循以下字段层级：
+--- JSON SHAPE START ---
+{structure_example}
+--- JSON SHAPE END ---
+
+admission_result 只允许“合格，可进入对应槽位”“勉强可用，但建议重拍”“不适合入库，需重拍”。main_image_suitability 和 detail_image_suitability 必须以“适合”“勉强适合”或“不适合”开头并附简要理由。missing_angle_slots 只列 A、B、C、D；retake_recommendations 只涉及角度、清晰度、遮挡和产品完整性。
+
+不得返回 product_identity_archive、identity、style_master、set_layouts、set_arrangements、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、images 或 qc_results。不得虚构尺寸、容量、材质、认证、配件或不可见结构；不得让风格、页面任务或身份档案反向改变白底图实际角度。
+"""
+
+    def _parse_archive(self, text: str, product_id: str, source_inputs: tuple[str, ...]) -> dict[str, Any]:
+        candidate = text.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1)
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError as exc:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：不是有效 JSON") from None
+        if not isinstance(value, dict):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：根对象无效")
+        if value.get("artifact_type") != "product_identity_archive":
+            raise ExecutorExecutionError("codex-dev 返回格式异常：产物类型无效")
+        if FORBIDDEN_OUTPUT_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+        identity = value.get("identity")
+        if not isinstance(identity, dict) or FORBIDDEN_OUTPUT_FIELDS.intersection(identity):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：identity 无效")
+        for field in REQUIRED_EVIDENCE_FIELDS:
+            items = identity.get(field)
+            if not isinstance(items, list) or any(not isinstance(item, str) for item in items):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：四类证据未完整区分")
+
+        archive = dict(value)
+        archive["product_id"] = product_id
+        archive["artifact_type"] = "product_identity_archive"
+        archive["source_inputs"] = list(source_inputs)
+        archive["identity"] = identity
+        archive["missing_information"] = self._string_list(value.get("missing_information"))
+        archive["blocked_reasons"] = self._string_list(value.get("blocked_reasons"))
+        archive["notes"] = str(value.get("notes") or "")
+        return archive
+
+    def _parse_style_master(
+        self,
+        text: str,
+        product_id: str,
+        source_references: tuple[str, ...],
+    ) -> dict[str, Any]:
+        candidate = text.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1)
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：不是有效 JSON") from None
+        if not isinstance(value, dict):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：根对象无效")
+        if value.get("artifact_type") != "style_master":
+            raise ExecutorExecutionError("codex-dev 返回格式异常：产物类型无效")
+        if STYLE_MASTER_FORBIDDEN_OUTPUT_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+        style_master = value.get("style_master")
+        if not isinstance(style_master, dict) or STYLE_MASTER_FORBIDDEN_OUTPUT_FIELDS.intersection(style_master):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：style_master 无效")
+        missing_fields = [
+            field
+            for field in REQUIRED_STYLE_MASTER_FIELDS
+            if field not in style_master or style_master[field] in (None, "", [], {})
+        ]
+        if missing_fields:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：风格母版栏目不完整")
+
+        artifact = dict(value)
+        artifact["product_id"] = product_id
+        artifact["artifact_type"] = "style_master"
+        artifact["source_references"] = list(source_references)
+        artifact["style_master"] = style_master
+        artifact["missing_information"] = self._string_list(value.get("missing_information"))
+        artifact["notes"] = str(value.get("notes") or "")
+        return artifact
+
+    def _parse_angle_inventory(
+        self,
+        text: str,
+        product_id: str,
+        image_assets: tuple[Mapping[str, str], ...],
+    ) -> dict[str, Any]:
+        candidate = text.strip()
+        fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.IGNORECASE | re.DOTALL)
+        if fenced:
+            candidate = fenced.group(1)
+        if "\ufffd" in candidate:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：文本包含损坏字符")
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：不是有效 JSON") from None
+        if not isinstance(value, dict):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：根对象无效")
+        if value.get("artifact_type") != "angle_inventory":
+            raise ExecutorExecutionError("codex-dev 返回格式异常：产物类型无效")
+        if not set(value).issubset(ANGLE_ALLOWED_OUTPUT_FIELDS):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含未声明顶层字段")
+        if ANGLE_FORBIDDEN_OUTPUT_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+
+        angle_slots = value.get("angle_slots")
+        if not isinstance(angle_slots, list) or len(angle_slots) != len(image_assets):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目数量无效")
+
+        expected_asset_ids = {item["asset_id"] for item in image_assets}
+        observed_asset_ids: list[str] = []
+        for slot in angle_slots:
+            if not isinstance(slot, dict) or ANGLE_FORBIDDEN_OUTPUT_FIELDS.intersection(slot):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目无效")
+            if any(field not in slot for field in ANGLE_SLOT_REQUIRED_FIELDS):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目栏目不完整")
+
+            angle_slot = slot.get("angle_slot")
+            source_asset_id = slot.get("source_asset_id")
+            if angle_slot not in ANGLE_SLOT_VALUES or not isinstance(source_asset_id, str):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：角度槽位无效")
+            observed_asset_ids.append(source_asset_id)
+
+            for field in ANGLE_LIST_FIELDS:
+                items = slot.get(field)
+                if (
+                    not isinstance(items, list)
+                    or not items
+                    or any(not isinstance(item, str) or not item.strip() for item in items)
+                ):
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目列表无效")
+
+            for field in (
+                "camera_angle",
+                "decision_basis",
+                "main_image_suitability",
+                "detail_image_suitability",
+                "risk_notes",
+                "recommended_task_binding",
+                "admission_result",
+                "merged_reference_note",
+            ):
+                item = slot.get(field)
+                if not isinstance(item, str) or not item.strip():
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目文本无效")
+            if not isinstance(slot.get("notes"), str):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：角度条目备注无效")
+            if slot["admission_result"] not in ANGLE_ADMISSION_VALUES:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：入库结论无效")
+            for field in ("main_image_suitability", "detail_image_suitability"):
+                if not str(slot[field]).startswith(ANGLE_SUITABILITY_PREFIXES):
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：页面适用性无效")
+
+        if len(observed_asset_ids) != len(set(observed_asset_ids)) or set(observed_asset_ids) != expected_asset_ids:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：图片对应关系无效")
+
+        missing_angle_slots = value.get("missing_angle_slots")
+        if (
+            not isinstance(missing_angle_slots, list)
+            or any(item not in {"A", "B", "C", "D"} for item in missing_angle_slots)
+            or len(missing_angle_slots) != len(set(missing_angle_slots))
+        ):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：缺失槽位无效")
+        usable_angle_slots = {
+            slot["angle_slot"]
+            for slot in angle_slots
+            if slot["angle_slot"] in {"A", "B", "C", "D"}
+            and slot["admission_result"] != "不适合入库，需重拍"
+        }
+        if set(missing_angle_slots) != {"A", "B", "C", "D"} - usable_angle_slots:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：缺失槽位与逐图结论不一致")
+        retake_recommendations = value.get("retake_recommendations", [])
+        if not isinstance(retake_recommendations, list) or any(
+            not isinstance(item, str) for item in retake_recommendations
+        ):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：重拍建议无效")
+
+        artifact = dict(value)
+        artifact["product_id"] = product_id
+        artifact["artifact_type"] = "angle_inventory"
+        artifact["image_assets"] = [dict(item) for item in image_assets]
+        artifact["angle_slots"] = angle_slots
+        artifact["missing_angle_slots"] = missing_angle_slots
+        artifact["retake_recommendations"] = retake_recommendations
+        artifact["notes"] = str(value.get("notes") or "")
+        return artifact
+
+    @staticmethod
+    def _string_list(value: Any) -> list[str]:
+        return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
+
+    @staticmethod
+    def _write_archive(output_path: Path, archive: Mapping[str, Any]) -> None:
+        temporary: Path | None = None
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if output_path.exists():
+                raise FileExistsError
+            content = json.dumps(archive, ensure_ascii=False, indent=2) + "\n"
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output_path.parent,
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                temporary = Path(handle.name)
+            os.link(temporary, output_path)
+            temporary.unlink()
+        except FileExistsError:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise ExecutorExecutionError("产品身份档案已存在，codex-dev 不会覆盖") from None
+        except OSError as exc:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise ExecutorExecutionError("codex-dev 无法写入产品身份档案") from None
+
+    @staticmethod
+    def _write_style_master(output_path: Path, artifact: Mapping[str, Any]) -> None:
+        temporary: Path | None = None
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if output_path.exists():
+                raise FileExistsError
+            content = json.dumps(artifact, ensure_ascii=False, indent=2) + "\n"
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output_path.parent,
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                temporary = Path(handle.name)
+            os.link(temporary, output_path)
+            temporary.unlink()
+        except FileExistsError:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise ExecutorExecutionError("风格母版已存在，codex-dev 不会覆盖") from None
+        except OSError:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise ExecutorExecutionError("codex-dev 无法写入风格母版") from None
+
+    @staticmethod
+    def _write_angle_inventory(output_path: Path, artifact: Mapping[str, Any]) -> None:
+        temporary: Path | None = None
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if output_path.exists():
+                raise FileExistsError
+            content = json.dumps(artifact, ensure_ascii=False, indent=2) + "\n"
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output_path.parent,
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                temporary = Path(handle.name)
+            os.link(temporary, output_path)
+            temporary.unlink()
+        except FileExistsError:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise ExecutorExecutionError("角度槽位入库表已存在，codex-dev 不会覆盖") from None
+        except OSError:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise ExecutorExecutionError("codex-dev 无法写入角度槽位入库表") from None

@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import batch_editor
+import executor_factory
 import ic_client
 import layout_store
 import projector
@@ -75,6 +76,28 @@ def build_full_projection(manifest_path: Path, layout_path: Path | None):
     ops.append(run_controller.run_node_op(product_id, route, integrity))
     ops.append(run_controller.log_node_op(product_id, run_controller.read_journal_tail(journal)))
     return product_id, batch, route, integrity, view, layout, target, journal, ops
+
+
+def projection_fallback_batches(
+    ops: list[dict],
+    *,
+    batch_size: int = 5,
+    delete_chunk_size: int = 5,
+) -> list[list[dict]]:
+    """Split a timed-out full projection into small, ordered retry batches."""
+    if batch_size <= 0 or delete_chunk_size <= 0:
+        raise ValueError("projection fallback sizes must be positive")
+    expanded: list[dict] = []
+    for op in ops:
+        ids = op.get("ids")
+        if op.get("type") == "delete_node" and isinstance(ids, list) and len(ids) > delete_chunk_size:
+            for start in range(0, len(ids), delete_chunk_size):
+                chunk = dict(op)
+                chunk["ids"] = list(ids[start : start + delete_chunk_size])
+                expanded.append(chunk)
+        else:
+            expanded.append(dict(op))
+    return [expanded[start : start + batch_size] for start in range(0, len(expanded), batch_size)]
 
 
 def control_update_ops(
@@ -209,14 +232,32 @@ def cmd_serve(
     product_id, batch, route, integrity, view, _layout, _target, journal, ops = build_full_projection(
         manifest_path, layout_path
     )
-    executor = run_controller.build_executor(executor_name, batch)
-    while True:
-        try:
-            ic_client.apply_ops(ops)
-            break
-        except ic_client.CanvasAgentError as exc:
-            print(json.dumps({"serve": "waiting_canvas", "error": str(exc)[:120]}, ensure_ascii=False), flush=True)
-            time.sleep(max(interval, 3.0))
+    executor = executor_factory.build_executor(executor_name, batch, manifest_path)
+    try:
+        ic_client.apply_ops(ops)
+    except ic_client.CanvasAgentError as exc:
+        print(
+            json.dumps({"serve": "projection_fallback", "error": str(exc)[:120]}, ensure_ascii=False),
+            flush=True,
+        )
+        for batch_index, batch_ops in enumerate(projection_fallback_batches(ops), start=1):
+            while True:
+                try:
+                    ic_client.apply_ops(batch_ops)
+                    break
+                except ic_client.CanvasAgentError as batch_exc:
+                    print(
+                        json.dumps(
+                            {
+                                "serve": "waiting_canvas",
+                                "batch": batch_index,
+                                "error": str(batch_exc)[:120],
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                    time.sleep(max(interval, 3.0))
     print(
         json.dumps(
             {
@@ -299,7 +340,7 @@ def cmd_serve(
 
                 started = time.monotonic()
                 try:
-                    run_detail = executor.run(step)
+                    run_detail = run_controller.execute_step(executor, step).detail
                 except run_controller.RunExecutionError as exc:
                     run_controller.append_event(journal, "step_failed", step=step, detail=str(exc))
                     note, status, error_text = f"✘ {step} 失败：{exc}", "error", str(exc)
@@ -492,7 +533,7 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=2.0)
     parser.add_argument("--apply-edits", type=Path, metavar="MANIFEST", help="读取画布上的批次配置节点，三段校验后写回 manifest（阶段3）")
     parser.add_argument("--serve", type=Path, metavar="MANIFEST", help="常驻：轮询画布运行台命令并执行 + 增量投影（阶段4）")
-    parser.add_argument("--executor", default="demo", help="--serve 使用的执行器（阶段4仅内置 demo）")
+    parser.add_argument("--executor", default="demo", help="--serve 使用的已注册执行器（当前现场运行默认 demo）")
     parser.add_argument("--layout-save", type=Path, metavar="MANIFEST", help="把当前画布布局保存为 canvas_layout 文件（阶段2）")
     parser.add_argument("--layout-path", type=Path, help="布局文件路径，默认 manifests/<product_id>.canvas_layout.json")
     parser.add_argument("--restore-viewport", action="store_true", help="push-live 时恢复布局文件中的视口")
