@@ -1495,7 +1495,7 @@ class CodexDevExecutorTest(CodexDevFixture):
                 self.assertFalse(output_path.exists())
                 self.assertEqual([], transport.continuation_calls)
 
-    def test_detail_vc_does_not_globally_accept_bare_confirmed_height(self) -> None:
+    def test_detail_vc_accepts_bare_confirmed_height_without_competing_dimension(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, output_path, _main_path = self.make_detail_fixture(root)
@@ -1508,23 +1508,21 @@ class CodexDevExecutorTest(CodexDevFixture):
                 )
             )
 
-            with self.assertRaises(ExecutorExecutionError) as caught:
-                CodexDevExecutor(
-                    context,
-                    transport=transport,
-                    repository_root=root,
-                ).execute(ExecutionRequest(step="detail_vc"))
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="detail_vc"))
 
-            self.assertIn("未确认参数", str(caught.exception))
-            self.assertFalse(output_path.exists())
-            self.assertEqual([], transport.continuation_calls)
+            self.assertTrue(output_path.exists())
+            self.assertEqual("详情图变量配置已生成", result.detail)
 
     def test_detail_vc_rejects_unconfirmed_width_nested_under_height_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, output_path, _main_path = self.make_detail_fixture(root)
             chunks = valid_detail_chunk_responses()
-            chunks[0]["common_constraints"]["已确认高度"] = {"宽度": "25 厘米"}
+            chunks[0]["common_constraints"]["已确认高度"] = {"宽度": "约 25 厘米"}
             transport = FakeTransport(
                 detail_chunk_turns(
                     chunks,
@@ -2913,6 +2911,455 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             transport.run_turn("offline prompt", ())
 
         self.assertEqual("response", caught.exception.code)
+
+
+class UnsupportedClaimsRegressionTest(CodexDevFixture):
+    def _run_detail_response(
+        self,
+        response: dict[str, object],
+        *,
+        thread_id: str,
+    ) -> tuple[dict[str, object], str]:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path, _main_path = self.make_detail_fixture(root)
+            transport = FakeTransport(
+                detail_chunk_turns(
+                    valid_detail_chunk_responses(response),
+                    thread_id=thread_id,
+                )
+            )
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="detail_vc"))
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            return artifact, result.detail
+
+    def _reject_detail_response(
+        self,
+        response: dict[str, object],
+        *,
+        thread_id: str,
+    ) -> str:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path, _main_path = self.make_detail_fixture(root)
+            transport = FakeTransport(
+                detail_chunk_turns(
+                    valid_detail_chunk_responses(response),
+                    thread_id=thread_id,
+                )
+            )
+            with self.assertRaises(ExecutorExecutionError) as caught:
+                CodexDevExecutor(
+                    context,
+                    transport=transport,
+                    repository_root=root,
+                ).execute(ExecutionRequest(step="detail_vc"))
+            self.assertFalse(output_path.exists())
+            return str(caught.exception)
+
+    def test_detail_vc_accepts_handheld_declaration_with_confirmed_whole_product_height(
+        self,
+    ) -> None:
+        response = valid_detail_variable_response()
+        declaration = (
+            "本张图启用手持场景。手持子场景类型：动态拿起。"
+            "单手自然握住壶把，整壶整体约 25 厘米，不倾倒"
+        )
+        response["configs"][5]["per_image_overrides"]["手持交互声明"] = declaration
+
+        artifact, detail = self._run_detail_response(
+            response,
+            thread_id="thread-detail-confirmed-height-handheld",
+        )
+
+        self.assertEqual(
+            declaration,
+            artifact["configs"][5]["per_image_overrides"]["手持交互声明"],
+        )
+        self.assertEqual("详情图变量配置已生成", detail)
+
+    def test_detail_vc_accepts_negative_material_guardrail_with_bounded_directive(
+        self,
+    ) -> None:
+        for prefix in ("不把", "不将"):
+            for action in ("写死", "固定", "标注", "设定", "锁定", "指定"):
+                for complement in ("为", "成"):
+                    value = f"{prefix}具体材质{action}{complement}陶瓷、玻璃或不锈钢"
+                    with self.subTest(value=value):
+                        response = valid_detail_variable_response()
+                        response["configs"][0]["per_image_overrides"]["禁止事项"] = value
+
+                        artifact, detail = self._run_detail_response(
+                            response,
+                            thread_id=f"thread-detail-safe-material-{prefix}-{action}-{complement}",
+                        )
+
+                        self.assertEqual(
+                            value,
+                            artifact["configs"][0]["per_image_overrides"]["禁止事项"],
+                        )
+                        self.assertEqual("详情图变量配置已生成", detail)
+
+        for index, value in enumerate(
+            (
+                "画面中不把具体材质写死为陶瓷",
+                "需确保不将具体材质固定成玻璃",
+                "不把并列展示的具体材质写死为陶瓷",
+                "不将并列出现的材质固定成玻璃",
+                "不把但不限于视觉呈现的具体材质写死为陶瓷",
+            ),
+            start=1,
+        ):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["禁止事项"] = value
+
+                artifact, detail = self._run_detail_response(
+                    response,
+                    thread_id=f"thread-detail-safe-material-embedded-{index}",
+                )
+
+                self.assertEqual(
+                    value,
+                    artifact["configs"][0]["per_image_overrides"]["禁止事项"],
+                )
+                self.assertEqual("详情图变量配置已生成", detail)
+
+        certification_value = "不将认证结论指定为通过 FDA 认证"
+        response = valid_detail_variable_response()
+        response["configs"][0]["per_image_overrides"][
+            "平台硬约束检查"
+        ] = certification_value
+        artifact, detail = self._run_detail_response(
+            response,
+            thread_id="thread-detail-safe-certification-directive",
+        )
+        self.assertEqual(
+            certification_value,
+            artifact["configs"][0]["per_image_overrides"]["平台硬约束检查"],
+        )
+        self.assertEqual("详情图变量配置已生成", detail)
+
+    def test_detail_vc_accepts_confirmed_height_when_path_marks_height(self) -> None:
+        response = valid_detail_variable_response()
+        response["common_constraints"]["已确认高度"] = "约 25 厘米"
+
+        artifact, detail = self._run_detail_response(
+            response,
+            thread_id="thread-detail-confirmed-height-path",
+        )
+
+        self.assertEqual("约 25 厘米", artifact["common_constraints"]["已确认高度"])
+        self.assertEqual("详情图变量配置已生成", detail)
+
+    def test_detail_vc_accepts_product_height_shorthand(self) -> None:
+        response = valid_detail_variable_response()
+        response["configs"][0]["per_image_overrides"]["尺寸比例锁定"] = (
+            "产品高约 25 厘米"
+        )
+
+        artifact, detail = self._run_detail_response(
+            response,
+            thread_id="thread-detail-product-height-shorthand",
+        )
+
+        self.assertEqual(
+            "产品高约 25 厘米",
+            artifact["configs"][0]["per_image_overrides"]["尺寸比例锁定"],
+        )
+        self.assertEqual("详情图变量配置已生成", detail)
+
+    def test_main_vc_accepts_confirmed_height_restatement_without_height_word(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path = self.make_downstream_fixture(root)
+            response = valid_main_variable_response()
+            response["configs"][0]["per_image_overrides"]["展示重点"] = "约 25 厘米"
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(response, ensure_ascii=False),
+                    thread_id="thread-main-confirmed-height-restatement",
+                )
+            )
+
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="main_vc"))
+
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "约 25 厘米",
+                artifact["configs"][0]["per_image_overrides"]["展示重点"],
+            )
+            self.assertEqual("主图变量配置已生成", result.detail)
+
+    def test_final_prompts_accept_whole_product_height_restatement_without_height_word(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
+            main_response = valid_final_prompt_response("main")
+            main_response["prompts"][0]["final_prompt"] = main_response["prompts"][0][
+                "final_prompt"
+            ].replace("产品高度约 25 厘米", "整壶约 25 厘米")
+            transport = FakeTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(main_response, ensure_ascii=False),
+                        thread_id="thread-final-main-confirmed-height-restatement",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
+                        thread_id="thread-final-detail-confirmed-height-restatement",
+                    ),
+                ]
+            )
+
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="final_prompts"))
+
+            prompt = json.loads(
+                (final_dir / "main_01_final_prompt.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("整壶约 25 厘米", prompt["final_prompt"])
+            self.assertNotIn("产品高度约 25 厘米", prompt["final_prompt"])
+            self.assertEqual("最终提示词已生成", result.detail)
+
+    def test_detail_vc_rejects_confirmed_height_number_used_as_width(self) -> None:
+        for index, value in enumerate(("壶身宽约 25 厘米", "约 25 厘米宽"), start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["中文营销文案"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-width-semantics-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_height_ranges_in_confirmed_height_path(self) -> None:
+        for index, value in enumerate(("约 25-30 厘米", "25～30 厘米"), start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["已确认高度"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-confirmed-height-range-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_multi_dimension_groups_in_confirmed_height_path(self) -> None:
+        cases = (
+            "约 25 厘米 × 18 厘米",
+            "25 厘米 × 25 厘米",
+            "25 厘米 x 25 厘米",
+            "25 厘米 X 25 厘米",
+            "25x25cm",
+            "25X25CM",
+            "25*25cm",
+        )
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["已确认高度"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-dimension-group-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_unconfirmed_measurements_inside_negative_sentences(self) -> None:
+        cases = ("不要标注 500 毫升", "不得写入 0.5 升", "避免声称 250 克")
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["禁止事项"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-negative-measurement-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_signed_or_powered_confirmed_height(self) -> None:
+        for index, value in enumerate(("-25 厘米", "25 厘米²"), start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["已确认高度"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-signed-powered-height-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_positive_material_claims(self) -> None:
+        for index, value in enumerate(
+            ("采用不锈钢材质", "不锈钢壶身经久耐用"),
+            start=1,
+        ):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["真实感要求"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-positive-material-{index}",
+                )
+
+                self.assertIn("未确认商品事实", message)
+
+    def test_detail_vc_rejects_is_not_plastic_as_unsupported_material_claim(self) -> None:
+        response = valid_detail_variable_response()
+        response["configs"][0]["per_image_overrides"]["真实感要求"] = "不是塑料"
+
+        message = self._reject_detail_response(
+            response,
+            thread_id="thread-detail-is-not-plastic",
+        )
+
+        self.assertIn("未确认商品事实", message)
+
+    def test_detail_vc_bounded_negative_directive_does_not_hide_other_positive_claims(
+        self,
+    ) -> None:
+        cases = (
+            "不把具体材质写死为陶瓷，本品是不锈钢",
+            "不将认证结论指定为通过 FDA 认证，本品认证编号 12345",
+            "不把采用不锈钢材质的壶身描述写死为陶瓷",
+        )
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["真实感要求"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-bounded-negative-positive-{index}",
+                )
+
+                self.assertIn("未确认商品事实", message)
+
+    def test_detail_vc_rejects_positive_certification_claims(self) -> None:
+        cases = (
+            "通过 FDA 认证",
+            "认证编号 12345",
+            "通过 FDA，取得认证",
+            "通过 FDA，认证有效",
+            "本品通过欧盟，安全认证",
+        )
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["平台硬约束检查"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-positive-certification-{index}",
+                )
+
+                self.assertIn("未确认商品事实", message)
+
+    def test_detail_vc_aggregates_unsupported_claim_paths_without_echoing_values(
+        self,
+    ) -> None:
+        response = valid_detail_variable_response()
+        width_claim = "壶身宽约 25 厘米"
+        volume_claim = "不得写入 500 毫升"
+        response["configs"][0]["per_image_overrides"]["中文营销文案"] = width_claim
+        response["configs"][1]["per_image_overrides"]["禁止事项"] = volume_claim
+
+        message = self._reject_detail_response(
+            response,
+            thread_id="thread-detail-aggregate-unsupported-claims",
+        )
+
+        self.assertIn("未确认参数", message)
+        self.assertIn("2 处", message)
+        self.assertIn("configs/0/per_image_overrides/中文营销文案", message)
+        self.assertIn("configs/1/per_image_overrides/禁止事项", message)
+        self.assertNotIn(width_claim, message)
+        self.assertNotIn(volume_claim, message)
+        self.assertLessEqual(len(message), 200)
+
+    def test_detail_vc_unsupported_claim_error_is_bounded_and_reports_omitted_count(
+        self,
+    ) -> None:
+        response = valid_detail_variable_response()
+        response["common_constraints"].update(
+            {
+                f"额外安全检查字段{index:02d}重复加长用于验证脱敏消息上限": f"禁止标注 {index + 300} 毫升"
+                for index in range(40)
+            }
+        )
+
+        message = self._reject_detail_response(
+            response,
+            thread_id="thread-detail-bounded-unsupported-claim-error",
+        )
+
+        self.assertLessEqual(len(message), 200)
+        self.assertRegex(message, r"等 \d+ 处")
+        self.assertNotIn("额外安全检查字段", message)
+        self.assertNotIn("禁止标注", message)
+        self.assertNotIn("300 毫升", message)
+
+    def test_detail_vc_unsupported_claim_error_redacts_unknown_path_segments(self) -> None:
+        response = valid_detail_variable_response()
+        private_key = "PRIVATE_ORIGINAL_TEXT_SHOULD_NOT_ECHO"
+        private_value = "PRIVATE_PROMPT_BODY 500 毫升"
+        response["common_constraints"][private_key] = private_value
+
+        message = self._reject_detail_response(
+            response,
+            thread_id="thread-detail-private-path-redaction",
+        )
+
+        self.assertIn("common_constraints/未知字段", message)
+        self.assertNotIn(private_key, message)
+        self.assertNotIn(private_value, message)
+        self.assertNotIn("500 毫升", message)
+        self.assertLessEqual(len(message), 200)
+
+    def test_detail_vc_centimeter_abbreviation_is_case_insensitive(self) -> None:
+        for index, unit in enumerate(("cm", "CM", "Cm", "cM"), start=1):
+            with self.subTest(unit=unit, confirmed=True):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["确认高度复述"] = f"约 25 {unit}"
+                artifact, _detail = self._run_detail_response(
+                    response,
+                    thread_id=f"thread-detail-confirmed-height-unit-{index}",
+                )
+                self.assertEqual(
+                    f"约 25 {unit}",
+                    artifact["common_constraints"]["确认高度复述"],
+                )
+
+            with self.subTest(unit=unit, confirmed=False):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["其他尺寸"] = f"约 24 {unit}"
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-unconfirmed-height-unit-{index}",
+                )
+                self.assertIn("未确认参数", message)
 
 
 if __name__ == "__main__":

@@ -332,29 +332,118 @@ def _walk_string_contexts(value: Any, path: tuple[str, ...] = ()):
         yield path, value
 
 
+_CLAUSE_SEPARATOR_PATTERN = r"[，,。；;\n]"
+_NUMBER_PATTERN = r"\d+(?:\.\d+)?"
+_LENGTH_UNIT_PATTERN = r"(?:毫米|mm|厘米|cm)"
+_RANGE_CONNECTOR_PATTERN = r"(?:-|−|－|–|—|~|～|/|／|至|到)"
+_UNSUPPORTED_FACT_TOKEN_PATTERN = (
+    r"(?:陶瓷|玻璃|不锈钢|塑料|食品级|耐热温度|"
+    r"通过.{0,8}认证|认证编号)"
+    r"(?:材质|质感|观感|工艺|属性|感)?"
+)
+_SAFE_NEGATED_FACT_TOKEN_PATTERN = (
+    r"(?:陶瓷|玻璃|不锈钢|塑料|食品级|耐热温度|"
+    r"通过[^，,。；;\n]{0,8}认证|认证编号)"
+    r"(?:材质|质感|观感|工艺|属性|感)?"
+)
+_SAFE_NEGATED_FACT_TARGET_PATTERN = (
+    rf"{_SAFE_NEGATED_FACT_TOKEN_PATTERN}"
+    rf"(?:\s*(?:、|或|和|与|及|/|／)\s*{_SAFE_NEGATED_FACT_TOKEN_PATTERN})*"
+)
+_EXISTING_FACT_PROTECTION_MARKERS = (
+    "不得",
+    "禁止",
+    "不要",
+    "不出现",
+    "不生成",
+    "避免",
+    "未确认",
+    "不确认",
+    "不宣称",
+    "不推断",
+)
+_DIMENSION_GROUP_PATTERN = re.compile(
+    rf"(?<![A-Za-z0-9_])(?:"
+    rf"{_NUMBER_PATTERN}\s*(?:{_LENGTH_UNIT_PATTERN})?\s*[×xX*]\s*"
+    rf"{_NUMBER_PATTERN}\s*{_LENGTH_UNIT_PATTERN}"
+    rf"|"
+    rf"{_NUMBER_PATTERN}\s*{_LENGTH_UNIT_PATTERN}\s*[×xX*]\s*"
+    rf"{_NUMBER_PATTERN}(?:\s*{_LENGTH_UNIT_PATTERN})?"
+    rf")",
+    flags=re.IGNORECASE,
+)
+_SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN = re.compile(
+    r"不[ \t]*(?:把|将)[ \t]*"
+    r"[^，,。；;\n]{1,64}?[ \t]*"
+    r"(?:写死|固定|标注|设定|锁定|指定)[ \t]*"
+    r"(?:为|成)[ \t]*"
+    rf"(?P<safe_targets>{_SAFE_NEGATED_FACT_TARGET_PATTERN})[ \t]*"
+    r"(?=$|[，,。；;\n])"
+)
+_UNSUPPORTED_FACT_PATTERN = re.compile(_UNSUPPORTED_FACT_TOKEN_PATTERN)
+_FACT_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[。；;\n]+")
+_SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
+    {
+        "chunk_index",
+        "chunk_count",
+        "common_constraints",
+        "configs",
+        "handheld_count_summary",
+        "notes",
+        "config_id",
+        "per_image_overrides",
+        "prompts",
+        "final_prompt",
+        "negative_prompt",
+        "产品类型",
+        "已确认高度",
+        "事实边界",
+        "动作边界",
+        "页面链路",
+        "尺寸比例",
+        "用户要求主图手持数量",
+        "用户要求详情图手持数量",
+        "实际启用手持数量",
+        "未启用手持数量",
+        "启用手持配置",
+        "是否完全满足用户数量",
+        *MAIN_REQUIRED_OVERRIDE_FIELDS,
+        *DETAIL_REQUIRED_OVERRIDE_FIELDS,
+    }
+)
+_INDEXED_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset({"configs", "prompts"})
+
+
 def _is_confirmed_height_measurement(
     text: str,
     path: tuple[str, ...],
     match: re.Match[str],
 ) -> bool:
     prefix = text[: match.start()]
-    clause_prefix = re.split(r"[，,。；;\n]", prefix)[-1]
-    clause_suffix = re.split(r"[，,。；;\n]", text[match.end() :], maxsplit=1)[0]
+    clause_prefix = re.split(_CLAUSE_SEPARATOR_PATTERN, prefix)[-1]
+    clause_suffix = re.split(
+        _CLAUSE_SEPARATOR_PATTERN,
+        text[match.end() :],
+        maxsplit=1,
+    )[0]
     clause = f"{clause_prefix}{match.group(0)}{clause_suffix}"
-    unit_extension = re.match(r"\s*([A-Za-z0-9_²³^/／])", text[match.end() :])
-    if unit_extension:
-        return False
-    if re.search(r"(?:-|−|－|–|—)\s*$", clause_prefix):
-        return False
-    range_connector = r"(?:-|–|—|~|～|/|／|至|到)"
-    if re.search(
-        rf"\d+(?:\.\d+)?\s*{range_connector}\s*(?:约\s*)?$",
-        clause_prefix,
-    ) or re.match(
-        rf"\s*{range_connector}\s*(?:约\s*)?\d+(?:\.\d+)?",
-        clause_suffix,
-    ):
-        return False
+    unit_extension = bool(
+        re.match(
+            r"\s*(?:[A-Za-z0-9_²³⁰¹⁴⁵⁶⁷⁸⁹^/／]|平方|立方)",
+            text[match.end() :],
+        )
+    )
+    negative_prefix = bool(re.search(r"(?:-|−|－|–|—)\s*$", clause_prefix))
+    range_context = bool(
+        re.search(
+            rf"{_NUMBER_PATTERN}\s*{_RANGE_CONNECTOR_PATTERN}\s*(?:约\s*)?$",
+            clause_prefix,
+        )
+        or re.match(
+            rf"\s*{_RANGE_CONNECTOR_PATTERN}\s*(?:约\s*)?{_NUMBER_PATTERN}",
+            clause_suffix,
+        )
+    )
     natural_width_before = re.search(
         r"(?:壶身宽|产品宽|整壶宽|宽度|宽)\s*[：:]?\s*"
         r"(?:为|是)?\s*(?:约|大约|大概|近|about|approximately)?\s*$",
@@ -369,12 +458,6 @@ def _is_confirmed_height_measurement(
         re.fullmatch(r"(?:(?:壶身|产品|整壶)?宽(?:度)?)", part.strip())
         for part in path
     )
-    if (
-        natural_width_before
-        or natural_width_after
-        or natural_width_path
-    ):
-        return False
     competing_dimensions = (
         "宽度",
         "直径",
@@ -394,29 +477,57 @@ def _is_confirmed_height_measurement(
         "weight",
     )
     semantic_context = (*path, clause)
-    if any(
-        term in part.lower()
+    explicit_competing_dimension = any(
+        term in part.casefold()
         for part in semantic_context
         for term in competing_dimensions
-    ):
-        return False
-    if any("已确认高度" in part for part in path):
-        return True
-    if re.search(
-        r"(?:高度|(?:产品|整壶|壶身)?高|height)\s*[：:]?\s*"
-        r"(?:为|是|约|大约|大概|近|about|approximately)?\s*$",
-        clause_prefix,
-        flags=re.IGNORECASE,
-    ):
-        return True
-    canonical_shorthand = re.fullmatch(
-        rf"约\s*{re.escape(match.group(1))}\s*{re.escape(match.group(2))}",
-        text.strip(),
-        flags=re.IGNORECASE,
     )
-    if path and path[-1] == "尺寸比例锁定" and canonical_shorthand:
-        return True
-    return "尺寸比例锁定" in clause_prefix
+    dimension_group = bool(_DIMENSION_GROUP_PATTERN.search(clause))
+    competing_dimension = bool(
+        natural_width_before
+        or natural_width_after
+        or natural_width_path
+        or explicit_competing_dimension
+    )
+    return not any(
+        (
+            competing_dimension,
+            range_context,
+            negative_prefix,
+            unit_extension,
+            dimension_group,
+        )
+    )
+
+
+def _format_unsupported_claims_error(
+    label: str,
+    violations: Sequence[tuple[str, tuple[str, ...]]],
+) -> str:
+    categories = list(dict.fromkeys(category for category, _path in violations))
+    total = len(violations)
+    prefix = f"codex-dev 收到的{label}包含{'、'.join(categories)}（{total} 处："
+    suffix = "）"
+    paths = ["/".join(path) if path else "$" for _category, path in violations]
+    visible_paths: list[str] = []
+    for index, path in enumerate(paths):
+        omitted = total - index - 1
+        candidate_parts = [*visible_paths, path]
+        if omitted:
+            candidate_parts.append(f"等 {omitted} 处")
+        candidate = f"{prefix}{'；'.join(candidate_parts)}{suffix}"
+        if len(candidate) > 200:
+            break
+        visible_paths.append(path)
+
+    omitted = total - len(visible_paths)
+    parts = [*visible_paths]
+    if omitted:
+        parts.append(f"等 {omitted} 处")
+    message = f"{prefix}{'；'.join(parts)}{suffix}"
+    if len(message) > 200:
+        message = f"codex-dev 包含{'、'.join(categories)}（{total} 处：等 {total} 处）"
+    return message
 
 
 def _reject_unicode_damage_or_forbidden_keys(value: Mapping[str, Any], label: str) -> None:
@@ -439,45 +550,74 @@ def _reject_unicode_damage_or_forbidden_keys(value: Mapping[str, Any], label: st
 
 
 def _reject_unsupported_claims(value: Mapping[str, Any], height_cm: int, label: str) -> None:
-    text = "\n".join(item for item in _walk_values(value) if isinstance(item, str))
     measurement_pattern = re.compile(
         r"(?<![A-Za-z0-9_])(\d+(?:\.\d+)?)\s*"
-        r"(毫升|ml|mL|ML|升|L|l|毫米|mm|厘米|cm|克|g|千克|kg)"
+        r"(毫升|ml|升|l|毫米|mm|厘米|cm|克|g|千克|kg)",
+        flags=re.IGNORECASE,
     )
+    violations: list[tuple[str, tuple[str, ...]]] = []
+    seen_violations: set[tuple[str, tuple[str, ...]]] = set()
+    unknown_path_aliases: dict[tuple[str, ...], int] = {}
+
+    def safe_path(path: tuple[str, ...]) -> tuple[str, ...]:
+        result: list[str] = []
+        for index, part in enumerate(path):
+            is_trusted_index = (
+                part.isdigit()
+                and index > 0
+                and path[index - 1] in _INDEXED_UNSUPPORTED_CLAIM_PATH_SEGMENTS
+            )
+            if part in _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS or is_trusted_index:
+                result.append(part)
+                continue
+            raw_prefix = path[: index + 1]
+            alias = unknown_path_aliases.get(raw_prefix)
+            if alias is None:
+                alias = len(unknown_path_aliases) + 1
+                unknown_path_aliases[raw_prefix] = alias
+            result.append(f"未知字段{alias}")
+        return tuple(result)
+
+    def collect(category: str, path: tuple[str, ...]) -> None:
+        violation = (category, safe_path(path))
+        if violation not in seen_violations:
+            seen_violations.add(violation)
+            violations.append(violation)
+
     for path, item in _walk_string_contexts(value):
+        if _DIMENSION_GROUP_PATTERN.search(item):
+            collect("未确认参数", path)
         for match in measurement_pattern.finditer(item):
             number = float(match.group(1))
-            unit = match.group(2).lower()
+            unit = match.group(2).casefold()
             if (
                 unit in {"厘米", "cm"}
                 and number == float(height_cm)
                 and _is_confirmed_height_measurement(item, path, match)
             ):
                 continue
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}包含未确认参数")
+            collect("未确认参数", path)
 
-    for sentence in re.split(r"[。；;\n]", text):
-        if not sentence.strip():
-            continue
-        protected = any(
-            marker in sentence
-            for marker in (
-                "不得",
-                "禁止",
-                "不要",
-                "不出现",
-                "不生成",
-                "避免",
-                "未确认",
-                "不确认",
-                "不宣称",
-                "不推断",
+        for sentence in _FACT_CLAUSE_SEPARATOR_PATTERN.split(item):
+            if not sentence.strip():
+                continue
+            protected_spans = tuple(
+                protected.span("safe_targets")
+                for protected in _SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN.finditer(sentence)
             )
-        )
-        if protected:
-            continue
-        if re.search(r"陶瓷|玻璃|不锈钢|塑料|食品级|耐热温度|通过.{0,8}认证|认证编号", sentence):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}包含未确认商品事实")
+            protected_by_existing_marker = any(
+                marker in sentence for marker in _EXISTING_FACT_PROTECTION_MARKERS
+            )
+            for fact in _UNSUPPORTED_FACT_PATTERN.finditer(sentence):
+                if protected_by_existing_marker or any(
+                    start <= fact.start() and fact.end() <= end
+                    for start, end in protected_spans
+                ):
+                    continue
+                collect("未确认商品事实", path)
+
+    if violations:
+        raise ExecutorExecutionError(_format_unsupported_claims_error(label, violations))
 
 
 def _load_skill_text(repository_root: Path, skill_name: str, label: str) -> str:
