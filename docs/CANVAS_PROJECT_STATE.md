@@ -94,6 +94,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 2026-07-15 完成运行卫生修复（用户选择 R3=a、R6=a）：未入 Git 的 `启动画布.bat` 第三服务由 demo `--serve` 改为 `shuiping_20260712` 的 `--watch` 只读投影；它只读取真实批次事实并向画布同步状态，不创建执行器，也不读取或执行 `run:` / `retry:` 命令。为避免冷启动时画布尚未连接导致首次投影退出，主流程现先等待 agent/web、打开 Chrome，再启动固定的只读投影专用分支；分支先给页面 3 秒连接时间，只有 `--watch` 非正常退出时才每 5 秒重试，正常停止不会自动复活。真实工作区建批时的旧 manifest 已改名为 `batch_manifest.initial-snapshot-20260712.json` 并标注为非权威快照，仓库 manifest 继续是唯一事实入口。本次未启动服务、未调用真实 Codex/模型，未修改代码逻辑、业务路由或已有产物状态；该启动修复也不会主动删除浏览器中可能已存在的 demo 节点，如仍需清理必须另行批准。
 
+同日用户在完整预检通过后明确回复“执行”，随后又明确授权代写；从原项目 `hPbkNXg3WA0p2i46VOh3s` 经 canvas-agent 一次且仅一次提交 `run: detail_vc`。事件账本于 14:19:27 记录 `step_started`，14:23:37 以脱敏“codex-dev 收到的详情图变量配置包含未确认参数”记录 `step_failed`，耗时 250 秒（4 分 10 秒）。本轮只有这一条画布命令，失败后未重试、未改写命令，也未执行 `final_prompts`；本次专用 thread 只返回前两段，受控传输恢复与包装格式纠正均为 0 次。离线只读诊断确认第 1 段通过，第 2 段没有传输损坏，首个拒绝点是手持声明按规则填写的已确认 25 厘米尺寸摘要未被高度语义识别；仅在内存中消除该歧义后，下一拒绝点又是“不把具体材质写死为……”这一安全否定句未命中现有否定词表。两处都没有正向添加未确认参数或商品事实，属于校验器误判，不是模型输出业务错误；失败正文未被复用为产物。正式 `detail_variable_configs.json` 及临时半成品均未落盘，真实路由仍为 `needs_detail_variable_configs`，`final_prompts`、renders、repaired 均为 0；临时 `--serve` 已停止，真实执行开关在进程、用户和机器三个作用域均为空。修复尚未实施，下一步只能离线补回归测试并做窄范围 TDD 修复；任何新的真实调用仍须用户另行明确批准。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -150,11 +152,11 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 的传输根因、受控格式纠正和最新“未确认参数”误判均已完成离线修复与回归验证，正式详情配置仍不存在。下一步只能在用户再次明确批准后从原画布提交一次新的 `detail_vc` 真实验收；`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
+- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 于 2026-07-15 的新一轮一次性真实验收中再次以脱敏“包含未确认参数”失败，正式详情配置仍不存在。专用 thread 的离线只读诊断已把根因定性为两处安全表达被校验器误判，修复尚未实施；在窄范围 TDD 修复、全量回归和用户另行明确批准前，不得再次真实调用。`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
 
 ## 8. 后续路线图（候选，未排期）
 
-1. **完成详情图变量配置真实验收**：受控声明、`main_vc`、长 JSON 四段恢复、连续 UTF-8 解码、一次安全包装格式纠正和最新“未确认参数”误判的离线诊断与 TDD 修复均已完成。当前仍停在 `needs_detail_variable_configs`，正式详情配置不存在。下一步只能在用户再次单独批准后，从原画布提交一次新的 `detail_vc` 真实调用；只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
+1. **离线修复本次详情配置校验误判**：2026-07-15 的一次性 `detail_vc` 真实验收于 14:19:27 开始、14:23:37 以脱敏“包含未确认参数”失败，耗时 250 秒，本轮未重试。只读诊断已排除传输损坏与正向未确认事实，确认校验器没有识别手持声明中的已确认高度摘要和“不把……写死为……”这一安全否定语境。当前仍停在 `needs_detail_variable_configs`，正式详情配置不存在。下一步只能先为这两个边界补失败测试、做最小校验修正并完成全量回归；在修复验证及用户重新明确批准前，不得提交新的真实调用。只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
 2. **继续禁止渲染与 QC**：本轮只允许生成 6 份主图配置、8 份详情配置和 14 份最终提示词。即使路由在三步完成后进入 ready，也不得提交 renders、QC 或任何图片生成命令；`openai-image` 与 ComfyUI 继续保持未接入现场执行。
 3. **模型 API 执行器**：为 identity/style/angle/vc/qc 等非生图步骤增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。
 4. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。

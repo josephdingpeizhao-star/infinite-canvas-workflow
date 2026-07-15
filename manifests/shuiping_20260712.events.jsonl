@@ -29,3 +29,5 @@
 {"ts": "2026-07-14T20:19:38", "event": "step_failed", "step": "detail_vc", "detail": "codex-dev 收到的详情图变量配置分段结构异常"}
 {"ts": "2026-07-14T22:16:59", "event": "step_started", "step": "detail_vc", "command": "run: detail_vc"}
 {"ts": "2026-07-14T22:20:35", "event": "step_failed", "step": "detail_vc", "detail": "codex-dev 收到的详情图变量配置包含未确认参数"}
+{"ts": "2026-07-15T14:19:27", "event": "step_started", "step": "detail_vc", "command": "run: detail_vc"}
+{"ts": "2026-07-15T14:23:37", "event": "step_failed", "step": "detail_vc", "detail": "codex-dev 收到的详情图变量配置包含未确认参数"}
