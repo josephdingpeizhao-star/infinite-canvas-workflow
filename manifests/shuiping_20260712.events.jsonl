@@ -35,3 +35,5 @@
 {"ts": "2026-07-15T17:09:53", "event": "step_succeeded", "step": "detail_vc", "detail": "详情图变量配置已生成（492.6s）"}
 {"ts": "2026-07-15T18:10:24", "event": "step_started", "step": "final_prompts", "command": "run: final_prompts"}
 {"ts": "2026-07-15T18:12:37", "event": "step_failed", "step": "final_prompts", "detail": "codex-dev 收到的主图最终提示词未保留手持状态"}
+{"ts": "2026-07-15T20:05:38", "event": "step_started", "step": "final_prompts", "command": "run: final_prompts"}
+{"ts": "2026-07-15T20:09:24", "event": "step_succeeded", "step": "final_prompts", "detail": "最终提示词已生成（225.9s）"}
