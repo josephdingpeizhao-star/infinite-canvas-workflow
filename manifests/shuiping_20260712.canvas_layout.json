@@ -1,0 +1,126 @@
+{
+  "artifact_type": "canvas_layout",
+  "graph_id": "kettle_ecommerce_image_v1",
+  "layout_version": 1,
+  "nodes": {
+    "art_angle_inventory": {
+      "height": 130,
+      "position": {
+        "x": 2600,
+        "y": 80
+      },
+      "width": 300
+    },
+    "art_product_identity": {
+      "height": 130,
+      "position": {
+        "x": 920,
+        "y": 80
+      },
+      "width": 300
+    },
+    "art_style_master": {
+      "height": 130,
+      "position": {
+        "x": 1760,
+        "y": 80
+      },
+      "width": 300
+    },
+    "in_component_white_bg": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 80
+      },
+      "width": 280
+    },
+    "in_identity_draft": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 270
+      },
+      "width": 280
+    },
+    "in_set_group": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 460
+      },
+      "width": 280
+    },
+    "in_style_master_draft": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 650
+      },
+      "width": 280
+    },
+    "in_style_refs": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 840
+      },
+      "width": 280
+    },
+    "in_white_bg": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 1030
+      },
+      "width": 280
+    },
+    "out_renders": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 1220
+      },
+      "width": 280
+    },
+    "out_repaired": {
+      "height": 100,
+      "position": {
+        "x": 80,
+        "y": 1410
+      },
+      "width": 280
+    },
+    "stage_angle_inventory": {
+      "height": 150,
+      "position": {
+        "x": 2180,
+        "y": 80
+      },
+      "width": 320
+    },
+    "stage_product_identity": {
+      "height": 150,
+      "position": {
+        "x": 500,
+        "y": 80
+      },
+      "width": 320
+    },
+    "stage_style_master": {
+      "height": 150,
+      "position": {
+        "x": 1340,
+        "y": 80
+      },
+      "width": 320
+    }
+  },
+  "product_id": "shuiping_20260712",
+  "saved_at": "2026-07-13T17:43:20",
+  "viewport": {
+    "k": 0.4800000000000022,
+    "x": 82.08942184000756,
+    "y": 128.85016920963784
+  }
+}
