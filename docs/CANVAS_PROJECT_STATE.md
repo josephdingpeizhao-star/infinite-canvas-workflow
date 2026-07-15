@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-11 深夜（阶段 4 验收完成后）。
+> 最后更新：2026-07-15（完成画布子项目 P0 存档提交并修正 fork 未提交状态记录；业务路由与真实批次状态不变）。
 
 ## 1. 定位与目标
 
@@ -35,7 +35,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | ② | 画布终局 = 工作流定义的主编辑器（不止只读投影） | 同上 |
 | ③ | 接受 fork/修改 infinite-canvas（AGPL，本机自用不分发） | 同上 |
 | ④ | 暂不做多人协作 | 同上 |
-| ⑤ | LLM 阶段的执行用 canvas-agent 内置的 Codex 线程直驱 | 同上 |
+| ⑤ | 执行层采用可替换执行器边界；Codex 只作为开发工具或可选适配器，正式方向为中央后台直接调用模型 API，不把业务逻辑绑定到 Codex、模型名或供应商 | 2026-07-12 更新 |
 | ⑥ | 布局文件（canvas_layout）进 Git | 同上 |
 
 ## 4. 阶段进度台账
@@ -50,21 +50,65 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
+真实批次试点（不作为新的架构阶段）：`shuiping_20260712` 已于 2026-07-12 建立单品批次，12 张白底 JPG 从桌面源文件夹复制到 manifest 声明的外部工作区，逐文件 SHA-256 一致；`workflow_doctor.py` 已识别下一 Skill 为 `product-identity-archive`，并已向“无限画布 1”首次投影 17 个批次节点。真实 `codex-dev` identity 已做阶段 B 尝试但未成功产出档案，因此仓库业务状态仍停留在 `needs_product_identity_archive`，不得继续后续业务步骤。
+
+同日已从“无限画布 1”精确删除 `demo_live` 的 29 个演示节点，保留 `shuiping_20260712` 的 17 个真实批次节点；删除时未发现演示 `--serve` 常驻进程，因此不会由后台自动重建。演示工作区文件本身仍保留，未作删除。
+
+阶段 B 重新打开“无限画布 1”时，现场发现 `demo_live` 节点已再次出现，并确认存在一个指向 `D:\dev\canvas-demo-workspace` 的 demo `--serve` 常驻进程；它会在画布重连后重新投影演示节点。该进程和演示节点不属于本轮 identity 执行范围，未停止、未删除；当前画布同时包含 demo 与 `shuiping_20260712` 节点，后续若要恢复“仅真实批次”状态需单独处理。
+
+同日开始生产化执行边界改造：新增供应商无关的 `ExecutionRequest` / `ExecutionResult`、显式执行器注册表和组合入口；现有 demo 已迁移到统一协议。新增 `openai-image` 适配器，默认对接官方 `gpt-image-2`，同时支持无参考图的 generations 请求和带参考图的 edits 请求；只使用 Python 标准库，密钥仅从服务端 `OPENAI_API_KEY` 读取。该适配器目前只通过注入假 HTTP 传输完成离线测试，未调用真实 API、未生成真实图片，也尚未从最终提示词产物自动组装批量图片任务。
+
+同日完成 `codex-dev` 第一阶段离线实现：该适配器注册在同一执行器边界之后且不是默认执行器，当前只接受 `identity`。它完整读取仓库 canonical `product-identity-archive` Skill 和 required reference，复用 canvas-agent 现有的 Codex 新线程、HTTP 与 SSE 能力，不在 Python 中启动另一套 Codex 会话；SSE 只作完成通知，最终结果从本次专用 thread 重新读取。传输只接受本机回环地址并显式禁用系统代理；输出必须位于 manifest 声明的 `artifacts_root` 内且不覆盖已有档案。最终返回必须区分已确认事实、可见推断、无法确认和禁止虚构内容，越界产物或异常结构在写入前拒绝。缺少 canvas-agent、连接失败、线程失败和格式异常均收敛为切断原始异常链的脱敏 `ExecutorExecutionError`。真实执行默认关闭，阶段 B 获批后才可在该次进程临时设置 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`，不写配置、不持久化。阶段 A 的自动测试只使用假传输和临时工作区；在阶段 A 截止时尚未调用真实 Codex、读取真实批次图片、写入真实产品档案、改变真实批次状态或更新现场画布。
+
+阶段 B 于同日获得明确批准并从画布运行台经三段门禁触发。现场测得 12 张输入原始共 41,563,687 bytes，Base64 后约 52.85 MiB，超过 canvas-agent 单次 30MB JSON 上限；因此新增同一专用 thread 内的 4+4+4 分批上传（各批约 16.65/17.45/18.75 MiB）及最终统一综合，并补充“本线程 turn 完成但无 assistant 文本时立即失败”的保护。真实 gpt-5.6-sol 第一批 turn 连续三次完成但均无 assistant 消息、工具调用或错误；第一次因旧等待逻辑人工停止，后两次由适配器在 `manifests/shuiping_20260712.events.jsonl` 记录脱敏 `step_failed`。要求分批返回非空 `batch_observation` JSON 后结果仍为空，说明阻塞位于 canvas-agent/Codex 返回兼容链路而非请求体上限或业务输出校验。没有写入 `product_identity_archive.json`，没有生成图片、调用 ComfyUI、修改 manifest 或前进真实批次状态；临时 `CODEX_DEV_ALLOW_REAL_EXECUTION` 进程均已关闭，开关未持久化。现场尝试后又离线补强两层传输门禁：单张附件超过 20 MiB 时在连接前拒绝，完整 JSON 请求体超过默认 28 MiB 时不发送；助手消息数和用户消息数也改为独立跟踪，避免多消息线程误判。全仓测试现为 102 项通过。
+
+2026-07-13 完成只读兼容性排查并获得用户对最小 fork 修改的明确批准。三份失败 rollout 均由 canvas-agent 内置 `@openai/codex 0.139.0` 执行，图片已被正确解码缩放为 2048×1365，首批四图合计仅约 580KB；同版本模型目录不包含实际继承的全局 `gpt-5.6-sol`。单变量验证中，0.139 使用该继承模型的最小纯文本回合失败且无 assistant，而显式改为其支持的 `gpt-5.5` 后正常返回 `OK`，因此根因为客户端版本与模型配置错配，不是图片、SSE、三段门禁或产品提示词。fork 只增加通用的可选模型 thread 参数和真实 `completed` / `failed` / `interrupted` 状态保真；`codex-dev` 在适配器内部选择 `gpt-5.5`，业务层仍无模型或 Codex 专属分支。离线测试为 fork 2 项 Node 测试、TypeScript 构建和主仓库 103 项 Python 测试通过。
+
+同日随后从“无限画布 1”真实运行台再次写入 `run: identity`，原三段门禁放行后由 `codex-dev` 在同一 `gpt-5.5` thread 中完成 4+4+4 三批图片观察和最终综合。四个回合均产生非空 assistant；最终档案原子写入 `D:\onedrive\OneDrive\Desktop\杯类\shuiping_20260712\artifacts\identity\product_identity_archive.json`，共引用 12 个源文件，完整包含已确认事实、可见推断、无法确认和禁止虚构内容，不含 style master、角度表、变量配置、最终提示词、图片或 QC 字段。真实尺寸全部标为无法确认且无虚构数字，既有 `product_identity_archive.schema.json` 校验通过。事件账本新增一组 `step_started` / `step_succeeded`，运行台和 identity 阶段/档案节点投影为成功。批次现自然进入 `needs_style_master`，但因没有风格参考图而阻断；本轮不越界生成风格母版或任何后续产物。临时 `codex-dev --serve` 和真实执行开关已关闭。
+
+2026-07-13 用户随后提供 `D:\onedrive\OneDrive\Desktop\shuiping\风格参考图.png` 并批准扩展 `codex-dev` 的第一种方案。离线阶段已按 TDD 增加 `style_master` 分支：完整加载 `style-master-extractor` Skill 与 required reference，读取既有产品身份档案作为上位约束，只从 manifest 声明的风格参考目录加载图片，只允许写入 `artifacts_root` 内的 `style_master.json`；缺少输入、缺少身份档案、越界返回、异常结构和已有产物均在写入前脱敏拒绝。上层控制器、命令门禁和事件日志没有 Codex 专属分支，demo、openai-image 和 identity 回归通过。此记录写入时尚未复制真实参考图、调用真实 Codex、写入正式风格母版或改变真实批次状态。
+
+同日随后完成 style master 现场验收。只将明确命名的 `风格参考图.png` 复制到 manifest 声明的 `inputs\style_refs`，源/目标 SHA-256 均为 `733855F89F072D45F0D3918CE6378041E6C4F2C475BFBA3540EAC09CA39FD411`；同目录其余 12 张 JPG 没有被误作风格输入。画布运行台经原三段门禁执行 `run: style_master`：首次 Codex 返回了完整风格内容，但把 `forbidden_elements` / `concise_style_master` 错放顶层并提前关闭根对象，严格 JSON 门禁因此记录一次脱敏 `step_failed`，没有落盘。系统化排查后只在适配器提示中增加明确 JSON 层级骨架，未放宽解析器；离线回归通过后再次经同一门禁执行成功，耗时 107.0s。正式产物原子写入 `D:\onedrive\OneDrive\Desktop\杯类\shuiping_20260712\artifacts\style_master\style_master.json`，只引用该 PNG，14 个必需栏目齐全，含 12 条禁止项、8 个风格锚点、8 条可复用规则和 375 字精简母版；既有 `style_master.schema.json` 校验通过，不含产品身份、角度表、变量配置、最终提示词、图片或 QC 越界字段。事件账本和画布阶段/产物节点均投影为成功，批次进入 `needs_angle_inventory`。临时真实执行服务已关闭，执行开关未持久化，renders/repaired 仍均为 0 张。
+
+同日用户确认继续“角度槽位入库”，并明确裁定 canonical required reference 末尾混入的“套装合影、套装编排、件数核对”字段不适用于本 `single` 批次：保留主体规则的 A/B/C/D 单品槽位和逐图字段，不修改原 Skill、reference 或 schema。`codex-dev` 已按 TDD 增加 `angle_inventory` 阶段 A 分支：只读取 manifest 白底图与既有产品身份档案，不读取风格母版改变角度；适配器固定真实 `image_assets`，要求每张源图恰好对应一条记录，并校验合法槽位、入库结论、主图/详情图适用性、缺失槽位和重拍建议。set 批次、缺图、缺身份、重复/未知图片、非法槽位、套装或下游越界字段、路径越界和已有正式产物均在写入前脱敏拒绝。上层控制器、命令门禁、事件日志和注册表没有 Codex 专属分支；阶段 A 只使用 12 张轻量临时图片和假传输，全仓 114 项测试、Python 编译、CLI 帮助与 `git diff --check` 均通过。未启动真实 Codex、未读取真实批次图片、未写入正式角度表、未改变事件账本或画布状态，真实批次仍为 `needs_angle_inventory`。
+
+同日随后完成 angle inventory 阶段 B 真实现场验收。首次正式结果虽然写入成功，但业务复核发现竖拍图按原始横向像素误判，且含损坏字符；该结果没有被覆盖或删除，而是保留为 `artifacts\audit\angle_inventory\angle_inventory.first-run-rejected-20260713-161428.json`。第一次受控重做被新增的损坏字符门禁安全拒绝，没有正式落盘。只读排查确认 12 张图中 11 张 JPEG 的 EXIF Orientation 为 8，附件预处理没有按该显示方向呈现；主仓库适配器随后仅用 Python 标准库读取 EXIF 并把逐图显示旋转说明交给识别线程，同时补强 A/B/D 边界、缺失槽位一致性和损坏字符拒绝，未修改 Infinite Canvas fork、Skill、required reference、schema、scripts 或批次 manifest。全仓基线增至 116 项通过后，用户明确批准第二次真实调用；原画布三段门禁于 16:50:43 唯一提交 `run: angle_inventory`，16:55:06 成功，耗时 262.2s。正式 `angle_inventory.json` 的 SHA-256 为 `D89DCE8F21BF8E5EFA487061CAD94E4470526461065F3EFFE1029E9AA3C33695`，既有 schema 校验通过，12 个实际文件名全部且仅出现一次：A 4 张、B 1 张、C 1 张、6 张“不适合归入现有槽位”，仅缺 D，并给出直立低角度及局部完整性重拍建议。产物不含 Unicode 损坏字符，也不含套装、风格、变量配置、最终提示词、图片或 QC 越界字段。事件账本、角度阶段节点和产物节点均投影为成功；临时 `codex-dev --serve` 已立即关闭，真实执行开关未持久化，renders/repaired 均为 0。由于 manifest 的 `requested_outputs` 为空，真实路由为 `awaiting_requested_outputs`、`next_skill=null`，没有自动执行主图变量配置或任何后续步骤。
+
+同日用户明确要求不补拍 D、直接继续后续流程，并确认商品为家居盛水水壶、高度约 25 厘米、14 张规划中主图 2 张手持与详情图 1 张手持；未确认容量、其他尺寸、重量、具体材质、耐热、认证、品牌和型号。`codex-dev` 已按 TDD 完成下游阶段 A：`main_vc` 固定生成 6 套 1:1 主图配置且恰好 2 套手持；`detail_vc` 固定生成模块01至模块08共 8 套 3:4 配置且恰好 1 套手持，模块05只允许标注“高度约 25 厘米”且不得手持；`final_prompts` 使用两个独立 Codex thread 分别编译 6+8 套，只有两批均通过才原子写入 14 份 JSON/Markdown 和索引。三步只使用正式身份、风格、角度和变量配置档案，只绑定合格 A/B/C，不读取真实图片、不使用 D、不生成 ComfyUI 作业、QC 或图片；编号、产品 id、上游路径和哈希由适配器固定，异常、越界、Unicode 损坏与已有产物均在写入前拒绝。全仓 136 项测试、Python 编译、CLI 帮助和 `git diff --check` 通过。本记录写入时下游真实调用尚未开始，manifest 仍未受控声明 `requested_outputs`，正式主图/详情配置与最终提示词仍不存在，事件和画布仍保持角度验收后的状态。
+
+同日随后经“无限画布 1”的配置编辑节点和三段门禁受控写入 `requested_outputs: main, detail, final_prompts` 及用户确认事实，真实路由进入 `needs_main_variable_configs`。`main_vc` 首次调用于 17:48:46 因适配器未兼容规则原文的 canonical 手持值而安全失败；TDD 修正后于 17:56:14 从原画布唯一重提，17:59:44 成功，耗时 209.7s。正式 `main_variable_configs.json` 的 SHA-256 为 `4AAA599531C04F03B1206B71AA262515FA75D52D6A22CE5025CE4BCC9506BFAB`，既有 schema 校验通过，包含 `main_01` 至 `main_06` 六项、全部 1:1、恰好 `main_02` 与 `main_05` 两项手持、只绑定合格 A/B/C 源图并固定“约 25 厘米”；不含 D、被拒绝源图、未确认参数、图片、ComfyUI 或 QC 内容。路线随后进入 `needs_detail_variable_configs`。
+
+`detail_vc` 的真实现场验收未形成正式产物，当前安全暂停。三次经原画布和三段门禁的调用分别为：18:03:44 开始、18:09:17 因返回含 3 个 Unicode 损坏字符失败；18:20:55 开始、18:31:53 因“避免塑料感”“不生成认证编号”等明确禁止语被校验器误判为正向商品事实而失败；18:44:54 开始、18:51:27 再次因真实 Unicode 损坏字符失败。两类校验兼容差异已用 TDD 修正：允许规则原文的完整模块名，允许“不要 / 不出现 / 不生成 / 避免”等否定语境，同时继续拒绝正向未确认材质或认证宣称；整批画布初始投影超时后的小批次有序回退也已增加测试保护。全仓基线现为 139 项通过，Python 编译、CLI 帮助和 `git diff --check` 通过。最后一次失败后临时 `codex-dev --serve` 已关闭，真实执行开关未持久化；正式 `detail_variable_configs.json` 不存在，最终提示词未执行，renders/repaired 仍均为 0。原工作画布仍为 27 个节点、32 条连接，详情阶段、运行台和日志已精确投影为失败终态。恢复时必须从 `needs_detail_variable_configs` 重新开始，先解决 Codex 长 JSON 偶发损坏问题；不得复用失败线程正文绕过正式运行台落盘，也不得跳过详情配置直接执行最终提示词。
+
+同日随后完成长 JSON 受控恢复的离线实现，尚未进行新的真实调用。`detail_vc` 现在在一个专用 Codex thread 内按 `detail_01～02`、`03～04`、`05～06`、`07～08` 四段返回；每段带固定段号和精确配置编号，全部在内存中重组后仍执行原有八模块完整校验和排他原子写入。只有 U+FFFD 或无法解析的截断 JSON 被视为可恢复传输损坏，系统会在同一 thread 完整重发该段，不做本地字符替换，也不从失败正文拼补；全任务最多恢复 2 次，合法 JSON 中的越界字段、错误模块、非法角度、未确认事实等业务错误立即拒绝且不重试。目标测试先按旧实现红灯，完成后全仓增至 145 项通过，覆盖四段成功、Unicode/截断恢复、两次上限、越界不重试、段号和配置覆盖以及失败不留正式文件。此次仅修改主仓库 `canvas-bridge/`、测试和文档；未修改 fork、scripts、schemas、Skill、runtime reference 或 manifest，未启动真实 Codex、未消耗配额、未写真实产物、事件日志或画布。正式路由仍为 `needs_detail_variable_configs`，下一次真实调用前必须重新检查并获得用户明确批准。
+
+2026-07-14 用户明确批准后完成一次且仅一次新的真实 `detail_vc` 画布提交。现场先重新通过 145 项测试、Python 编译、CLI 帮助、主图 JSON 与 `git diff --check`，再恢复原项目 `hPbkNXg3WA0p2i46VOh3s`（27 节点、32 连接）并只在临时 `codex-dev --serve` 子进程设置真实执行开关。事件账本于 20:16:34 记录 `step_started`，20:19:38 以脱敏“详情图变量配置分段结构异常”记录 `step_failed`；该结果不是 U+FFFD 或 JSON 截断，而是返回段的段号/配置编号结构不符合约定，按规则属于不可用传输修复掩盖的正式结构错误，因此不会以该结构错误为由重发；本轮也没有再次提交画布命令。正式 `detail_variable_configs.json` 未写入，变量目录仍只有已验收主图文件，`final_prompts`、renders、repaired 均为 0。临时服务已在失败终态后立即停止，真实执行开关未持久化；画布运行台与日志已投影本次脱敏失败。真实路由仍为 `needs_detail_variable_configs`，后续若要调整段结构容错或再次调用，必须重新离线设计、测试并单独取得用户批准。
+
+随后已完成此次失败的离线根因修复和受控格式纠正，尚未发起新的真实调用。只读复现确认：canvas-agent 曾对 Codex stdout 的每个 Buffer 单独解码，中文字符跨数据块时会产生 U+FFFD；fork 现改为同一输出流连续 UTF-8 解码，并用中文 JSON 跨字节边界测试锁定，3 项测试与 TypeScript 编译通过。主仓库继续使用同一 thread 四段返回：U+FFFD 或可确认的截断 JSON 前缀仍最多整段重发 2 次，空回复以及完整或前部已有语法错误的 JSON 立即拒绝；只有第 1 段配置与公共约束已通过比例、角度、模块、手持数量、未确认事实和越界字段门禁，但顶层 `notes` 不是字符串时，最多允许 1 次同线程完整格式纠正。纠正前后必须保持业务配置指纹一致，第四段还会结合前三段核对完整 8 项手持数量和汇总；纠正提示不回显失败正文，本地不搬移字段、不替换字符。相同的 25 厘米数值若在当前字段或嵌套字段路径中用于宽度、直径等未确认语义也会拒绝；段号、配置编号、覆盖、比例、角度、模块、手持或商品事实错误仍立即拒绝。四段全部通过后才在内存重组并执行原八模块完整校验与排他原子落盘。全仓增至 155 项测试通过；本轮未改变 `ExecutionRequest / ExecutionResult`、三段门禁、默认 `demo`、`openai-image`、其他 `codex-dev` 阶段或既有产物格式，未启动真实 Codex、未消耗配额，未改真实批次产物、事件日志或画布。正式路由仍为 `needs_detail_variable_configs`，正式详情配置仍不存在；下一次真实 `detail_vc` 必须再次取得用户明确批准，且成功后也不得自动执行 `final_prompts`。
+
+同日用户再次明确批准后，从原项目 `hPbkNXg3WA0p2i46VOh3s` 经三段门禁完成本轮一次且仅一次 `run: detail_vc` 提交。调用前主仓库 155 项测试、Python 编译、CLI 帮助、主图 schema 与 `git diff --check` 全部通过，fork 侧 3 项测试、TypeScript 构建与 `git diff --check` 通过；27 个节点、32 条连接、正式产物指纹、29 条事件基线及真实执行开关均复核无误。事件账本于 22:16:59 记录 `step_started`，22:20:35 以脱敏“详情图变量配置包含未确认参数”记录 `step_failed`。该终态拒绝属于正式业务门禁拒绝，不是 U+FFFD 或 JSON 截断，因此没有因终态业务错误再次重发，也没有第二次画布提交；失败线程的只读证据同时显示，第 1 段在到达该终态前曾按传输完整性门禁完整重发 1 次。正式 `detail_variable_configs.json` 及临时半成品均未写入，变量目录仍只有已验收主图文件；真实路由保持 `needs_detail_variable_configs`，`final_prompts`、renders、repaired 均为 0，上游正式产物指纹未变。临时 `codex-dev --serve` 已停止，真实执行开关在进程、用户和机器范围均未保留；停止后仅依据事件事实账本把详情阶段、运行台和日志三个投影节点同步为脱敏失败终态，未再次调用 Codex。若要分析或调整“未确认参数”拒绝原因，必须先离线只读诊断；任何新的真实 `detail_vc` 调用仍需用户另行明确批准。
+
+同日随后完成“未确认参数”失败的离线只读诊断与窄范围 TDD 修复，尚未发起新的真实调用。脱敏证据表明，返回内容没有正向宣称容量、宽度、直径、重量、准确材质、耐热、认证、品牌或型号；被拒内容只是 `尺寸比例锁定` 中的已确认“约 25 厘米”以及明确禁止补写未确认参数的安全约束，因此属于校验误判。校验器现在只在专用 `尺寸比例锁定` 叶子中接受精确的已确认高度简写，或在同一子句明确出现“尺寸比例锁定”/“高度”语义时接受该高度；裸数值、容量和重量单位、宽度/直径等其他尺寸、区间、负数、伪装单位、数值前后或嵌套路径中的自然宽度表达仍在写入前拒绝，“宽松/宽阔”等视觉描述不受影响。新旧边界先以失败测试复现，再完成最小修正；全仓 161 项测试、Python 编译、CLI 帮助、已验收主图 schema 与 `git diff --check` 均通过，并经独立只读审查确认无重要问题。本轮未修改 fork、scripts、schemas、manifest、执行器默认值或产物格式，未启动真实 Codex、未消耗配额，未写正式详情配置、事件日志或画布；真实路由仍为 `needs_detail_variable_configs`，任何新的 `detail_vc` 真实调用仍需用户另行明确批准，成功后也不得自动执行 `final_prompts`。
+
+2026-07-15 完成画布子项目 P0 存档：主仓库执行器成果提交 `4c4dfe6e243d6f1be17848c66399e40b0c876381`、真实批次三件套提交 `88ebd441dd0cacabe9fee170127680181a127dd0`、历史 plans/specs 提交 `e32cdc81499d029133d1d50066c95ff9a4da3e74`；fork 锚点 #5–#8 提交 `91e40d04b3c45eb51b0f597ee3beae38b9204c50`。账本修正与既有报告存档收录于本记录所在 docs 提交，其最终哈希见 Git 日志与完成汇报。本次只做存档和账本事实修正，未修改代码逻辑，未启动或调用真实 Codex/模型；`启动画布.bat` 继续因包含本机绝对路径而有意不入 Git。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
 
-- `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、驱动脚本 spike_canvas_push）。
+- `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2 与 `codex-dev` identity/style master/angle inventory/main/detail/final-prompts 适配器、驱动脚本 spike_canvas_push）。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`——画布子项目测试（含在全仓库 66 个测试内，运行 `python -m unittest discover -s tests`）。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`——画布子项目测试（当前含在全仓库 161 个测试内，运行 `python -m unittest discover -s tests`）。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
-- 位置：`D:\dev\infinite-canvas`，分支 `workflow-editor`，当前 @ 01f2c14，上游基线 ebd8ae2（2026-07-09 origin/main）。
-- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——列出全部锚点（截至 2026-07-11 共 3 个：①agent 回读只截断 data:URL ②面板连接持久化 localStorage ③工具确认开关持久化）。动 fork 前必读，同步上游后逐条复核。
-- `web/bun.lock` 有一处未提交改动（bun install 副产物，无关紧要）。
+- 位置：`D:\dev\infinite-canvas`，分支 `workflow-editor`，当前 @ 91e40d04，上游基线 ebd8ae2（2026-07-09 origin/main）。
+- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——列出全部锚点（截至 2026-07-14 共 8 个，包含 canvas-agent 可选模型、真实 turn status、无新增依赖的测试入口和 Codex stdout 连续 UTF-8 解码）。动 fork 前必读，同步上游后逐条复核。
+- 锚点 #5–#8 及其配套 CHANGELOG、测试登记与 `web/bun.lock`（bun install 副产物）已随 `91e40d04` 提交；fork 工作区在本次存档后应保持干净。
 
-**演示工作区（可丢弃）**：`D:\dev\canvas-demo-workspace`，由 `canvas-bridge/make_demo_workspace.py` 管理（`--init/--add-inputs/--advance <步骤>/--reset`），带 `.canvas_demo` 安全标记，绝不写仓库。
+**演示工作区（可丢弃）**：`D:\dev\canvas-demo-workspace`，由 `canvas-bridge/make_demo_workspace.py` 管理（`--init/--add-inputs/--advance <步骤>/--reset`），带 `.canvas_demo` 安全标记，绝不写仓库。工作区文件仍保留，但 `demo_live` 的 29 个画布演示节点已于 2026-07-12 清理。
+
+**首个真实批次工作区（不可按演示数据清理）**：`D:\onedrive\OneDrive\Desktop\杯类\shuiping_20260712`；仓库事实入口为 `manifests/shuiping_20260712.batch_manifest.json`。原始白底图仍保留在 `D:\onedrive\OneDrive\Desktop\shuiping`，工作区使用经哈希核验的副本。
 
 ## 6. 运行时手册
 
@@ -103,14 +147,16 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 阶段 4 仅内置 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护）。真实执行器接入点：`canvas-bridge/run_controller.py` 的 `EXECUTORS` 注册位与 `build_executor()`。
+- 阶段 4 的现场运行默认仍使用 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护）。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 的传输根因、受控格式纠正和最新“未确认参数”误判均已完成离线修复与回归验证，正式详情配置仍不存在。下一步只能在用户再次明确批准后从原画布提交一次新的 `detail_vc` 真实验收；`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
 
 ## 8. 后续路线图（候选，未排期）
 
-1. **Codex 执行器**：LLM 阶段（identity/style/angle/vc/qc 等 executor=agent 的图节点）经 canvas-agent 的 Codex 线程直驱（决策⑤）。**耗 API 配额，动手前需用户明确批准。**接入点见 §7。
-2. **Comfy/脚本执行器**：`stage_render`（executor=comfy，`scripts/submit_comfy_cloud_jobs.py`）与 `gate_final_prompt_integrity`（executor=python）直跑真实脚本。
-3. **真实产品批次入库**：用真实水壶批次替换演示工作区跑全链路。
-4. fork 上游同步演练（锁 tag、合并后逐条复核 FORK_NOTES.md + 跑 66 测试 + 桥接冒烟）。
+1. **完成详情图变量配置真实验收**：受控声明、`main_vc`、长 JSON 四段恢复、连续 UTF-8 解码、一次安全包装格式纠正和最新“未确认参数”误判的离线诊断与 TDD 修复均已完成。当前仍停在 `needs_detail_variable_configs`，正式详情配置不存在。下一步只能在用户再次单独批准后，从原画布提交一次新的 `detail_vc` 真实调用；只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
+2. **继续禁止渲染与 QC**：本轮只允许生成 6 份主图配置、8 份详情配置和 14 份最终提示词。即使路由在三步完成后进入 ready，也不得提交 renders、QC 或任何图片生成命令；`openai-image` 与 ComfyUI 继续保持未接入现场执行。
+3. **模型 API 执行器**：为 identity/style/angle/vc/qc 等非生图步骤增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。
+4. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
+5. **真实产品批次继续推进**：`shuiping_20260712` 已完成角度入库和主图变量配置；用户已决定不补拍缺失 D，并已确认后续配置与提示词范围。当前仍禁止生成图片，也不执行最终提示词之后的渲染或 QC。
+6. fork 上游同步演练（锁 tag、合并后逐条复核 FORK_NOTES.md + 跑全仓测试 + 桥接冒烟）。
 
 ## 9. 维护协议（交接纪律）
 

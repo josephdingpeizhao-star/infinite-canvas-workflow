@@ -1,20 +1,20 @@
 # Current State
 
-- status: blocked
-- checked_at: 2026-06-24T02:43:14.626077+00:00
-- current_stage: repository_initialized_no_active_batch
-- current_stage_judgment: Stage 6 - Product Batch Intake (blocked)
-- last_completed_stage: Stage 5 - Current-State Orchestrator
-- next_stage: Stage 6 - Product Batch Intake (blocked)
-- next_skill: None
-- active_batch_count: 0
+- status: ready
+- checked_at: 2026-07-14T14:13:54.658214+00:00
+- current_stage: needs_detail_variable_configs
+- current_stage_judgment: Stage 8 - Variable Config Generation (pending)
+- last_completed_stage: Stage 7 - Upstream Artifact Readiness
+- next_stage: Stage 8 - Variable Config Generation (pending)
+- next_skill: detail-variable-config
+- active_batch_count: 1
 
 ## Allowed Next Actions
 
 - run_self_checks
 - refresh_reports_current_state
 - review_skill_tree_and_reference_reports
-- prepare_product_batch_intake_after_product_id_and_inputs_are_provided
+- advance_only_next_repository_gate_stage_8
 
 ## Forbidden Next Actions
 
@@ -26,9 +26,6 @@
 - invent_product_facts_or_specs
 - enable_set_product_skills_without_explicit_set_request
 - render_without_final_prompt_integrity_gate
-- generate_variable_configs_without_product_batch
-- compile_final_prompts_without_upstream_artifacts
-- run_qc_without_generated_images
 
 ## Validation Reports
 
@@ -55,13 +52,11 @@
 
 ## Missing Required Artifacts
 
-- active_product_batch_manifest
-- product_source_inputs
+- shuiping_20260712:detail_variable_configs
 
 ## Blocked Reasons
 
-- No non-template product batch manifest found in manifests/.
-- No product batch manifest points to repository inputs/artifacts or a manifest-declared external workspace.
+- None
 
 ## Needs Manual Review
 
@@ -77,11 +72,11 @@
 
 ## Startup Hygiene
 
-- status: needs_review
-- mode: recycle_bin_cleanup
-- review_reasons: previous_current_state_contains_batches_not_found_by_fresh_scan
-- current_effective_batch_ids: None
-- previous_state_only_batch_ids: cup_batch_1_20260624
+- status: pass
+- mode: report_only_no_delete
+- review_reasons: None
+- current_effective_batch_ids: shuiping_20260712
+- previous_state_only_batch_ids: None
 - directory_residue_product_ids: None
 - historical_report_only_product_ids: None
 - completed_manifest_product_ids: None
@@ -89,16 +84,11 @@
 - protected_audit_evidence_count: 0
 - cleanup_actions: 0
 - safe_cleanup_candidate_count: 0
-- cleanup_selection_mode: auto_detected
-- cleanup_abandoned_product_ids: cup_batch_1_20260624
-- cleanup_abandoned_paths: None
-- cleanup_historical_report_product_ids: None
-- cleanup_skipped_protected_product_ids: None
 
 ## Stage Plan
 
-- completed_stage_count: 6/13
-- current_stage: Stage 6 - Product Batch Intake (blocked)
+- completed_stage_count: 8/13
+- current_stage: Stage 8 - Variable Config Generation (pending)
 - next_unblocked_stage: None
 
 ## Stage Status
@@ -109,32 +99,23 @@
 - Stage 3 Templates, Schemas, Scripts, Directories: complete
 - Stage 4 Basic Validation Run: complete
 - Stage 5 Current-State Orchestrator: complete
-- Stage 6 Product Batch Intake: blocked
-- Stage 7 Upstream Artifact Readiness: pending
+- Stage 6 Product Batch Intake: complete
+- Stage 7 Upstream Artifact Readiness: complete
 - Stage 8 Variable Config Generation: pending
 - Stage 9 Final Prompt Compilation: pending
 - Stage 10 ComfyUI Render Job Preparation: pending
 - Stage 11 Rendering: pending
 - Stage 12 QC and Retry Planning: pending
 
-## Workflow Doctor
-
-- checked_at: 2026-06-24T02:43:14.633835+00:00
-- validation_failed_count: 0
-- scripts/validate_workflow_architecture.py: exit=0, report_status=pass
-- scripts/validate_skill_tree.py: exit=0, report_status=pass
-- scripts/validate_references.py: exit=0, report_status=pass
-- scripts/validate_production_readiness.py: exit=0, report_status=pass
-
 ## Batches
 
-- None
+- shuiping_20260712: stage=needs_detail_variable_configs, next_skill=detail-variable-config, next_required_skill=detail-variable-config, available=5, missing=1, blocked=0
 
 ## File Groups
 
-- manifests: 3 files
-- schemas: 14 files
-- scripts: 20 files
+- manifests: 6 files
+- schemas: 16 files
+- scripts: 16 files
 - reports: 12 files
 - required_directories: 17/17
 - required_files: 42/42

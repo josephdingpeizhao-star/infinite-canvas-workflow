@@ -1,6 +1,6 @@
 {
-  "checked_at": "2026-06-24T02:43:14.604810+00:00",
-  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
+  "checked_at": "2026-07-12T02:33:41.399757+00:00",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
   "directories": [
     {
       "path": "inputs/products/_template_product/white_bg",
@@ -332,7 +332,7 @@
     {
       "path": "AGENTS.md",
       "exists": true,
-      "size": 4650
+      "size": 5267
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -394,7 +394,7 @@
     {
       "path": "scripts/detect_current_state.py",
       "exists": true,
-      "size": 65411
+      "size": 65519
     },
     {
       "path": "scripts/detect_current_stage.py",
@@ -431,7 +431,7 @@
     {
       "path": "reports/workflow_architecture_report.json",
       "exists": true,
-      "size": 3600
+      "size": 3657
     },
     {
       "path": "reports/workflow_architecture_report.md",
@@ -441,7 +441,7 @@
     {
       "path": "reports/skill_tree_report.json",
       "exists": true,
-      "size": 5573
+      "size": 5630
     },
     {
       "path": "reports/skill_tree_report.md",
@@ -451,7 +451,7 @@
     {
       "path": "reports/reference_check_report.json",
       "exists": true,
-      "size": 8824
+      "size": 8881
     },
     {
       "path": "reports/reference_check_report.md",
@@ -461,12 +461,12 @@
     {
       "path": "reports/current_state.json",
       "exists": true,
-      "size": 63877
+      "size": 38489
     },
     {
       "path": "reports/current_state.md",
       "exists": true,
-      "size": 6318
+      "size": 6402
     }
   ],
   "previous_reports": {

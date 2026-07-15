@@ -1,41 +1,37 @@
 {
-  "checked_at": "2026-06-24T02:43:14.626077+00:00",
-  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）",
-  "status": "blocked",
-  "current_stage": "repository_initialized_no_active_batch",
-  "next_skill": null,
+  "checked_at": "2026-07-14T14:13:54.658214+00:00",
+  "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
+  "status": "ready",
+  "current_stage": "needs_detail_variable_configs",
+  "next_skill": "detail-variable-config",
   "missing_required_artifacts": [
-    "active_product_batch_manifest",
-    "product_source_inputs"
+    "shuiping_20260712:detail_variable_configs"
   ],
-  "blocked_reasons": [
-    "No non-template product batch manifest found in manifests/.",
-    "No product batch manifest points to repository inputs/artifacts or a manifest-declared external workspace."
-  ],
+  "blocked_reasons": [],
   "validation_reports": {
     "workflow_architecture_report": {
       "path": "reports/workflow_architecture_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-06-24T02:43:14.332817+00:00"
+      "checked_at": "2026-07-12T02:33:41.099378+00:00"
     },
     "skill_tree_report": {
       "path": "reports/skill_tree_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-06-24T02:43:14.459454+00:00"
+      "checked_at": "2026-07-12T02:33:41.244481+00:00"
     },
     "reference_check_report": {
       "path": "reports/reference_check_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-06-24T02:43:14.549366+00:00"
+      "checked_at": "2026-07-12T02:33:41.340173+00:00"
     },
     "production_readiness_report": {
       "path": "reports/production_readiness_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-06-24T02:43:14.604810+00:00"
+      "checked_at": "2026-07-12T02:33:41.399757+00:00"
     }
   },
   "skill_tree": {
@@ -430,19 +426,23 @@
     "manifests": {
       "path": "manifests",
       "exists": true,
-      "file_count": 3,
+      "file_count": 6,
       "files": [
         "manifests/asset_manifest.template.json",
         "manifests/batch_manifest.template.json",
-        "manifests/workflow_architecture.json"
+        "manifests/shuiping_20260712.batch_manifest.json",
+        "manifests/shuiping_20260712.canvas_layout.json",
+        "manifests/workflow_architecture.json",
+        "manifests/workflow_graph.template.json"
       ]
     },
     "schemas": {
       "path": "schemas",
       "exists": true,
-      "file_count": 14,
+      "file_count": 16,
       "files": [
         "schemas/angle_inventory.schema.json",
+        "schemas/canvas_layout.schema.json",
         "schemas/detail_variable_config.schema.json",
         "schemas/final_prompt.schema.json",
         "schemas/final_prompt_integrity_report.schema.json",
@@ -455,13 +455,14 @@
         "schemas/set_product_identity.schema.json",
         "schemas/set_variable_config_extension.schema.json",
         "schemas/style_master.schema.json",
-        "schemas/workflow_architecture.schema.json"
+        "schemas/workflow_architecture.schema.json",
+        "schemas/workflow_graph.schema.json"
       ]
     },
     "scripts": {
       "path": "scripts",
       "exists": true,
-      "file_count": 20,
+      "file_count": 16,
       "files": [
         "scripts/auto_cleanup_legacy_residue.py",
         "scripts/build_batch_manifest.py",
@@ -469,9 +470,6 @@
         "scripts/compile_final_prompts.py",
         "scripts/detect_current_stage.py",
         "scripts/detect_current_state.py",
-        "scripts/generate_current_mist_blue_mug_artifacts_20260615.py",
-        "scripts/generate_mist_blue_mug_artifacts_20260615.py",
-        "scripts/generate_qingjian_mug_artifacts_20260614.py",
         "scripts/pre_render_reference_gate.py",
         "scripts/run_comfy_cloud_batch_robust.py",
         "scripts/submit_comfy_cloud_jobs.py",
@@ -481,8 +479,7 @@
         "scripts/validate_references.py",
         "scripts/validate_skill_tree.py",
         "scripts/validate_workflow_architecture.py",
-        "scripts/workflow_doctor.py",
-        "scripts/write_mist_blue_mug_final_reports_20260615.py"
+        "scripts/workflow_doctor.py"
       ]
     },
     "reports": {
@@ -505,102 +502,494 @@
       ]
     }
   },
-  "batches": [],
+  "batches": [
+    {
+      "product_id": "shuiping_20260712",
+      "manifest_path": "manifests/shuiping_20260712.batch_manifest.json",
+      "manifest_exists": true,
+      "batch_type": "single",
+      "user_declared_set_product": false,
+      "explicit_set_request": null,
+      "requested_outputs": [
+        "main",
+        "detail",
+        "final_prompts"
+      ],
+      "current_stage": "needs_detail_variable_configs",
+      "next_skill": "detail-variable-config",
+      "next_required_skill": "detail-variable-config",
+      "available_artifacts": [
+        "product_identity_archive",
+        "asset_manifest",
+        "style_master",
+        "angle_inventory",
+        "main_variable_configs"
+      ],
+      "missing_required_artifacts": [
+        "detail_variable_configs"
+      ],
+      "blocked_reasons": [],
+      "allowed_skills": [
+        "workflow-router",
+        "product-identity-archive",
+        "style-master-extractor",
+        "angle-inventory",
+        "main-variable-config",
+        "detail-variable-config",
+        "final-prompt-compiler",
+        "qc-inspector"
+      ],
+      "forbidden_skills": [
+        "set-angle-layout-inventory",
+        "set-product-identity",
+        "set-variable-config-extension"
+      ],
+      "inputs": {
+        "white_bg_images": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 12,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2015.JPG",
+                  "artifact_type": null,
+                  "size": 3332285
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2016.JPG",
+                  "artifact_type": null,
+                  "size": 3028491
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2017.JPG",
+                  "artifact_type": null,
+                  "size": 3448790
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2018.JPG",
+                  "artifact_type": null,
+                  "size": 3282719
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2019.JPG",
+                  "artifact_type": null,
+                  "size": 3563839
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2020.JPG",
+                  "artifact_type": null,
+                  "size": 3291490
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2021.JPG",
+                  "artifact_type": null,
+                  "size": 3202138
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2032.JPG",
+                  "artifact_type": null,
+                  "size": 3667092
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2033.JPG",
+                  "artifact_type": null,
+                  "size": 4110753
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2035.JPG",
+                  "artifact_type": null,
+                  "size": 4054059
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2036.JPG",
+                  "artifact_type": null,
+                  "size": 3581397
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\white_bg\\1S0A2037.JPG",
+                  "artifact_type": null,
+                  "size": 3000634
+                }
+              ]
+            }
+          ],
+          "file_count": 12,
+          "typed_artifact_counts": {}
+        },
+        "style_reference_images": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\style_refs",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\style_refs",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\style_refs\\风格参考图.png",
+                  "artifact_type": null,
+                  "size": 2111036
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {}
+        },
+        "set_group_images": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\set_group",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\set_group",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "component_white_bg_images": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\component_white_bg",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\inputs\\component_white_bg",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        }
+      },
+      "drafts": {
+        "product_identity_draft": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\drafts\\product_identity_draft.md",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\drafts\\product_identity_draft.md",
+              "exists": false,
+              "is_dir": false,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "style_master_draft": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\drafts\\style_master_draft.md",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\drafts\\style_master_draft.md",
+              "exists": false,
+              "is_dir": false,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        }
+      },
+      "artifacts": {
+        "asset_manifest": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\manifests\\asset_manifest.json",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\manifests\\asset_manifest.json",
+              "exists": true,
+              "is_dir": false,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\manifests\\asset_manifest.json",
+                  "artifact_type": null,
+                  "size": 304
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {}
+        },
+        "product_identity_archive": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\identity",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\identity",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\identity\\product_identity_archive.json",
+                  "artifact_type": "product_identity_archive",
+                  "size": 17017
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {
+            "product_identity_archive": 1
+          }
+        },
+        "style_master": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\style_master",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\style_master",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\style_master\\style_master.json",
+                  "artifact_type": "style_master",
+                  "size": 12977
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {
+            "style_master": 1
+          }
+        },
+        "angle_inventory": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\angle_inventory",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\angle_inventory",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\angle_inventory\\angle_inventory.json",
+                  "artifact_type": "angle_inventory",
+                  "size": 25014
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {
+            "angle_inventory": 1
+          }
+        },
+        "main_variable_configs": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs\\main_variable_configs.json",
+                  "artifact_type": "main_variable_config",
+                  "size": 35415
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {
+            "main_variable_config": 1
+          }
+        },
+        "detail_variable_configs": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 1,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\variable_configs\\main_variable_configs.json",
+                  "artifact_type": "main_variable_config",
+                  "size": 35415
+                }
+              ]
+            }
+          ],
+          "file_count": 1,
+          "typed_artifact_counts": {
+            "main_variable_config": 1
+          }
+        },
+        "set_product_identity": {
+          "paths": [],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "set_angle_layout_inventory": {
+          "paths": [],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "final_prompts": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\final_prompts",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\final_prompts",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "comfyui_jobs": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\comfyui_jobs",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\comfyui_jobs",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "qc_reports": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        }
+      },
+      "outputs": {
+        "renders": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        },
+        "repaired": {
+          "paths": [
+            {
+              "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\repaired",
+              "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\repaired",
+              "exists": true,
+              "is_dir": true,
+              "file_count": 0,
+              "files": []
+            }
+          ],
+          "file_count": 0,
+          "typed_artifact_counts": {}
+        }
+      }
+    }
+  ],
   "startup_hygiene": {
-    "status": "needs_review",
-    "mode": "recycle_bin_cleanup",
-    "review_reasons": [
-      "previous_current_state_contains_batches_not_found_by_fresh_scan"
+    "status": "pass",
+    "mode": "report_only_no_delete",
+    "review_reasons": [],
+    "current_effective_batch_ids": [
+      "shuiping_20260712"
     ],
-    "current_effective_batch_ids": [],
     "current_batch_sources": {
-      "manifest_product_ids": [],
+      "manifest_product_ids": [
+        "shuiping_20260712"
+      ],
       "repository_input_dir_product_ids": [],
       "repository_artifact_dir_product_ids": []
     },
     "previous_current_state_batch_ids": [
-      "cup_batch_1_20260624"
+      "shuiping_20260712"
     ],
-    "previous_state_only_batch_ids": [
-      "cup_batch_1_20260624"
-    ],
+    "previous_state_only_batch_ids": [],
     "directory_residue_product_ids": [],
     "historical_report_only_product_ids": [],
     "archived_manifest_product_ids": [],
-    "manifest_workspace_roots": [],
+    "manifest_workspace_roots": [
+      {
+        "product_id": "shuiping_20260712",
+        "manifest_path": "manifests/shuiping_20260712.batch_manifest.json",
+        "workspace_mode": "external",
+        "workspace_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712",
+        "workspace_root_exists": true
+      }
+    ],
     "missing_manifest_workspace_roots": [],
     "completed_manifest_product_ids": [],
     "protected_audit_evidence": [],
     "cleanup_actions": [],
     "safe_cleanup_candidate_count": 0,
-    "notes": "Startup hygiene is conservative: it classifies active batch inputs, directory residues, stale previous state, and protected historical evidence without deleting files.",
-    "cleanup_selection": {
-      "mode": "auto_detected",
-      "automatic_detection_used": true,
-      "explicit_abandoned_product_ids": [],
-      "explicit_abandoned_paths": [],
-      "abandoned_product_ids": [
-        "cup_batch_1_20260624"
-      ],
-      "abandoned_paths": [],
-      "historical_report_product_ids": [],
-      "delete_historical_product_reports": false,
-      "skipped_protected_product_ids": [],
-      "skipped_protected_reason": "Archived stale manifests are audit evidence and are not auto-cleaned.",
-      "source_review_reasons": [
-        "previous_current_state_contains_batches_not_found_by_fresh_scan"
-      ]
-    }
+    "notes": "Startup hygiene is conservative: it classifies active batch inputs, directory residues, stale previous state, and protected historical evidence without deleting files."
   },
   "stage_plan": {
-    "status": "blocked",
-    "completed_stage_count": 6,
+    "status": "ready",
+    "completed_stage_count": 8,
     "total_stage_count": 13,
     "last_completed_stage": {
-      "stage": 5,
-      "name": "Current-State Orchestrator",
+      "stage": 7,
+      "name": "Upstream Artifact Readiness",
       "status": "complete",
       "evidence": [
-        "orchestrator_script_count=3/3",
-        "workflow_doctor_updates_current_state_reports=true"
+        "next_required_skill=shuiping_20260712:detail-variable-config"
       ],
-      "missing": [],
+      "missing": [
+        "shuiping_20260712:detail_variable_configs"
+      ],
       "blocked_reasons": [],
       "next_action": null
     },
     "current_stage": {
-      "stage": 6,
-      "name": "Product Batch Intake",
-      "status": "blocked",
-      "evidence": [
-        "active_batch_count=0"
-      ],
+      "stage": 8,
+      "name": "Variable Config Generation",
+      "status": "pending",
+      "evidence": [],
       "missing": [
-        "manifests/<product_id>.batch_manifest.json",
-        "manifest-declared workspace artifacts/"
+        "shuiping_20260712:stage_8_report"
       ],
-      "blocked_reasons": [
-        "No non-template product batch manifest was found.",
-        "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
-      ],
-      "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+      "blocked_reasons": [],
+      "next_action": "Complete product stage 8 report(s)."
     },
     "next_stage": {
-      "stage": 6,
-      "name": "Product Batch Intake",
-      "status": "blocked",
-      "evidence": [
-        "active_batch_count=0"
-      ],
+      "stage": 8,
+      "name": "Variable Config Generation",
+      "status": "pending",
+      "evidence": [],
       "missing": [
-        "manifests/<product_id>.batch_manifest.json",
-        "manifest-declared workspace artifacts/"
+        "shuiping_20260712:stage_8_report"
       ],
-      "blocked_reasons": [
-        "No non-template product batch manifest was found.",
-        "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
-      ],
-      "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+      "blocked_reasons": [],
+      "next_action": "Complete product stage 8 report(s)."
     },
     "next_unblocked_stage": null,
     "stages": [
@@ -687,139 +1076,124 @@
       {
         "stage": 6,
         "name": "Product Batch Intake",
-        "status": "blocked",
+        "status": "complete",
         "evidence": [
-          "active_batch_count=0"
+          "active_batch_count=1"
         ],
-        "missing": [
-          "manifests/<product_id>.batch_manifest.json",
-          "manifest-declared workspace artifacts/"
-        ],
-        "blocked_reasons": [
-          "No non-template product batch manifest was found.",
-          "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
-        ],
-        "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+        "missing": [],
+        "blocked_reasons": [],
+        "next_action": null
       },
       {
         "stage": 7,
         "name": "Upstream Artifact Readiness",
-        "status": "pending",
+        "status": "complete",
         "evidence": [
-          "waiting_for_stage_6_product_batch"
+          "next_required_skill=shuiping_20260712:detail-variable-config"
         ],
-        "missing": [],
+        "missing": [
+          "shuiping_20260712:detail_variable_configs"
+        ],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": null
       },
       {
         "stage": 8,
         "name": "Variable Config Generation",
         "status": "pending",
-        "evidence": [
-          "waiting_for_stage_6_product_batch"
+        "evidence": [],
+        "missing": [
+          "shuiping_20260712:stage_8_report"
         ],
-        "missing": [],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": "Complete product stage 8 report(s)."
       },
       {
         "stage": 9,
         "name": "Final Prompt Compilation",
         "status": "pending",
-        "evidence": [
-          "waiting_for_stage_6_product_batch"
+        "evidence": [],
+        "missing": [
+          "shuiping_20260712:stage_9_report"
         ],
-        "missing": [],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": "Complete product stage 9 report(s)."
       },
       {
         "stage": 10,
         "name": "ComfyUI Render Job Preparation",
         "status": "pending",
-        "evidence": [
-          "waiting_for_stage_6_product_batch"
+        "evidence": [],
+        "missing": [
+          "shuiping_20260712:stage_10_report"
         ],
-        "missing": [],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": "Complete product stage 10 report(s)."
       },
       {
         "stage": 11,
         "name": "Rendering",
         "status": "pending",
-        "evidence": [
-          "waiting_for_stage_6_product_batch"
+        "evidence": [],
+        "missing": [
+          "shuiping_20260712:stage_11_report"
         ],
-        "missing": [],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": "Complete product stage 11 report(s)."
       },
       {
         "stage": 12,
         "name": "QC and Retry Planning",
         "status": "pending",
-        "evidence": [
-          "waiting_for_stage_6_product_batch"
+        "evidence": [],
+        "missing": [
+          "shuiping_20260712:stage_12_report"
         ],
-        "missing": [],
         "blocked_reasons": [],
-        "next_action": "Complete Stage 6 first."
+        "next_action": "Complete product stage 12 report(s)."
       }
     ]
   },
   "last_completed_stage": {
-    "stage": 5,
-    "name": "Current-State Orchestrator",
+    "stage": 7,
+    "name": "Upstream Artifact Readiness",
     "status": "complete",
     "evidence": [
-      "orchestrator_script_count=3/3",
-      "workflow_doctor_updates_current_state_reports=true"
+      "next_required_skill=shuiping_20260712:detail-variable-config"
     ],
-    "missing": [],
+    "missing": [
+      "shuiping_20260712:detail_variable_configs"
+    ],
     "blocked_reasons": [],
     "next_action": null
   },
   "next_stage": {
-    "stage": 6,
-    "name": "Product Batch Intake",
-    "status": "blocked",
-    "evidence": [
-      "active_batch_count=0"
-    ],
+    "stage": 8,
+    "name": "Variable Config Generation",
+    "status": "pending",
+    "evidence": [],
     "missing": [
-      "manifests/<product_id>.batch_manifest.json",
-      "manifest-declared workspace artifacts/"
+      "shuiping_20260712:stage_8_report"
     ],
-    "blocked_reasons": [
-      "No non-template product batch manifest was found.",
-      "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
-    ],
-    "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+    "blocked_reasons": [],
+    "next_action": "Complete product stage 8 report(s)."
   },
   "current_stage_judgment": {
-    "stage": 6,
-    "name": "Product Batch Intake",
-    "status": "blocked",
-    "evidence": [
-      "active_batch_count=0"
-    ],
+    "stage": 8,
+    "name": "Variable Config Generation",
+    "status": "pending",
+    "evidence": [],
     "missing": [
-      "manifests/<product_id>.batch_manifest.json",
-      "manifest-declared workspace artifacts/"
+      "shuiping_20260712:stage_8_report"
     ],
-    "blocked_reasons": [
-      "No non-template product batch manifest was found.",
-      "A product_id and repository or external workspace root are required before Codex can create product-specific intake artifacts."
-    ],
-    "next_action": "Run python scripts/build_batch_manifest.py --product-id <product_id> --workspace-root <external_run_folder> when a real product_id and workspace are known."
+    "blocked_reasons": [],
+    "next_action": "Complete product stage 8 report(s)."
   },
   "allowed_next_actions": [
     "run_self_checks",
     "refresh_reports_current_state",
     "review_skill_tree_and_reference_reports",
-    "prepare_product_batch_intake_after_product_id_and_inputs_are_provided"
+    "advance_only_next_repository_gate_stage_8"
   ],
   "forbidden_next_actions": [
     "generate_images",
@@ -829,43 +1203,6 @@
     "rewrite_original_business_rule_files",
     "invent_product_facts_or_specs",
     "enable_set_product_skills_without_explicit_set_request",
-    "render_without_final_prompt_integrity_gate",
-    "generate_variable_configs_without_product_batch",
-    "compile_final_prompts_without_upstream_artifacts",
-    "run_qc_without_generated_images"
-  ],
-  "workflow_doctor": {
-    "checked_at": "2026-06-24T02:43:14.633835+00:00",
-    "validation_runs": [
-      {
-        "script": "scripts/validate_workflow_architecture.py",
-        "exit_code": 0,
-        "report": "reports/workflow_architecture_report.json",
-        "report_status": "pass"
-      },
-      {
-        "script": "scripts/validate_skill_tree.py",
-        "exit_code": 0,
-        "report": "reports/skill_tree_report.json",
-        "report_status": "pass"
-      },
-      {
-        "script": "scripts/validate_references.py",
-        "exit_code": 0,
-        "report": "reports/reference_check_report.json",
-        "report_status": "pass"
-      },
-      {
-        "script": "scripts/validate_production_readiness.py",
-        "exit_code": 0,
-        "report": "reports/production_readiness_report.json",
-        "report_status": "pass"
-      }
-    ],
-    "validation_failed_count": 0,
-    "updated_reports": [
-      "reports/current_state.json",
-      "reports/current_state.md"
-    ]
-  }
+    "render_without_final_prompt_integrity_gate"
+  ]
 }
