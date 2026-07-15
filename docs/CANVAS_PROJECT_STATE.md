@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-15（完成运行卫生修复：日常启动改为真实批次只读投影，工作区旧 manifest 改为非权威初始快照；业务路由、真实产物状态与执行能力不变）。
+> 最后更新：2026-07-15（完成 `detail_vc` 校验器纯离线类级修复与止损线登记；真实路由、正式产物和真实调用状态不变）。
 
 ## 1. 定位与目标
 
@@ -96,13 +96,15 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日用户在完整预检通过后明确回复“执行”，随后又明确授权代写；从原项目 `hPbkNXg3WA0p2i46VOh3s` 经 canvas-agent 一次且仅一次提交 `run: detail_vc`。事件账本于 14:19:27 记录 `step_started`，14:23:37 以脱敏“codex-dev 收到的详情图变量配置包含未确认参数”记录 `step_failed`，耗时 250 秒（4 分 10 秒）。本轮只有这一条画布命令，失败后未重试、未改写命令，也未执行 `final_prompts`；本次专用 thread 只返回前两段，受控传输恢复与包装格式纠正均为 0 次。离线只读诊断确认第 1 段通过，第 2 段没有传输损坏，首个拒绝点是手持声明按规则填写的已确认 25 厘米尺寸摘要未被高度语义识别；仅在内存中消除该歧义后，下一拒绝点又是“不把具体材质写死为……”这一安全否定句未命中现有否定词表。两处都没有正向添加未确认参数或商品事实，属于校验器误判，不是模型输出业务错误；失败正文未被复用为产物。正式 `detail_variable_configs.json` 及临时半成品均未落盘，真实路由仍为 `needs_detail_variable_configs`，`final_prompts`、renders、repaired 均为 0；临时 `--serve` 已停止，真实执行开关在进程、用户和机器三个作用域均为空。修复尚未实施，下一步只能离线补回归测试并做窄范围 TDD 修复；任何新的真实调用仍须用户另行明确批准。
 
+同日随后完成上述两处误判的纯离线类级 TDD 修复，未发起任何真实 Codex/模型调用。已确认高度的判定由“少数语境白名单”反转为“精确等于用户确认高度且单位为厘米/`cm` 时默认合法”，detail 分段、detail 整包、main 整包与 `final_prompts` 批次共同受益；竞争维度、区间/连字、负号、单位扩展和相邻乘号尺寸组仍拒绝，其他既有单位及非确认高度厘米值没有放宽。材质/认证扫描只新增结构完整的“不把/不将……写死/固定/标注/设定/锁定/指定为/成……”受限保护，且只保护“为/成”后的目标列表；该结构中夹带或另起的正向事实仍拒绝，既有保护词行为不变，“采用不锈钢”“不是塑料”等硬反例仍拒绝。未确认参数与商品事实现在在 `_reject_unsupported_claims()` 内按本次输入一次收集后统一报错，消息只含类别、净化字段路径和计数，最长 200 字符；未知键名使用占位符，不回显原文或数值上下文，段号、结构、模块、角度、比例和手持等其他校验继续立即失败。`_is_confirmed_height_measurement()` 的显式 `if` 分支由 8 个降为 0 个。全仓增至 180 项测试通过；本轮只修改主仓库 downstream 校验、相关测试、README 与本账本，未修改 executor、提示词构建、协议、恢复/纠正次数、指纹、排他落盘、三段门禁、schemas、scripts、Skill、manifest、fork、真实工作区、事件账本或画布。正式路由仍为 `needs_detail_variable_configs`，正式详情配置仍不存在；第 7 次真实 `detail_vc` 验收必须另行取得用户明确批准。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
 
 - `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2 与 `codex-dev` identity/style master/angle inventory/main/detail/final-prompts 适配器、驱动脚本 spike_canvas_push）。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`——画布子项目测试（当前含在全仓库 161 个测试内，运行 `python -m unittest discover -s tests`）。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`——画布子项目测试（当前含在全仓库 180 个测试内，运行 `python -m unittest discover -s tests`）。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
@@ -152,11 +154,11 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 于 2026-07-15 的新一轮一次性真实验收中再次以脱敏“包含未确认参数”失败，正式详情配置仍不存在。专用 thread 的离线只读诊断已把根因定性为两处安全表达被校验器误判，修复尚未实施；在窄范围 TDD 修复、全量回归和用户另行明确批准前，不得再次真实调用。`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
+- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 于 2026-07-15 的新一轮一次性真实验收中再次以脱敏“包含未确认参数”失败，正式详情配置仍不存在。两处校验误判现已完成纯离线类级 TDD 修复与全量回归，但尚未进行第 7 次真实验收；在用户另行明确批准前不得再次真实调用。`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
 
 ## 8. 后续路线图（候选，未排期）
 
-1. **离线修复本次详情配置校验误判**：2026-07-15 的一次性 `detail_vc` 真实验收于 14:19:27 开始、14:23:37 以脱敏“包含未确认参数”失败，耗时 250 秒，本轮未重试。只读诊断已排除传输损坏与正向未确认事实，确认校验器没有识别手持声明中的已确认高度摘要和“不把……写死为……”这一安全否定语境。当前仍停在 `needs_detail_variable_configs`，正式详情配置不存在。下一步只能先为这两个边界补失败测试、做最小校验修正并完成全量回归；在修复验证及用户重新明确批准前，不得提交新的真实调用。只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
+1. **等待第 7 次详情配置真实验收批准**：2026-07-15 14:19:27 至 14:23:37 的第 6 次真实 `detail_vc` 因两处校验误判失败；对应类级修复、失败测试、全量回归和文档同步现已纯离线完成，正式路由仍停在 `needs_detail_variable_configs`，正式详情配置不存在。本次没有发起真实调用；下一步只能等待用户另行明确批准第 7 次 `detail_vc` 真实验收。若下一次真实 `detail_vc` 仍因校验器误判失败（同类第三次），立即停止继续修补自由文本正则规则，转入结构化字段校验的重新设计，方案另行申请批准。只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
 2. **继续禁止渲染与 QC**：本轮只允许生成 6 份主图配置、8 份详情配置和 14 份最终提示词。即使路由在三步完成后进入 ready，也不得提交 renders、QC 或任何图片生成命令；`openai-image` 与 ComfyUI 继续保持未接入现场执行。
 3. **模型 API 执行器**：为 identity/style/angle/vc/qc 等非生图步骤增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。
 4. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
