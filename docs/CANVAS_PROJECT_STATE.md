@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-15（完成 `detail_vc` 校验器纯离线类级修复与止损线登记；真实路由、正式产物和真实调用状态不变）。
+> 最后更新：2026-07-15（完成第 7 次 `detail_vc` 真实验收；正式详情配置成功落盘，真实路由前进至 `needs_final_prompts`）。
 
 ## 1. 定位与目标
 
@@ -98,6 +98,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日随后完成上述两处误判的纯离线类级 TDD 修复，未发起任何真实 Codex/模型调用。已确认高度的判定由“少数语境白名单”反转为“精确等于用户确认高度且单位为厘米/`cm` 时默认合法”，detail 分段、detail 整包、main 整包与 `final_prompts` 批次共同受益；竞争维度、区间/连字、负号、单位扩展和相邻乘号尺寸组仍拒绝，其他既有单位及非确认高度厘米值没有放宽。材质/认证扫描只新增结构完整的“不把/不将……写死/固定/标注/设定/锁定/指定为/成……”受限保护，且只保护“为/成”后的目标列表；该结构中夹带或另起的正向事实仍拒绝，既有保护词行为不变，“采用不锈钢”“不是塑料”等硬反例仍拒绝。未确认参数与商品事实现在在 `_reject_unsupported_claims()` 内按本次输入一次收集后统一报错，消息只含类别、净化字段路径和计数，最长 200 字符；未知键名使用占位符，不回显原文或数值上下文，段号、结构、模块、角度、比例和手持等其他校验继续立即失败。`_is_confirmed_height_measurement()` 的显式 `if` 分支由 8 个降为 0 个。全仓增至 180 项测试通过；本轮只修改主仓库 downstream 校验、相关测试、README 与本账本，未修改 executor、提示词构建、协议、恢复/纠正次数、指纹、排他落盘、三段门禁、schemas、scripts、Skill、manifest、fork、真实工作区、事件账本或画布。正式路由仍为 `needs_detail_variable_configs`，正式详情配置仍不存在；第 7 次真实 `detail_vc` 验收必须另行取得用户明确批准。
 
+同日用户在阶段 A 全量预检通过并收到阶段 B 报告后明确回复“执行，代写”，授权从原项目 `hPbkNXg3WA0p2i46VOh3s` 代写一次且仅一次 `run: detail_vc`。主仓库 `main @ bd66cb6`、180 项测试、`git diff --check`、fork `workflow-editor @ 91e40d04` 的 3 项测试与 TypeScript 构建、33 行事件基线、四份上游哈希、三个作用域的真实执行开关、27 个节点/32 条连接及运行台失败终态均先复核通过；没有并行 demo、`--watch` 或其他 `--serve` 进程。临时 `codex-dev --serve` 于 17:00:49 启动，事件账本 17:01:40 记录唯一 `step_started`，17:09:53 记录 `step_succeeded`，总耗时 492.6 秒；本次受控恢复 0 次、格式纠正 0 次，没有第二条画布命令。正式 `detail_variable_configs.json` 通过既有 schema，SHA-256 为 `D1844F639F835446BFDCF2217C62AD4F6F09D0B1AEB7F2BD2CE46BCD933B189C`；业务复核确认 `detail_01` 至 `detail_08` 恰好 8 项、顺序覆盖模块01至模块08、全部 3:4、仅 `detail_02` 一项手持且规则调用值符合 canonical 约定、`detail_05` 为唯一尺寸标注图且只标注“高度约 25 厘米”并明确禁止容量/宽度/直径/重量/材质等未确认项、全部只绑定正式角度表中合格的 A/B/C 源图，不含 D、被拒源图、其他产品测量值或 Unicode 损坏字符。四份上游正式产物哈希保持不变，真实路由前进至 `needs_final_prompts`，`final_prompts`、renders、repaired 仍均为 0；临时运行台已立即停止，真实执行开关在进程、用户和机器三个作用域均为空，画布详情阶段、详情产物、运行台和日志均投影为成功。下一步只能等待用户另行批准 `final_prompts`，不得自动执行。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -154,11 +156,11 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 于 2026-07-15 的新一轮一次性真实验收中再次以脱敏“包含未确认参数”失败，正式详情配置仍不存在。两处校验误判现已完成纯离线类级 TDD 修复与全量回归，但尚未进行第 7 次真实验收；在用户另行明确批准前不得再次真实调用。`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
+- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。identity、style master、angle inventory、`main_vc` 与 `detail_vc` 均已完成 `shuiping_20260712` 真实批次验收；第 7 次 `detail_vc` 于 2026-07-15 17:01:40 至 17:09:53 成功，正式详情配置已存在，真实路由为 `needs_final_prompts`。`final_prompts` 尚未执行，必须等待用户另行明确批准。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
 
 ## 8. 后续路线图（候选，未排期）
 
-1. **等待第 7 次详情配置真实验收批准**：2026-07-15 14:19:27 至 14:23:37 的第 6 次真实 `detail_vc` 因两处校验误判失败；对应类级修复、失败测试、全量回归和文档同步现已纯离线完成，正式路由仍停在 `needs_detail_variable_configs`，正式详情配置不存在。本次没有发起真实调用；下一步只能等待用户另行明确批准第 7 次 `detail_vc` 真实验收。若下一次真实 `detail_vc` 仍因校验器误判失败（同类第三次），立即停止继续修补自由文本正则规则，转入结构化字段校验的重新设计，方案另行申请批准。只有正式详情配置通过 schema、8 模块、1 项手持和 A/B/C 绑定验收后，才允许另行申请执行 `final_prompts`。
+1. **等待 `final_prompts` 批准**：第 7 次真实 `detail_vc` 已于 2026-07-15 17:01:40 至 17:09:53 成功，正式详情配置通过 schema、8 模块、1 项手持、唯一模块05尺寸标注和 A/B/C 绑定验收，真实路由已前进至 `needs_final_prompts`。`final_prompts` 尚未执行，只能等待用户另行明确批准；本次详情验收没有触发“同类第三次校验器误判”的止损线。止损原则继续保留供后续自由文本语义门禁参考：若同类误判再次达到止损条件，不再追加正则修补，改为提出结构化字段与枚举值校验的重设计方案并另行申请批准。
 2. **继续禁止渲染与 QC**：本轮只允许生成 6 份主图配置、8 份详情配置和 14 份最终提示词。即使路由在三步完成后进入 ready，也不得提交 renders、QC 或任何图片生成命令；`openai-image` 与 ComfyUI 继续保持未接入现场执行。
 3. **模型 API 执行器**：为 identity/style/angle/vc/qc 等非生图步骤增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。
 4. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
