@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-15（完成画布子项目 P0 存档提交并修正 fork 未提交状态记录；业务路由与真实批次状态不变）。
+> 最后更新：2026-07-15（完成运行卫生修复：日常启动改为真实批次只读投影，工作区旧 manifest 改为非权威初始快照；业务路由、真实产物状态与执行能力不变）。
 
 ## 1. 定位与目标
 
@@ -92,6 +92,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 2026-07-15 完成画布子项目 P0 存档：主仓库执行器成果提交 `4c4dfe6e243d6f1be17848c66399e40b0c876381`、真实批次三件套提交 `88ebd441dd0cacabe9fee170127680181a127dd0`、历史 plans/specs 提交 `e32cdc81499d029133d1d50066c95ff9a4da3e74`；fork 锚点 #5–#8 提交 `91e40d04b3c45eb51b0f597ee3beae38b9204c50`。账本修正与既有报告存档收录于本记录所在 docs 提交，其最终哈希见 Git 日志与完成汇报。本次只做存档和账本事实修正，未修改代码逻辑，未启动或调用真实 Codex/模型；`启动画布.bat` 继续因包含本机绝对路径而有意不入 Git。
 
+2026-07-15 完成运行卫生修复（用户选择 R3=a、R6=a）：未入 Git 的 `启动画布.bat` 第三服务由 demo `--serve` 改为 `shuiping_20260712` 的 `--watch` 只读投影；它只读取真实批次事实并向画布同步状态，不创建执行器，也不读取或执行 `run:` / `retry:` 命令。为避免冷启动时画布尚未连接导致首次投影退出，主流程现先等待 agent/web、打开 Chrome，再启动固定的只读投影专用分支；分支先给页面 3 秒连接时间，只有 `--watch` 非正常退出时才每 5 秒重试，正常停止不会自动复活。真实工作区建批时的旧 manifest 已改名为 `batch_manifest.initial-snapshot-20260712.json` 并标注为非权威快照，仓库 manifest 继续是唯一事实入口。本次未启动服务、未调用真实 Codex/模型，未修改代码逻辑、业务路由或已有产物状态；该启动修复也不会主动删除浏览器中可能已存在的 demo 节点，如仍需清理必须另行批准。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -108,20 +110,21 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 **演示工作区（可丢弃）**：`D:\dev\canvas-demo-workspace`，由 `canvas-bridge/make_demo_workspace.py` 管理（`--init/--add-inputs/--advance <步骤>/--reset`），带 `.canvas_demo` 安全标记，绝不写仓库。工作区文件仍保留，但 `demo_live` 的 29 个画布演示节点已于 2026-07-12 清理。
 
-**首个真实批次工作区（不可按演示数据清理）**：`D:\onedrive\OneDrive\Desktop\杯类\shuiping_20260712`；仓库事实入口为 `manifests/shuiping_20260712.batch_manifest.json`。原始白底图仍保留在 `D:\onedrive\OneDrive\Desktop\shuiping`，工作区使用经哈希核验的副本。
+**首个真实批次工作区（不可按演示数据清理）**：`D:\onedrive\OneDrive\Desktop\杯类\shuiping_20260712`；仓库事实入口为 `manifests/shuiping_20260712.batch_manifest.json`。工作区建批时的旧副本现保留为 `manifests/batch_manifest.initial-snapshot-20260712.json`，仅作初始快照，不是事实入口，也不再承担标准 `batch_manifest.json` 工作区识别标记；任何受控清理仍须从仓库权威 manifest 出发。原始白底图仍保留在 `D:\onedrive\OneDrive\Desktop\shuiping`，工作区使用经哈希核验的副本。
 
 ## 6. 运行时手册
 
-**服务 4 个**：
+**日常服务 3 个；按需服务 2 个**：
 
 | 服务 | 端口/形态 | 启动方式 |
 |---|---|---|
 | canvas-agent | :17371 | `bun run --cwd D:/dev/infinite-canvas/canvas-agent dev` |
 | 画布网页 | :3000 | `bun run --cwd D:/dev/infinite-canvas/web dev` |
-| 批次运行台 | 常驻 cmd 窗口（标题"批次运行台服务*"） | `python canvas-bridge/spike_canvas_push.py --serve <manifest> --layout-path <layout> --interval 2` |
-| 静态图片 | :8801（仅图片演示需要） | `python -m http.server`（临时目录） |
+| 真实批次只读投影 | 常驻 cmd 窗口（标题"真实批次只读投影服务*"） | `启动画布.bat` 专用分支固定运行 `python canvas-bridge/spike_canvas_push.py --watch manifests/shuiping_20260712.batch_manifest.json --layout-path manifests/shuiping_20260712.canvas_layout.json --interval 2` |
+| 批次运行台（按批准临时启动） | 临时 cmd 窗口 | `python canvas-bridge/spike_canvas_push.py --serve <approved-manifest> --layout-path <approved-layout> --executor <approved-executor> --interval 2` |
+| 静态图片（按需） | :8801（仅图片演示需要） | `python -m http.server`（临时目录） |
 
-- **日常入口：仓库根目录 `启动画布.bat`**（双击自启 agent+web+serve 三服务，各有防重复守卫，再开 Chrome 到 `/canvas`）。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
+- **日常入口：仓库根目录 `启动画布.bat`**。双击后先确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `/canvas`，最后按窗口标题防重复启动真实批次只读投影。投影专用分支先等待页面 3 秒；若画布尚未连接或运行中断导致 `--watch` 非正常退出，则每 5 秒重试同一个固定命令，正常停止不重试。其中 `--watch` 对批次事实只读，只向画布同步投影；画布仍会显示运行台节点，但其中的 `run:` / `retry:` 命令不会被读取或执行。真正的 `--serve` 批次运行台不再随日常入口启动，只能在用户再次明确批准后按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
 - 连接凭据：`%USERPROFILE%\.infinite-canvas\canvas-agent.json`（url + token）。**token 不随 agent 重启轮换**（文件存在即沿用）。
 - 用户（非程序员）的工作画布：Chrome 里"无限画布 1"（id hPbkNXg3WA0p2i46VOh3s，localhost:3000）；其浏览器 localStorage 已存 token，刷新自动重连。
 
@@ -147,7 +150,7 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 阶段 4 的现场运行默认仍使用 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护）。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 的传输根因、受控格式纠正和最新“未确认参数”误判均已完成离线修复与回归验证，正式详情配置仍不存在。下一步只能在用户再次明确批准后从原画布提交一次新的 `detail_vc` 真实验收；`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
+- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层现已改为 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已注册并支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc` 与提示词专用 `final_prompts`。前三者及 `main_vc` 已完成 `shuiping_20260712` 真实批次验收；`detail_vc` 的传输根因、受控格式纠正和最新“未确认参数”误判均已完成离线修复与回归验证，正式详情配置仍不存在。下一步只能在用户再次明确批准后从原画布提交一次新的 `detail_vc` 真实验收；`final_prompts` 未执行。`openai-image` 已注册但尚未接通最终提示词到 `ImageGenerationTask` 的生产任务组装，因此当前真实批次不能直接渲染。
 
 ## 8. 后续路线图（候选，未排期）
 
