@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from urllib import error
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +52,19 @@ class UrlopenResponse:
         return b"{}"
 
 
+class TimeoutBody:
+    def read(self, *args, **kwargs) -> bytes:
+        raise TimeoutError("secret transport detail")
+
+    def close(self) -> None:
+        return None
+
+
+class TimeoutResponse(UrlopenResponse):
+    def read(self) -> bytes:
+        raise TimeoutError("secret transport detail")
+
+
 def success_response(image: bytes = PNG_BYTES) -> HttpResponse:
     payload = {
         "created": 123,
@@ -77,16 +91,23 @@ class OpenAIImageExecutorTest(unittest.TestCase):
         *,
         key: str = "server-secret",
         base_url: str | None = None,
+        timeout: float | None = None,
+        timeout_environment: str | None = None,
+        include_timeout_environment: bool = False,
     ) -> OpenAIImageExecutor:
         environment = {"OPENAI_API_KEY": key}
         if base_url is not None:
             environment["OPENAI_BASE_URL"] = base_url
+        if include_timeout_environment:
+            environment["OPENAI_IMAGE_TIMEOUT_SECONDS"] = timeout_environment
         context = ExecutorContext(manifest={}, environment=environment)
-        return OpenAIImageExecutor(
-            context,
-            transport=transport,
-            boundary_factory=lambda: "test-boundary",
-        )
+        kwargs = {
+            "transport": transport,
+            "boundary_factory": lambda: "test-boundary",
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        return OpenAIImageExecutor(context, **kwargs)
 
     def test_missing_api_key_fails_before_network(self) -> None:
         transport = RecordingTransport(success_response())
@@ -139,6 +160,126 @@ class OpenAIImageExecutorTest(unittest.TestCase):
             sum(name.lower() == "user-agent" for name, _ in outbound.header_items()),
         )
         self.assertEqual({"user-agent": "Caller-Agent/2.0"}, headers)
+
+    def test_default_timeout_is_180_seconds(self) -> None:
+        transport = RecordingTransport(success_response())
+        executor = self._executor(transport)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            executor.execute(
+                ExecutionRequest(
+                    step="renders",
+                    payload=ImageGenerationTask(prompt="product", output_path=Path(tmp) / "out.png"),
+                )
+            )
+
+        self.assertEqual(180.0, transport.calls[0]["timeout"])
+
+    def test_environment_timeout_is_forwarded_to_transport(self) -> None:
+        transport = RecordingTransport(success_response())
+        executor = self._executor(
+            transport,
+            timeout_environment="900",
+            include_timeout_environment=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            executor.execute(
+                ExecutionRequest(
+                    step="renders",
+                    payload=ImageGenerationTask(prompt="product", output_path=Path(tmp) / "out.png"),
+                )
+            )
+
+        self.assertEqual(900.0, transport.calls[0]["timeout"])
+
+    def test_explicit_timeout_overrides_environment(self) -> None:
+        transport = RecordingTransport(success_response())
+        executor = self._executor(
+            transport,
+            timeout=45.0,
+            timeout_environment="900",
+            include_timeout_environment=True,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            executor.execute(
+                ExecutionRequest(
+                    step="renders",
+                    payload=ImageGenerationTask(prompt="product", output_path=Path(tmp) / "out.png"),
+                )
+            )
+
+        self.assertEqual(45.0, transport.calls[0]["timeout"])
+
+    def test_invalid_environment_timeout_is_rejected_before_network(self) -> None:
+        invalid_values = ("", "abc", "0", "-1", "29", "1801", "30.5", "0900")
+        for value in invalid_values:
+            with self.subTest(value=value):
+                transport = RecordingTransport(success_response())
+                with self.assertRaises(ExecutorExecutionError) as ctx:
+                    self._executor(
+                        transport,
+                        timeout_environment=value,
+                        include_timeout_environment=True,
+                    )
+                self.assertIn("OPENAI_IMAGE_TIMEOUT_SECONDS", str(ctx.exception))
+                self.assertEqual([], transport.calls)
+
+    def test_normal_response_read_timeout_is_sanitized_without_output_or_retry(self) -> None:
+        with mock.patch(
+            "openai_image_executor.request.urlopen",
+            return_value=TimeoutResponse(),
+        ) as urlopen, tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "out.png"
+            executor = self._executor(
+                UrllibTransport(),
+                key="server-secret",
+                timeout_environment="900",
+                include_timeout_environment=True,
+            )
+            with self.assertRaises(ExecutorExecutionError) as ctx:
+                executor.execute(
+                    ExecutionRequest(
+                        step="renders",
+                        payload=ImageGenerationTask(prompt="private prompt", output_path=output),
+                    )
+                )
+
+            self.assertEqual("图片服务连续 900 秒未返回新数据，已停止等待", str(ctx.exception))
+            self.assertNotIn("server-secret", str(ctx.exception))
+            self.assertNotIn("private prompt", str(ctx.exception))
+            self.assertEqual(1, urlopen.call_count)
+            self.assertFalse(output.exists())
+            self.assertEqual([], list(output.parent.glob(".out.png.*.tmp")))
+
+    def test_connection_and_wrapped_timeouts_are_sanitized(self) -> None:
+        timeout_cases = (
+            TimeoutError("secret direct timeout"),
+            error.URLError(TimeoutError("secret wrapped timeout")),
+            error.HTTPError(
+                "https://70api.top/v1/images/edits",
+                504,
+                "gateway timeout",
+                {},
+                TimeoutBody(),
+            ),
+        )
+        for failure in timeout_cases:
+            with self.subTest(failure=type(failure).__name__), mock.patch(
+                "openai_image_executor.request.urlopen",
+                side_effect=failure,
+            ) as urlopen:
+                with self.assertRaises(ExecutorExecutionError) as ctx:
+                    UrllibTransport().post(
+                        "https://70api.top/v1/images/edits",
+                        {"Authorization": "Bearer server-secret"},
+                        b"private prompt",
+                        900.0,
+                    )
+                self.assertEqual("图片服务连续 900 秒未返回新数据，已停止等待", str(ctx.exception))
+                self.assertNotIn("secret", str(ctx.exception))
+                self.assertEqual(1, urlopen.call_count)
 
     def test_text_only_task_uses_generation_endpoint_and_writes_image(self) -> None:
         transport = RecordingTransport(success_response())

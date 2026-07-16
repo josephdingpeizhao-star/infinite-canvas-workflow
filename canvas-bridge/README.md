@@ -63,6 +63,7 @@ python canvas-bridge/make_demo_workspace.py --reset
 - 真实执行默认关闭；只有获得用户明确批准后，才可在该次服务进程中临时设置 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`，该开关不写配置、不持久化。既有 identity/style/angle/main/detail 真实验收历史、`ExecutionRequest / ExecutionResult`、三段门禁、默认 `demo`、`openai-image`、其他 `codex-dev` 阶段和产物格式均未改变。首次 `final_prompts` 于 2026-07-15 18:10:24 至 18:12:37 安全失败；离线修复并重新取得明确批准后，第二次执行已于 20:05:38 至 20:09:24 成功，正式目录现有 14 份 JSON、14 份 Markdown 和两份索引，真实路由为 `ready`。历史失败正文未复用；当前仍未批准任何 integrity、renders 或 QC 现场命令。
 - canvas-agent token 只从本机配置读取并放在鉴权请求头中；`codex-dev` 只接受 `http://127.0.0.1`、`http://localhost` 或 `http://[::1]` 回环地址，并显式禁用系统代理。事件日志只记录通用成功说明或彻底切断原始异常链的脱敏错误，不记录 token、完整提示词、Codex 原始错误正文或产品图片内容。
 - GPT Image 2 密钥只从服务端环境变量 `OPENAI_API_KEY` 读取；可选 `OPENAI_IMAGE_MODEL` 和 `OPENAI_BASE_URL` 只属于该适配器。`OPENAI_BASE_URL` 可填写已带 `/v1` 的 API 根路径，也可填写裸域名（自动补为 `/v1`）；生产 HTTP 传输使用固定且不含敏感信息的 `Codex-Canvas-Bridge/1.0` 客户端标识，并保留调用方显式传入的标识。密钥不得写入 manifest、画布节点、事件日志或仓库文件。
+- 可选 `OPENAI_IMAGE_TIMEOUT_SECONDS` 只接受 `30` 至 `1800` 的整数；未设置时保持默认 `180` 秒，内部显式传入的等待值优先。该值表示连接或响应连续无新数据时的等待上限，不是整次任务的总时长；非法值在联网前拒绝。闸门执行可在获批的临时进程中设为 `900`，不得持久化。
 - 当前状态报告仍禁止生成图片；在最终提示词完整性门禁通过并明确批准真实 API 消耗前，不得现场调用。
 - 未来接入其他图片服务时，实现相同的 `execute(ExecutionRequest) -> ExecutionResult` 契约并在 `executor_factory.py` 注册即可，上层画布逻辑不变。
 
@@ -70,10 +71,10 @@ python canvas-bridge/make_demo_workspace.py --reset
 
 1. `image-production / integrity` 调用既有校验脚本的 `--prompts-only` 模式，只检查 6+8 数量与顺序、既有 Schema、来源文件与逐项解析指纹、手持数量、1:1/3:4 字面、高度约 25 厘米语义和 UTF-8/Unicode 完整性。它不读取 ComfyUI 作业清单，并在 JSON/Markdown 报告中逐项记录跳过旧内容启发式扫描与旧编译器字面扫描的原因；默认 ComfyUI 模式未改变。
 2. 门禁通过后，`image-production / renders` 从索引读取 14 项，逐项绑定 manifest 白底图目录中唯一同名参考图，并把 `final_prompt` 原文与 `negative_prompt` 原文用固定分隔符组合；不改写正向正文。
-3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。
+3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。连接、正常响应读取或错误响应读取超时均统一为不含密钥、提示词和原始响应的中文失败；超时永不自动重试，也不留下半成品。
 4. 主图固定 `1024x1024`。详情图 `1024x1536` 只是 ②b 中继能力探测前的暂定值，实际比例是 2:3，不做裁剪、拉伸或后处理；若中继支持精确 3:4，将在另行批准后只调整尺寸映射，否则由用户选择后续方案。
-5. 本次仅完成离线实现与验证，没有设置真实开关、读取真实密钥、访问网络、生成图片或写入正式完整性报告。后续每一道现场闸门见 `docs/CANVAS_PROJECT_STATE.md` §8，不能自动连续执行。
+5. `shuiping_20260712` 已完成 prompts-only 门禁与模型探测；两次获批的单张 `main_01` 调用分别以非标准 HTTP 403 和响应读取超时安全失败，事件账本现为 45 行，成图仍为 0。后续现场闸门见 `docs/CANVAS_PROJECT_STATE.md` §8，不能自动连续执行。
 
 ## 状态
 
-阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。2026-07-16 已完成 prompts-only 确定性门禁、14 项生产任务组装与 `image-production` 组合执行器的离线实现；GPT Image 2 供应商适配及生产组合链均未做真实 API 调用。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc` 和 `final_prompts` 均已完成 `shuiping_20260712` 真实批次现场验收。正式主图变量配置为 6 项、全部 1:1、恰好 2 项手持；正式详情变量配置为 8 项、全部 3:4、恰好 1 项手持，二者均只绑定合格 A/B/C，且详情模块05只标注已确认的高度约 25 厘米。`final_prompts` 已按主图、详情两个独立 thread 顺序完成真实验收，正式目录恰好包含 14 份 JSON、14 份同名 Markdown 和两份索引；真实路由现为 `ready`，`next_skill=null`，运行台“可运行：无”。这属于提示词阶段的有意刹车：画布对业务数据的写入仍仅经由阶段 3/4 的三段门禁白名单通道，执行历史仍以 `<pid>.events.jsonl` 追加日志为事实来源；ComfyUI 作业、QC 报告、renders、repaired 均为 0，渲染保持冻结。
+阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc` 和 `final_prompts` 已完成 `shuiping_20260712` 真实验收；正式目录包含 14 份 JSON、14 份同名 Markdown 和两份索引。生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识和可配置无数据等待上限，当前全仓 238 项测试通过。真实路由为 `needs_generated_images_before_qc`，唯一缺口是 `generated_images`；事件 45 行，ComfyUI 作业、renders、repaired 均为 0，QC 未执行。第二次闸门③是否已在中转站计费仍待用户侧查账；在结果明确并重新批准一张图成本前，渲染继续冻结。

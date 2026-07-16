@@ -6,6 +6,7 @@ import base64
 import json
 import mimetypes
 import os
+import socket
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +24,10 @@ from executor_contract import (
 
 
 CLIENT_USER_AGENT = "Codex-Canvas-Bridge/1.0"
+IMAGE_TIMEOUT_ENV = "OPENAI_IMAGE_TIMEOUT_SECONDS"
+DEFAULT_IMAGE_TIMEOUT_SECONDS = 180.0
+MIN_IMAGE_TIMEOUT_SECONDS = 30
+MAX_IMAGE_TIMEOUT_SECONDS = 1800
 
 
 @dataclass(frozen=True)
@@ -40,6 +45,20 @@ class HttpTransport(Protocol):
 class UrllibTransport:
     """Standard-library HTTP transport used by the production adapter."""
 
+    @staticmethod
+    def _timeout_error(timeout: float, exc: BaseException) -> ExecutorExecutionError:
+        timeout_label = f"{timeout:g}"
+        return ExecutorExecutionError(
+            f"图片服务连续 {timeout_label} 秒未返回新数据，已停止等待"
+        )
+
+    @classmethod
+    def _read_body(cls, response: object, timeout: float) -> bytes:
+        try:
+            return response.read()  # type: ignore[attr-defined]
+        except (TimeoutError, socket.timeout) as exc:
+            raise cls._timeout_error(timeout, exc) from exc
+
     def post(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> HttpResponse:
         request_headers = dict(headers)
         if not any(name.lower() == "user-agent" for name in request_headers):
@@ -50,11 +69,19 @@ class UrllibTransport:
                 return HttpResponse(
                     status=int(response.status),
                     headers=dict(response.headers.items()),
-                    body=response.read(),
+                    body=self._read_body(response, timeout),
                 )
         except error.HTTPError as exc:
-            return HttpResponse(status=int(exc.code), headers=dict(exc.headers.items()), body=exc.read())
+            return HttpResponse(
+                status=int(exc.code),
+                headers=dict(exc.headers.items()),
+                body=self._read_body(exc, timeout),
+            )
+        except (TimeoutError, socket.timeout) as exc:
+            raise self._timeout_error(timeout, exc) from exc
         except error.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise self._timeout_error(timeout, exc) from exc
             raise ExecutorExecutionError(f"无法连接图片生成服务：{exc.reason}") from exc
 
 
@@ -70,7 +97,7 @@ class OpenAIImageExecutor:
         transport: HttpTransport | None = None,
         base_url: str | None = None,
         model: str | None = None,
-        timeout: float = 180.0,
+        timeout: float | None = None,
         boundary_factory: Callable[[], str] | None = None,
     ) -> None:
         self.environment = context.environment
@@ -83,8 +110,30 @@ class OpenAIImageExecutor:
             configured_base_url = urlunsplit(base_parts._replace(path="/v1"))
         self.base_url = configured_base_url
         self.model = model or self.environment.get("OPENAI_IMAGE_MODEL") or "gpt-image-2"
-        self.timeout = timeout
+        self.timeout = float(timeout) if timeout is not None else self._environment_timeout()
         self.boundary_factory = boundary_factory or (lambda: f"executor-{uuid.uuid4().hex}")
+
+    def _environment_timeout(self) -> float:
+        if IMAGE_TIMEOUT_ENV not in self.environment:
+            return DEFAULT_IMAGE_TIMEOUT_SECONDS
+        raw = str(self.environment.get(IMAGE_TIMEOUT_ENV) or "").strip()
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ExecutorExecutionError(
+                f"{IMAGE_TIMEOUT_ENV} 必须是 {MIN_IMAGE_TIMEOUT_SECONDS} 到 "
+                f"{MAX_IMAGE_TIMEOUT_SECONDS} 的整数"
+            ) from exc
+        if (
+            str(value) != raw
+            or value < MIN_IMAGE_TIMEOUT_SECONDS
+            or value > MAX_IMAGE_TIMEOUT_SECONDS
+        ):
+            raise ExecutorExecutionError(
+                f"{IMAGE_TIMEOUT_ENV} 必须是 {MIN_IMAGE_TIMEOUT_SECONDS} 到 "
+                f"{MAX_IMAGE_TIMEOUT_SECONDS} 的整数"
+            )
+        return float(value)
 
     def execute(self, request_value: ExecutionRequest) -> ExecutionResult:
         if request_value.step != "renders" or not isinstance(request_value.payload, ImageGenerationTask):
