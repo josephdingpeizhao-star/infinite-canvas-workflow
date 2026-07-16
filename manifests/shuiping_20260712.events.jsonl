@@ -47,3 +47,9 @@
 {"ts": "2026-07-16T16:59:30", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 0）（111.0s）"}
 {"ts": "2026-07-16T17:16:14", "event": "step_started", "step": "renders", "command": "retry: renders"}
 {"ts": "2026-07-16T17:19:50", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 1/计划 5（跳过 1）；原因：图片服务返回了无法解析的响应（HTTP 502）"}
+{"ts": "2026-07-16T17:39:34", "event": "step_started", "step": "renders", "command": "retry: renders"}
+{"ts": "2026-07-16T17:41:15", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 2）（100.8s）"}
+{"ts": "2026-07-16T17:42:55", "event": "step_started", "step": "renders", "command": "retry: renders"}
+{"ts": "2026-07-16T17:48:26", "event": "step_succeeded", "step": "renders", "detail": "成功 3/计划 3（跳过 3）（331.0s）"}
+{"ts": "2026-07-16T17:49:41", "event": "step_started", "step": "renders", "command": "retry: renders"}
+{"ts": "2026-07-16T17:51:30", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 1/计划 8（跳过 6）；原因：详情图尺寸验收失败：detail_01 实际 1086x1448（3:4），不符合已批准的约 2:3"}
