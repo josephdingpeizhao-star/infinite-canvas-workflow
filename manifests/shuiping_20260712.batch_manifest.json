@@ -6,7 +6,8 @@
   "requested_outputs": [
     "main",
     "detail",
-    "final_prompts"
+    "final_prompts",
+    "qc_reports"
   ],
   "current_stage": "not_started",
   "next_skill": "workflow-router",

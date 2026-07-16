@@ -37,3 +37,5 @@
 {"ts": "2026-07-15T18:12:37", "event": "step_failed", "step": "final_prompts", "detail": "codex-dev 收到的主图最终提示词未保留手持状态"}
 {"ts": "2026-07-15T20:05:38", "event": "step_started", "step": "final_prompts", "command": "run: final_prompts"}
 {"ts": "2026-07-15T20:09:24", "event": "step_succeeded", "step": "final_prompts", "detail": "最终提示词已生成（225.9s）"}
+{"ts": "2026-07-16T14:21:33", "event": "step_started", "step": "integrity", "command": "run: integrity"}
+{"ts": "2026-07-16T14:21:33", "event": "step_succeeded", "step": "integrity", "detail": "完整性门禁通过：pass（0.2s）"}
