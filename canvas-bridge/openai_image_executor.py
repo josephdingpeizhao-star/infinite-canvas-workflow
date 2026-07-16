@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Protocol
 from urllib import error, request
+from urllib.parse import urlsplit, urlunsplit
 
 from executor_contract import (
     ExecutionRequest,
@@ -19,6 +20,9 @@ from executor_contract import (
     ExecutorExecutionError,
     ImageGenerationTask,
 )
+
+
+CLIENT_USER_AGENT = "Codex-Canvas-Bridge/1.0"
 
 
 @dataclass(frozen=True)
@@ -37,7 +41,10 @@ class UrllibTransport:
     """Standard-library HTTP transport used by the production adapter."""
 
     def post(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> HttpResponse:
-        outbound = request.Request(url, data=body, headers=headers, method="POST")
+        request_headers = dict(headers)
+        if not any(name.lower() == "user-agent" for name in request_headers):
+            request_headers["User-Agent"] = CLIENT_USER_AGENT
+        outbound = request.Request(url, data=body, headers=request_headers, method="POST")
         try:
             with request.urlopen(outbound, timeout=timeout) as response:
                 return HttpResponse(
@@ -68,7 +75,13 @@ class OpenAIImageExecutor:
     ) -> None:
         self.environment = context.environment
         self.transport = transport or UrllibTransport()
-        self.base_url = (base_url or self.environment.get("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
+        configured_base_url = (
+            base_url or self.environment.get("OPENAI_BASE_URL") or "https://api.openai.com/v1"
+        ).rstrip("/")
+        base_parts = urlsplit(configured_base_url)
+        if not base_parts.path:
+            configured_base_url = urlunsplit(base_parts._replace(path="/v1"))
+        self.base_url = configured_base_url
         self.model = model or self.environment.get("OPENAI_IMAGE_MODEL") or "gpt-image-2"
         self.timeout = timeout
         self.boundary_factory = boundary_factory or (lambda: f"executor-{uuid.uuid4().hex}")

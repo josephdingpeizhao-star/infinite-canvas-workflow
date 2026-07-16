@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,7 +21,7 @@ from executor_contract import (  # noqa: E402
     ImageGenerationTask,
 )
 from executor_factory import build_registry  # noqa: E402
-from openai_image_executor import HttpResponse, OpenAIImageExecutor  # noqa: E402
+from openai_image_executor import HttpResponse, OpenAIImageExecutor, UrllibTransport  # noqa: E402
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nprovider-neutral-test"
@@ -34,6 +35,20 @@ class RecordingTransport:
     def post(self, url: str, headers: dict[str, str], body: bytes, timeout: float) -> HttpResponse:
         self.calls.append({"url": url, "headers": headers, "body": body, "timeout": timeout})
         return self.response
+
+
+class UrlopenResponse:
+    status = 200
+    headers = {"Content-Type": "application/json"}
+
+    def __enter__(self) -> UrlopenResponse:
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return b"{}"
 
 
 def success_response(image: bytes = PNG_BYTES) -> HttpResponse:
@@ -56,9 +71,22 @@ def success_response(image: bytes = PNG_BYTES) -> HttpResponse:
 
 
 class OpenAIImageExecutorTest(unittest.TestCase):
-    def _executor(self, transport: RecordingTransport, *, key: str = "server-secret") -> OpenAIImageExecutor:
-        context = ExecutorContext(manifest={}, environment={"OPENAI_API_KEY": key})
-        return OpenAIImageExecutor(context, transport=transport, boundary_factory=lambda: "test-boundary")
+    def _executor(
+        self,
+        transport: RecordingTransport,
+        *,
+        key: str = "server-secret",
+        base_url: str | None = None,
+    ) -> OpenAIImageExecutor:
+        environment = {"OPENAI_API_KEY": key}
+        if base_url is not None:
+            environment["OPENAI_BASE_URL"] = base_url
+        context = ExecutorContext(manifest={}, environment=environment)
+        return OpenAIImageExecutor(
+            context,
+            transport=transport,
+            boundary_factory=lambda: "test-boundary",
+        )
 
     def test_missing_api_key_fails_before_network(self) -> None:
         transport = RecordingTransport(success_response())
@@ -74,6 +102,43 @@ class OpenAIImageExecutorTest(unittest.TestCase):
 
         self.assertIn("OPENAI_API_KEY", str(ctx.exception))
         self.assertEqual([], transport.calls)
+
+    def test_urllib_transport_sends_fixed_honest_user_agent(self) -> None:
+        with mock.patch(
+            "openai_image_executor.request.urlopen",
+            return_value=UrlopenResponse(),
+        ) as urlopen:
+            UrllibTransport().post(
+                "https://70api.top/v1/images/edits",
+                {"Content-Type": "application/json"},
+                b"{}",
+                10.0,
+            )
+
+        outbound = urlopen.call_args.args[0]
+        self.assertEqual("Codex-Canvas-Bridge/1.0", outbound.get_header("User-agent"))
+        self.assertEqual("application/json", outbound.get_header("Content-type"))
+
+    def test_urllib_transport_preserves_explicit_user_agent(self) -> None:
+        headers = {"user-agent": "Caller-Agent/2.0"}
+        with mock.patch(
+            "openai_image_executor.request.urlopen",
+            return_value=UrlopenResponse(),
+        ) as urlopen:
+            UrllibTransport().post(
+                "https://70api.top/v1/images/edits",
+                headers,
+                b"{}",
+                10.0,
+            )
+
+        outbound = urlopen.call_args.args[0]
+        self.assertEqual("Caller-Agent/2.0", outbound.get_header("User-agent"))
+        self.assertEqual(
+            1,
+            sum(name.lower() == "user-agent" for name, _ in outbound.header_items()),
+        )
+        self.assertEqual({"user-agent": "Caller-Agent/2.0"}, headers)
 
     def test_text_only_task_uses_generation_endpoint_and_writes_image(self) -> None:
         transport = RecordingTransport(success_response())
@@ -140,6 +205,67 @@ class OpenAIImageExecutorTest(unittest.TestCase):
         self.assertEqual(2, body.count(b'name="image[]"'))
         self.assertIn(b"front-image", body)
         self.assertIn(b"back-image", body)
+
+    def test_bare_base_url_is_normalized_to_v1_edit_endpoint(self) -> None:
+        for base_url in ("https://70api.top", "https://70api.top/"):
+            with self.subTest(base_url=base_url), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = root / "reference.jpg"
+                reference.write_bytes(b"reference-image")
+                transport = RecordingTransport(success_response())
+                executor = self._executor(transport, base_url=base_url)
+
+                executor.execute(
+                    ExecutionRequest(
+                        step="renders",
+                        payload=ImageGenerationTask(
+                            prompt="preserve the product",
+                            output_path=root / "edited.png",
+                            reference_images=(reference,),
+                        ),
+                    )
+                )
+
+                self.assertEqual("https://70api.top/v1/images/edits", transport.calls[0]["url"])
+
+    def test_existing_v1_base_url_is_not_duplicated(self) -> None:
+        for base_url in ("https://70api.top/v1", "https://70api.top/v1/"):
+            with self.subTest(base_url=base_url), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                reference = root / "reference.jpg"
+                reference.write_bytes(b"reference-image")
+                transport = RecordingTransport(success_response())
+                executor = self._executor(transport, base_url=base_url)
+
+                executor.execute(
+                    ExecutionRequest(
+                        step="renders",
+                        payload=ImageGenerationTask(
+                            prompt="preserve the product",
+                            output_path=root / "edited.png",
+                            reference_images=(reference,),
+                        ),
+                    )
+                )
+
+                self.assertEqual("https://70api.top/v1/images/edits", transport.calls[0]["url"])
+
+    def test_bare_base_url_is_normalized_to_v1_generation_endpoint(self) -> None:
+        transport = RecordingTransport(success_response())
+        executor = self._executor(transport, base_url="https://70api.top")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            executor.execute(
+                ExecutionRequest(
+                    step="renders",
+                    payload=ImageGenerationTask(
+                        prompt="white background kettle",
+                        output_path=Path(tmp) / "generated.png",
+                    ),
+                )
+            )
+
+        self.assertEqual("https://70api.top/v1/images/generations", transport.calls[0]["url"])
 
     def test_http_error_is_sanitized(self) -> None:
         response = HttpResponse(

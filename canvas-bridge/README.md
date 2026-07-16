@@ -62,7 +62,7 @@ python canvas-bridge/make_demo_workspace.py --reset
 - 下游未确认事实门禁现在把数值精确等于用户确认高度、单位为厘米或 `cm`（不区分大小写）的复述默认视为合法，并由 detail 分段、detail 整包、main 整包和 `final_prompts` 批次共享；同一子句或字段路径含竞争维度、区间/连字、负号、单位扩展或相邻乘号尺寸组时仍拒绝，其他既有单位及非确认高度的厘米值也仍拒绝。材质/认证扫描只额外保护结构完整的“不把/不将……写死/固定/标注/设定/锁定/指定为/成……”否定指令，且保护范围只覆盖“为/成”后的目标列表；结构中夹带或另起的正向事实仍拒绝，既有保护词行为不变，也不会因“不锈钢”中的“不”或一般“不是……”而放行。一次业务门禁会先收集本次输入内全部未确认参数与商品事实，再用不超过 200 字符的“类别 + 净化字段路径 + 计数”统一报错；未知键名改用稳定占位符，不回显原值、数值上下文或提示词正文。段号、结构、模块、角度、比例和手持等其他校验仍保持原来的逐项立即失败。
 - 真实执行默认关闭；只有获得用户明确批准后，才可在该次服务进程中临时设置 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`，该开关不写配置、不持久化。既有 identity/style/angle/main/detail 真实验收历史、`ExecutionRequest / ExecutionResult`、三段门禁、默认 `demo`、`openai-image`、其他 `codex-dev` 阶段和产物格式均未改变。首次 `final_prompts` 于 2026-07-15 18:10:24 至 18:12:37 安全失败；离线修复并重新取得明确批准后，第二次执行已于 20:05:38 至 20:09:24 成功，正式目录现有 14 份 JSON、14 份 Markdown 和两份索引，真实路由为 `ready`。历史失败正文未复用；当前仍未批准任何 integrity、renders 或 QC 现场命令。
 - canvas-agent token 只从本机配置读取并放在鉴权请求头中；`codex-dev` 只接受 `http://127.0.0.1`、`http://localhost` 或 `http://[::1]` 回环地址，并显式禁用系统代理。事件日志只记录通用成功说明或彻底切断原始异常链的脱敏错误，不记录 token、完整提示词、Codex 原始错误正文或产品图片内容。
-- GPT Image 2 密钥只从服务端环境变量 `OPENAI_API_KEY` 读取；可选 `OPENAI_IMAGE_MODEL` 和 `OPENAI_BASE_URL` 只属于该适配器。密钥不得写入 manifest、画布节点、事件日志或仓库文件。
+- GPT Image 2 密钥只从服务端环境变量 `OPENAI_API_KEY` 读取；可选 `OPENAI_IMAGE_MODEL` 和 `OPENAI_BASE_URL` 只属于该适配器。`OPENAI_BASE_URL` 可填写已带 `/v1` 的 API 根路径，也可填写裸域名（自动补为 `/v1`）；生产 HTTP 传输使用固定且不含敏感信息的 `Codex-Canvas-Bridge/1.0` 客户端标识，并保留调用方显式传入的标识。密钥不得写入 manifest、画布节点、事件日志或仓库文件。
 - 当前状态报告仍禁止生成图片；在最终提示词完整性门禁通过并明确批准真实 API 消耗前，不得现场调用。
 - 未来接入其他图片服务时，实现相同的 `execute(ExecutionRequest) -> ExecutionResult` 契约并在 `executor_factory.py` 注册即可，上层画布逻辑不变。
 
