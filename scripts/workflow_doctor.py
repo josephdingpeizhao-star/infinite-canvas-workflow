@@ -110,20 +110,21 @@ def apply_startup_cleanup(root: Path, candidates: list[dict[str, Any]]) -> list[
     return actions
 
 
-def main() -> int:
+def parse_doctor_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run repository self-checks and refresh current state reports.")
-    parser.add_argument(
+    cleanup_group = parser.add_mutually_exclusive_group()
+    cleanup_group.add_argument(
         "--apply-startup-cleanup",
         action="store_true",
         help=(
-            "Compatibility flag. Startup cleanup is now applied by default before checks unless "
-            "--skip-startup-cleanup is supplied."
+            "Explicitly enable startup cleanup before checks. This is the only cleanup-enabling path; "
+            "automatically selected candidates are moved to the Recycle Bin without a confirmation dialog."
         ),
     )
-    parser.add_argument(
+    cleanup_group.add_argument(
         "--skip-startup-cleanup",
         action="store_true",
-        help="Skip the automatic startup Recycle Bin cleanup preflight.",
+        help="Explicitly skip startup cleanup; this is now the default behavior.",
     )
     parser.add_argument(
         "--abandoned-product-id",
@@ -145,15 +146,17 @@ def main() -> int:
         action="store_true",
         help="Move product-specific historical reports to the Recycle Bin.",
     )
-    args = parser.parse_args()
-    if args.apply_startup_cleanup and args.skip_startup_cleanup:
-        parser.error("--apply-startup-cleanup and --skip-startup-cleanup cannot be used together")
+    return parser.parse_args(argv)
+
+
+def main() -> int:
+    args = parse_doctor_args()
 
     root = project_root()
     cleanup_actions: list[dict[str, Any]] = []
     cleanup_candidates: list[dict[str, Any]] = []
     cleanup_selection: dict[str, Any] | None = None
-    cleanup_enabled = not args.skip_startup_cleanup
+    cleanup_enabled = args.apply_startup_cleanup
     if cleanup_enabled:
         cleanup_selection = detect_current_state.startup_cleanup_selection(
             root,
