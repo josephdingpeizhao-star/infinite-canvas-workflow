@@ -1431,6 +1431,663 @@ def build_report(
     }
 
 
+def compact_json_sha256(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def path_is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve(strict=False).relative_to(parent.resolve(strict=False))
+        return True
+    except ValueError:
+        return False
+
+
+def note_int(notes: str, label: str) -> int | None:
+    match = re.search(rf"{re.escape(label)}\s*:\s*(\d+)", notes)
+    return int(match.group(1)) if match else None
+
+
+def build_prompts_only_report(
+    *,
+    batch_manifest_path: Path,
+    final_prompt_index_path: Path | None = None,
+    schema_path: Path | None = None,
+) -> dict[str, Any]:
+    """Run the deterministic, compiled-prompt-only integrity contract.
+
+    This branch intentionally does not load a ComfyUI job manifest and does not
+    call the legacy heuristic prompt/compiler scanners. Those checks operate on
+    a different workflow layer and produce false positives for accepted prompt
+    bundles.
+    """
+
+    batch_manifest = load_json(batch_manifest_path)
+    product_id = str(batch_manifest.get("product_id") or "")
+    final_prompt_index_path = final_prompt_index_path or default_final_prompt_index(batch_manifest)
+    final_prompt_dir = artifact_dir(batch_manifest["artifacts"]["final_prompts"])
+    identity_path = default_identity_path(batch_manifest)
+    style_path = artifact_file(batch_manifest["artifacts"]["style_master"], "style_master.json")
+    angle_path = artifact_file(batch_manifest["artifacts"]["angle_inventory"], "angle_inventory.json")
+    prompt_schema_path = schema_path or ROOT / "schemas" / "final_prompt.schema.json"
+
+    try:
+        from jsonschema import Draft202012Validator
+    except ImportError as exc:  # pragma: no cover - dependency is part of the repository runtime
+        raise ScriptError("jsonschema is required for prompts-only validation") from exc
+
+    prompt_schema = load_json(prompt_schema_path)
+    schema_validator = Draft202012Validator(prompt_schema)
+    issues: list[dict[str, Any]] = []
+    checked_assets: list[str] = []
+    unicode_issue_ids: set[str] = set()
+
+    def block(
+        issue_id: str,
+        description: str,
+        *,
+        asset: Path | None = None,
+        config_id: str | None = None,
+        evidence: dict[str, Any] | None = None,
+    ) -> None:
+        add_issue(
+            issues,
+            issue_id=issue_id,
+            severity="critical",
+            blocking=True,
+            description=description,
+            affected_asset=str(asset) if asset else None,
+            job_id=config_id,
+            evidence=evidence,
+        )
+
+    def read_checked_json(path: Path, label: str, *, config_id: str | None = None) -> Any | None:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            block(
+                f"final_prompt_unreadable_{config_id}" if config_id else f"document_unreadable_{label}",
+                "Required JSON document does not exist.",
+                asset=path,
+                config_id=config_id,
+            )
+            return None
+        except UnicodeDecodeError:
+            issue_id = f"unicode_decode_error_{config_id or label}"
+            block(issue_id, "Required JSON document is not valid UTF-8.", asset=path, config_id=config_id)
+            unicode_issue_ids.add(issue_id)
+            return None
+        except OSError:
+            block(
+                f"final_prompt_unreadable_{config_id}" if config_id else f"document_unreadable_{label}",
+                "Required JSON document could not be read.",
+                asset=path,
+                config_id=config_id,
+            )
+            return None
+        if "\ufffd" in text:
+            issue_id = f"unicode_replacement_character_{config_id or label}"
+            block(
+                issue_id,
+                "Required JSON document contains the Unicode replacement character.",
+                asset=path,
+                config_id=config_id,
+            )
+            unicode_issue_ids.add(issue_id)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            block(
+                f"final_prompt_unreadable_{config_id}" if config_id else f"document_invalid_json_{label}",
+                "Required JSON document is invalid JSON.",
+                asset=path,
+                config_id=config_id,
+            )
+            return None
+
+    identity_doc = read_checked_json(identity_path, "identity")
+    identity = identity_doc.get("identity") if isinstance(identity_doc, dict) else None
+    identity_negative = identity.get("negative_prompt_constraints") if isinstance(identity, dict) else None
+    negative_constraint = identity_negative.strip() if isinstance(identity_negative, str) else None
+    if not negative_constraint and not (
+        isinstance(identity_negative, list)
+        and identity_negative
+        and all(isinstance(item, str) and item.strip() for item in identity_negative)
+    ):
+        block(
+            "identity_negative_prompt_constraint_missing",
+            "Product identity archive does not provide a negative prompt constraint.",
+            asset=identity_path,
+        )
+
+    for upstream_label, upstream_path in (("style_master", style_path), ("angle_inventory", angle_path)):
+        read_checked_json(upstream_path, upstream_label)
+
+    expected_records: list[dict[str, Any]] = []
+    source_specs = (
+        ("main", "main_variable_configs", "main_variable_configs.json", "main_variable_config"),
+        ("detail", "detail_variable_configs", "detail_variable_configs.json", "detail_variable_config"),
+    )
+    for mode, manifest_key, filename, artifact_type in source_specs:
+        source_path = artifact_file(batch_manifest["artifacts"][manifest_key], filename)
+        source_doc = read_checked_json(source_path, f"{mode}_source")
+        if not isinstance(source_doc, dict):
+            continue
+        if source_doc.get("product_id") != product_id:
+            block(
+                f"variable_config_product_id_mismatch_{mode}",
+                "Variable config product_id does not match the batch manifest.",
+                asset=source_path,
+            )
+        if source_doc.get("artifact_type") != artifact_type:
+            block(
+                f"variable_config_artifact_type_mismatch_{mode}",
+                "Variable config artifact_type is not the expected type.",
+                asset=source_path,
+            )
+        common = source_doc.get("common_constraints")
+        configs = source_doc.get("configs")
+        if not isinstance(common, dict) or not isinstance(configs, list):
+            block(
+                f"variable_config_shape_invalid_{mode}",
+                "Variable config must contain common_constraints and an ordered configs list.",
+                asset=source_path,
+            )
+            continue
+        if source_doc.get("config_count") != len(configs):
+            block(
+                f"variable_config_count_mismatch_{mode}",
+                "Variable config count does not match its ordered config list.",
+                asset=source_path,
+            )
+        try:
+            source_hash = file_sha256(source_path)
+        except OSError:
+            source_hash = ""
+        for index, config in enumerate(configs):
+            if not isinstance(config, dict):
+                block(
+                    f"variable_config_item_invalid_{mode}_{index}",
+                    "Variable config entry is not an object.",
+                    asset=source_path,
+                )
+                continue
+            config_id = str(config.get("config_id") or "")
+            expected_id = f"{mode}_{index + 1:02d}"
+            if config_id != expected_id or config.get("output_type") != mode:
+                block(
+                    f"variable_config_sequence_mismatch_{expected_id}",
+                    "Variable config id or output type does not match the deterministic sequence.",
+                    asset=source_path,
+                    config_id=expected_id,
+                )
+            overrides = config.get("per_image_overrides")
+            if not isinstance(overrides, dict):
+                block(
+                    f"variable_config_overrides_invalid_{expected_id}",
+                    "Variable config entry does not contain per_image_overrides.",
+                    asset=source_path,
+                    config_id=expected_id,
+                )
+                overrides = {}
+            resolved = dict(common)
+            resolved.update(overrides)
+            resolved_hash = compact_json_sha256(resolved)
+            if config.get("resolved_variable_config_sha256") != resolved_hash:
+                block(
+                    f"variable_config_resolved_hash_mismatch_{expected_id}",
+                    "Variable config entry fingerprint does not match its resolved content.",
+                    asset=source_path,
+                    config_id=expected_id,
+                )
+            expected_records.append(
+                {
+                    "config_id": expected_id,
+                    "mode": mode,
+                    "index": index,
+                    "source_path": source_path,
+                    "source_hash": source_hash,
+                    "resolved_hash": resolved_hash,
+                    "config": config,
+                }
+            )
+
+    final_index = read_checked_json(final_prompt_index_path, "index")
+    if not isinstance(final_index, dict):
+        final_index = {}
+    if final_index.get("product_id") != product_id:
+        block(
+            "final_prompt_index_product_id_mismatch",
+            "Final prompt index product_id does not match the batch manifest.",
+            asset=final_prompt_index_path,
+        )
+    if final_index.get("artifact_type") != "final_prompt_index":
+        block(
+            "final_prompt_index_artifact_type_mismatch",
+            "Final prompt index artifact_type is invalid.",
+            asset=final_prompt_index_path,
+        )
+    if final_index.get("uses_upstream_prompt_files_as_visual_requirements") is not False:
+        block(
+            "final_prompt_index_upstream_prompt_misuse",
+            "Final prompt index must explicitly disable upstream prompt files as visual requirements.",
+            asset=final_prompt_index_path,
+        )
+    index_items = final_index.get("items")
+    if not isinstance(index_items, list):
+        index_items = []
+        block(
+            "final_prompt_index_items_invalid",
+            "Final prompt index items must be an ordered list.",
+            asset=final_prompt_index_path,
+        )
+    expected_count = len(expected_records)
+    if final_index.get("prompt_count") != len(index_items) or len(index_items) != expected_count:
+        block(
+            "final_prompt_index_count_mismatch",
+            "Final prompt index count must equal its item count and the variable config count.",
+            asset=final_prompt_index_path,
+            evidence={
+                "declared_count": final_index.get("prompt_count"),
+                "item_count": len(index_items),
+                "expected_count": expected_count,
+            },
+        )
+
+    expected_upstreams = {
+        "product_identity_archive": identity_path,
+        "style_master": style_path,
+        "angle_inventory": angle_path,
+    }
+    seen_config_ids: set[str] = set()
+    seen_prompt_paths: set[Path] = set()
+    config_handheld = {"main": 0, "detail": 0}
+    prompt_handheld = {"main": 0, "detail": 0}
+    invalid_ratio_count = 0
+    height_mismatch_count = 0
+    confirmed_height = note_int(str(batch_manifest.get("notes") or ""), "用户确认高度厘米")
+    expected_handheld = {
+        "main": note_int(str(batch_manifest.get("notes") or ""), "主图手持数量"),
+        "detail": note_int(str(batch_manifest.get("notes") or ""), "详情图手持数量"),
+    }
+    if confirmed_height is None:
+        block(
+            "confirmed_height_missing_from_manifest_notes",
+            "Batch manifest notes do not contain a confirmed height in centimeters.",
+            asset=batch_manifest_path,
+        )
+    for mode, count in expected_handheld.items():
+        if count is None:
+            block(
+                f"handheld_count_missing_{mode}",
+                "Batch manifest notes do not contain the required handheld count.",
+                asset=batch_manifest_path,
+            )
+
+    for position, record in enumerate(expected_records):
+        config_id = record["config_id"]
+        mode = record["mode"]
+        overrides = record["config"].get("per_image_overrides")
+        handheld_declaration = (
+            str(overrides.get("手持交互声明") or "") if isinstance(overrides, dict) else ""
+        )
+        if handheld_enabled_from_text(handheld_declaration):
+            config_handheld[mode] += 1
+        if position >= len(index_items) or not isinstance(index_items[position], dict):
+            block(
+                f"final_prompt_index_item_missing_{config_id}",
+                "Final prompt index is missing an expected ordered item.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+            continue
+        item = index_items[position]
+        item_config_id = str(item.get("config_id") or "")
+        if item_config_id in seen_config_ids:
+            block(
+                f"final_prompt_index_duplicate_config_{config_id}",
+                "Final prompt index contains a duplicate config id.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+        seen_config_ids.add(item_config_id)
+        if item_config_id != config_id or item.get("output_type") != mode:
+            block(
+                f"final_prompt_index_sequence_mismatch_{config_id}",
+                "Final prompt index id or output type does not match the variable config sequence.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+        if not isinstance(item.get("bound_reference"), str) or not item["bound_reference"].strip():
+            block(
+                f"final_prompt_index_bound_reference_missing_{config_id}",
+                "Final prompt index item does not name a bound reference image.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+        prompt_value = item.get("final_prompt_path")
+        if not isinstance(prompt_value, str) or not prompt_value:
+            block(
+                f"final_prompt_index_path_missing_{config_id}",
+                "Final prompt index item does not contain a prompt path.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+            continue
+        prompt_path = Path(prompt_value)
+        checked_assets.append(str(prompt_path))
+        resolved_prompt_path = prompt_path.resolve(strict=False)
+        if resolved_prompt_path in seen_prompt_paths:
+            block(
+                f"final_prompt_index_duplicate_path_{config_id}",
+                "Final prompt index contains a duplicate prompt path.",
+                asset=final_prompt_index_path,
+                config_id=config_id,
+            )
+        seen_prompt_paths.add(resolved_prompt_path)
+        if prompt_path.suffix.lower() != ".json" or not path_is_within(prompt_path, final_prompt_dir):
+            block(
+                f"final_prompt_path_outside_bundle_{config_id}",
+                "Final prompt path must be a JSON file inside the declared final prompt bundle.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+            continue
+
+        final_doc = read_checked_json(prompt_path, "prompt", config_id=config_id)
+        if not isinstance(final_doc, dict):
+            continue
+        schema_errors = list(schema_validator.iter_errors(final_doc))
+        if schema_errors:
+            block(
+                f"final_prompt_schema_invalid_{config_id}",
+                "Final prompt document does not satisfy final_prompt.schema.json.",
+                asset=prompt_path,
+                config_id=config_id,
+                evidence={"error_count": len(schema_errors)},
+            )
+        if final_doc.get("product_id") != product_id:
+            block(
+                f"final_prompt_product_id_mismatch_{config_id}",
+                "Final prompt product_id does not match the batch manifest.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        if final_doc.get("artifact_type") != "final_prompt":
+            block(
+                f"final_prompt_artifact_type_mismatch_{config_id}",
+                "Final prompt artifact_type is invalid.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        if final_doc.get("uses_upstream_prompt_files_as_visual_requirements") is not False:
+            block(
+                f"final_prompt_upstream_prompt_misuse_{config_id}",
+                "Final prompt must explicitly disable upstream prompt files as visual requirements.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        positive = final_doc.get("final_prompt")
+        if not isinstance(positive, str) or not positive.strip():
+            block(
+                f"final_prompt_body_missing_{config_id}",
+                "Final prompt body is empty.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+            positive = ""
+        negative_prompt = final_doc.get("negative_prompt")
+        negative_invalid = not isinstance(negative_prompt, str) or not negative_prompt.strip()
+        if negative_constraint is not None and negative_prompt != negative_constraint:
+            negative_invalid = True
+        if negative_invalid:
+            block(
+                f"negative_prompt_identity_mismatch_{config_id}",
+                "Negative prompt is empty or does not match the string-form product identity constraint.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+
+        upstreams = final_doc.get("upstream_artifacts")
+        if not isinstance(upstreams, dict):
+            upstreams = {}
+        for key, expected_path in expected_upstreams.items():
+            actual_value = upstreams.get(key)
+            actual_path = Path(actual_value) if isinstance(actual_value, str) and actual_value else None
+            if actual_path is None or actual_path.resolve(strict=False) != expected_path.resolve(strict=False):
+                block(
+                    f"upstream_path_mismatch_{key}_{config_id}",
+                    "Final prompt upstream path does not match the batch manifest.",
+                    asset=prompt_path,
+                    config_id=config_id,
+                )
+            elif not actual_path.is_file():
+                block(
+                    f"upstream_path_unreadable_{key}_{config_id}",
+                    "Final prompt upstream path is not a readable file.",
+                    asset=actual_path,
+                    config_id=config_id,
+                )
+
+        variable = final_doc.get("variable_config")
+        if not isinstance(variable, dict):
+            variable = {}
+        if variable.get("config_id") != config_id or variable.get("output_type") != mode:
+            block(
+                f"final_prompt_variable_identity_mismatch_{config_id}",
+                "Final prompt variable config id or output type is inconsistent.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        source_path = record["source_path"]
+        path_fields = (
+            variable.get("source_path"),
+            upstreams.get("variable_config"),
+            (variable.get("common_constraints_ref") or {}).get("path")
+            if isinstance(variable.get("common_constraints_ref"), dict)
+            else None,
+            (variable.get("per_image_overrides_ref") or {}).get("path")
+            if isinstance(variable.get("per_image_overrides_ref"), dict)
+            else None,
+        )
+        if any(
+            not isinstance(value, str)
+            or Path(value).resolve(strict=False) != source_path.resolve(strict=False)
+            for value in path_fields
+        ):
+            block(
+                f"variable_config_source_path_mismatch_{config_id}",
+                "Final prompt variable config source paths are inconsistent.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        common_ref = variable.get("common_constraints_ref")
+        override_ref = variable.get("per_image_overrides_ref")
+        if not isinstance(common_ref, dict) or common_ref.get("json_pointer") != "/common_constraints":
+            block(
+                f"common_constraints_pointer_mismatch_{config_id}",
+                "Final prompt common constraints pointer is invalid.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        expected_pointer = f"/configs/{record['index']}/per_image_overrides"
+        if not isinstance(override_ref, dict) or override_ref.get("json_pointer") != expected_pointer:
+            block(
+                f"per_image_overrides_pointer_mismatch_{config_id}",
+                "Final prompt per-image pointer does not match the ordered config index.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        if variable.get("source_sha256") != record["source_hash"]:
+            block(
+                f"variable_config_source_hash_mismatch_{config_id}",
+                "Final prompt source fingerprint does not match the current variable config file.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        if variable.get("resolved_variable_config_sha256") != record["resolved_hash"]:
+            block(
+                f"resolved_variable_config_hash_mismatch_{config_id}",
+                "Final prompt resolved variable config fingerprint is invalid.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+
+        ratio_literal = "画布比例固定为 1:1" if mode == "main" else "画布比例固定为 3:4"
+        if ratio_literal not in positive:
+            invalid_ratio_count += 1
+            block(
+                f"canvas_ratio_literal_mismatch_{config_id}",
+                "Final prompt does not preserve the required canvas ratio literal.",
+                asset=prompt_path,
+                config_id=config_id,
+            )
+        if confirmed_height is not None:
+            height_pattern = re.compile(
+                rf"高度[^。；;\n]{{0,24}}约\s*{confirmed_height}\s*(?:厘米|cm)",
+                re.IGNORECASE,
+            )
+            if not height_pattern.search(positive):
+                height_mismatch_count += 1
+                block(
+                    f"confirmed_height_literal_mismatch_{config_id}",
+                    "Final prompt does not preserve the confirmed height semantic.",
+                    asset=prompt_path,
+                    config_id=config_id,
+                )
+        if final_prompt_handheld_enabled(final_doc):
+            prompt_handheld[mode] += 1
+
+    for mode in ("main", "detail"):
+        expected = expected_handheld[mode]
+        if expected is not None and (
+            config_handheld[mode] != expected or prompt_handheld[mode] != expected
+        ):
+            block(
+                f"handheld_count_{mode}_mismatch",
+                "Handheld counts do not match the batch manifest notes.",
+                asset=batch_manifest_path,
+                evidence={
+                    "expected": expected,
+                    "variable_config": config_handheld[mode],
+                    "final_prompt": prompt_handheld[mode],
+                },
+            )
+
+    blocking_issues = [item for item in issues if item.get("blocking") is True]
+
+    def check_status(prefixes: tuple[str, ...]) -> str:
+        return "fail" if any(item["issue_id"].startswith(prefixes) for item in blocking_issues) else "pass"
+
+    handheld_summary = {
+        "expected_main": expected_handheld["main"],
+        "expected_detail": expected_handheld["detail"],
+        "variable_config_main": config_handheld["main"],
+        "variable_config_detail": config_handheld["detail"],
+        "final_prompt_main": prompt_handheld["main"],
+        "final_prompt_detail": prompt_handheld["detail"],
+    }
+    results = [
+        {
+            "check_item": "prompt_count_schema_and_sequence",
+            "status": check_status(("final_prompt_index", "final_prompt_schema", "final_prompt_artifact", "final_prompt_product")),
+            "notes": f"expected={expected_count}, indexed={len(index_items)}.",
+        },
+        {
+            "check_item": "source_and_resolved_fingerprint_chain",
+            "status": check_status(("variable_config_", "resolved_variable_config_", "common_constraints_", "per_image_overrides_", "upstream_path_")),
+            "notes": "Source file SHA-256 and compact stable JSON fingerprints are recomputed.",
+        },
+        {
+            "check_item": "ratio_and_confirmed_height_literals",
+            "status": check_status(("canvas_ratio_", "confirmed_height_")),
+            "notes": f"invalid_ratios={invalid_ratio_count}, invalid_heights={height_mismatch_count}.",
+        },
+        {
+            "check_item": "handheld_counts",
+            "status": check_status(("handheld_count_",)),
+            "notes": json.dumps(handheld_summary, ensure_ascii=False, sort_keys=True),
+        },
+        {
+            "check_item": "unicode_integrity",
+            "status": "fail" if unicode_issue_ids else "pass",
+            "notes": f"unicode_issue_count={len(unicode_issue_ids)}.",
+        },
+    ]
+    skipped_checks = [
+        {
+            "check": "comfyui_job_manifest",
+            "reason": "prompts-only 在 ComfyUI 作业生成前运行，因此不读取或要求作业清单。",
+        },
+        {
+            "check": "index_job_path_set_comparison",
+            "reason": "没有 ComfyUI 作业清单；索引集合改由变量配置确定性序列核对。",
+        },
+        {
+            "check": "job_dimensions_and_ratio",
+            "reason": "没有作业尺寸层；改为核对每份最终提示词中的 1:1 或 3:4 字面约束。",
+        },
+        {
+            "check": "job_layer_handheld_count",
+            "reason": "没有作业层；改为同时核对变量配置、最终提示词与 manifest notes。",
+        },
+        {
+            "check": "legacy_content_heuristics",
+            "reason": "为避免真实批次误报，跳过旧 must_keep、禁用语境、道具本体和低置信单位扫描；改用 Schema、指纹、比例和已确认高度语义检查。",
+        },
+        {
+            "check": "legacy_compiler_literal_scan",
+            "reason": "prompts-only 验证已编译产物，不扫描编译器源码，以避免真实批次误报。",
+        },
+    ]
+    return {
+        "product_id": product_id,
+        "artifact_type": "final_prompt_integrity_report",
+        "gate_name": "final_prompt_integrity_gate",
+        "mode": "prompts-only",
+        "status": "fail" if blocking_issues else "pass",
+        "render_blocked": bool(blocking_issues),
+        "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "batch_manifest": str(batch_manifest_path),
+        "product_identity_archive": str(identity_path),
+        "final_prompt_index": str(final_prompt_index_path),
+        "checked_assets": checked_assets,
+        "checked_prompt_count": len(index_items),
+        "expected_prompt_count": expected_count,
+        "output_canvas_ratio_summary": {
+            "main_prompt_count": sum(1 for item in expected_records if item["mode"] == "main"),
+            "detail_prompt_count": sum(1 for item in expected_records if item["mode"] == "detail"),
+            "invalid_ratio_count": invalid_ratio_count,
+            "invalid_height_count": height_mismatch_count,
+        },
+        "handheld_count_summary": handheld_summary,
+        "blocking_issue_count": len(blocking_issues),
+        "warning_count": 0,
+        "results": results,
+        "blocking_issues": blocking_issues,
+        "warnings": [],
+        "issues": issues,
+        "skipped_checks": skipped_checks,
+        "image_generation_performed": False,
+        "comfyui_execution_performed": False,
+        "notes": "Deterministic prompts-only gate; legacy heuristic content and compiler scans are intentionally skipped with recorded reasons.",
+    }
+
+
 def write_markdown(path: Path, report: dict[str, Any]) -> None:
     lines = [
         "# Final Prompt Integrity Report",
@@ -1448,6 +2105,8 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         "## Results",
         "",
     ]
+    if report.get("mode"):
+        lines.insert(3, f"- mode: {report['mode']}")
     for item in report["results"]:
         lines.append(f"- {item['check_item']}: {item['status']} ({item.get('notes', '')})")
     lines.extend(["", "## Blocking Issues", ""])
@@ -1462,6 +2121,10 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
             lines.append(f"- {item['issue_id']}: {item['severity']} | {item.get('job_id', '-')} | {item['description']}")
     else:
         lines.append("- None")
+    if report.get("skipped_checks"):
+        lines.extend(["", "## Skipped Checks", ""])
+        for item in report["skipped_checks"]:
+            lines.append(f"- {item['check']}: {item['reason']}")
     lines.extend(["", "## Checked Assets", ""])
     if report["checked_assets"]:
         lines.extend(f"- {item}" for item in report["checked_assets"])
@@ -1508,6 +2171,11 @@ def main() -> int:
     parser.add_argument("--repo-report-prefix", default=None)
     parser.add_argument("--expected-handheld-count", type=int, default=None)
     parser.add_argument("--expected-handheld-scope", choices=HANDHELD_SCOPES, default="all")
+    parser.add_argument(
+        "--prompts-only",
+        action="store_true",
+        help="Validate the deterministic final prompt bundle without requiring ComfyUI jobs.",
+    )
     args = parser.parse_args()
 
     batch_manifest_path = Path(args.batch_manifest)
@@ -1519,15 +2187,21 @@ def main() -> int:
     output_markdown = Path(args.output_markdown) if args.output_markdown else output_report.with_suffix(".md")
     repo_report_dir = Path(args.repo_report_dir) if args.repo_report_dir else None
 
-    report = build_report(
-        batch_manifest_path=batch_manifest_path,
-        identity_path=identity_path,
-        final_prompt_index_path=final_prompt_index_path,
-        job_manifest_path=job_manifest_path,
-        compiler_path=Path(args.compiler),
-        expected_handheld_count=args.expected_handheld_count,
-        expected_handheld_scope=args.expected_handheld_scope,
-    )
+    if args.prompts_only:
+        report = build_prompts_only_report(
+            batch_manifest_path=batch_manifest_path,
+            final_prompt_index_path=final_prompt_index_path,
+        )
+    else:
+        report = build_report(
+            batch_manifest_path=batch_manifest_path,
+            identity_path=identity_path,
+            final_prompt_index_path=final_prompt_index_path,
+            job_manifest_path=job_manifest_path,
+            compiler_path=Path(args.compiler),
+            expected_handheld_count=args.expected_handheld_count,
+            expected_handheld_scope=args.expected_handheld_scope,
+        )
     output_report, output_markdown, repo_json_path, repo_md_path = write_report_files(
         report=report,
         output_report=output_report,
@@ -1548,6 +2222,8 @@ def main() -> int:
         "repo_report": str(repo_json_path) if repo_json_path else None,
         "repo_markdown": str(repo_md_path) if repo_md_path else None,
     }
+    if report.get("mode"):
+        summary["mode"] = report["mode"]
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     return 1 if report["render_blocked"] else 0
 

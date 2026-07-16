@@ -72,6 +72,19 @@ class QcGateRoutingTest(unittest.TestCase):
         self.assertEqual("needs_qc_reports", route["current_stage"])
         self.assertEqual("qc-inspector", route["next_required_skill"])
 
+    def test_prompts_only_integrity_report_does_not_complete_qc(self) -> None:
+        report = {
+            "artifact_type": "final_prompt_integrity_report",
+            "mode": "prompts-only",
+            "status": "pass",
+            "render_blocked": False,
+        }
+        qc_summary = summary(2, {report["artifact_type"]: 1})
+        route = route_with_qc_summary(qc_summary)
+
+        self.assertNotIn("qc_reports", route["available_artifacts"])
+        self.assertEqual("needs_qc_reports", route["current_stage"])
+
     def test_untyped_files_in_qc_folder_do_not_complete_qc(self) -> None:
         qc_summary = summary(1)
         route = route_with_qc_summary(qc_summary)
