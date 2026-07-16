@@ -53,3 +53,6 @@
 {"ts": "2026-07-16T17:48:26", "event": "step_succeeded", "step": "renders", "detail": "成功 3/计划 3（跳过 3）（331.0s）"}
 {"ts": "2026-07-16T17:49:41", "event": "step_started", "step": "renders", "command": "retry: renders"}
 {"ts": "2026-07-16T17:51:30", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 1/计划 8（跳过 6）；原因：详情图尺寸验收失败：detail_01 实际 1086x1448（3:4），不符合已批准的约 2:3"}
+{"ts": "2026-07-17T00:34:20", "event": "step_started", "step": "renders", "command": "retry: renders"}
+{"ts": "2026-07-17T00:35:46", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 7）（85.9s）"}
+{"ts": "2026-07-17T00:36:39", "event": "step_failed", "step": "renders", "detail": "图片传输成功但尺寸验收失败：detail_02 实际 1024x1536（2:3），不符合已批准的 3:4；已停止后续批次"}
