@@ -43,3 +43,5 @@
 {"ts": "2026-07-16T14:46:21", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 0/计划 1（跳过 0）；原因：图片服务返回了无法解析的响应（HTTP 403）"}
 {"ts": "2026-07-16T15:58:08", "event": "step_started", "step": "renders", "command": "run: renders"}
 {"ts": "2026-07-16T16:08:55", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 0/计划 1（跳过 0）；原因：The read operation timed out"}
+{"ts": "2026-07-16T16:57:39", "event": "step_started", "step": "renders", "command": "run: renders"}
+{"ts": "2026-07-16T16:59:30", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 0）（111.0s）"}
