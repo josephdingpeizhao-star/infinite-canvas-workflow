@@ -39,3 +39,5 @@
 {"ts": "2026-07-15T20:09:24", "event": "step_succeeded", "step": "final_prompts", "detail": "最终提示词已生成（225.9s）"}
 {"ts": "2026-07-16T14:21:33", "event": "step_started", "step": "integrity", "command": "run: integrity"}
 {"ts": "2026-07-16T14:21:33", "event": "step_succeeded", "step": "integrity", "detail": "完整性门禁通过：pass（0.2s）"}
+{"ts": "2026-07-16T14:46:18", "event": "step_started", "step": "renders", "command": "run: renders"}
+{"ts": "2026-07-16T14:46:21", "event": "step_failed", "step": "renders", "detail": "渲染中止：成功 0/计划 1（跳过 0）；原因：图片服务返回了无法解析的响应（HTTP 403）"}
