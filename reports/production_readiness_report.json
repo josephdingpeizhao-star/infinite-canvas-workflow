@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-07-12T02:33:41.399757+00:00",
+  "checked_at": "2026-07-16T02:03:31.040042+00:00",
   "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
   "directories": [
     {
@@ -461,12 +461,12 @@
     {
       "path": "reports/current_state.json",
       "exists": true,
-      "size": 38489
+      "size": 39118
     },
     {
       "path": "reports/current_state.md",
       "exists": true,
-      "size": 6402
+      "size": 5817
     }
   ],
   "previous_reports": {
