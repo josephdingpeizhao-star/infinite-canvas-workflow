@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-15（完成第 2 次 `final_prompts` 真实验收；14 份最终提示词与索引整包落盘，真实路由进入 `ready`，渲染保持冻结）。
+> 最后更新：2026-07-16（完成批次收口后的运行卫生收尾：校验加固、状态报告刷新、启动器项目直达；真实路由保持 `ready`，渲染保持冻结）。
 
 ## 1. 定位与目标
 
@@ -106,6 +106,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日用户在完整预检通过并审阅详细执行方案后明确回复“执行，代写”，授权从原项目 `hPbkNXg3WA0p2i46VOh3s` 一次且仅一次提交 `run: final_prompts`。事件账本以 37 行为基线，于 20:05:38 记录唯一 `step_started`；主图独立 thread 于 20:05:41 至 20:07:07 完成，详情独立 thread 随后于 20:07:10 至 20:09:24 完成；事件账本于 20:09:24 记录 `step_succeeded`，总耗时 225.9 秒。`artifacts\final_prompts` 排他落盘恰好 30 个文件，无子目录、隐藏项或临时项：14 份 JSON、14 份同名 Markdown 及 JSON/Markdown 两份索引；14 份 JSON 全部通过既有 `final_prompt.schema.json`，JSON 与 Markdown 逐份一致，`final_prompt_index.json` SHA-256 为 `59029077689084B2FFF09934774EAB968BAB4934A239CE67D80A5335D435F45E`。业务复核确认 `main_01` 至 `main_06` 与 `detail_01` 至 `detail_08` 全部保留对应 img 编号、A/B/C 槽位、1:1 或 3:4 比例和已确认高度约 25 厘米；仅 `main_02`、`main_05`、`detail_02` 启用手持，14 份 negative prompt 均非空，不含 D、被拒源图、未确认商品事实或 Unicode 损坏字符。每份提示词引用三份公共正式上游和本图对应变量配置，整批引用集合完整覆盖五份正式上游；变量配置源哈希及逐项解析哈希均一致，五份上游文件哈希保持阶段 A 基线不变。事件账本最终为 39 行，ComfyUI 作业、QC 报告、renders、repaired 均为 0；真实路由进入 `ready`，`next_required_skill=null`，运行台“可运行：无”，最终提示词阶段与产物节点投影为成功。临时 `codex-dev --serve` 已立即停止，真实执行开关在进程、用户和机器三个作用域均为空；本轮未执行 integrity、renders、QC 或任何第二条画布命令。
 
+2026-07-16 完成 `shuiping_20260712` 批次收口后的三项运行卫生收尾。校验器按窄范围 TDD 补齐“长/深/厚”单字紧邻已确认高度数值时的竞争维度拒绝，覆盖数值前、数值后和字段路径三种语境；“高约 25 厘米”“整壶高度约 25 厘米”、手持声明中的“整壶整体约 25 厘米”、尺寸比例锁定/已确认高度路径以及“提梁较长”“深色背景”等安全语境保持放行，宽/区间/尺寸组/其他单位既有拒绝不变，全仓由 188 项增至 192 项并全部通过，15 个 `canvas-bridge` Python 模块编译通过。状态报告以 `python scripts/workflow_doctor.py --skip-startup-cleanup` 刷新，实际 Git 变化全部位于 `reports/`；`current_state` 现与现场一致为 `ready`、下一 Skill 为空、missing=0、blocked=0，`startup_hygiene.status=pass`、`mode=report_only_no_delete`、清理动作与候选计数均为 0，渲染、ComfyUI 与缺少完整性门禁时渲染仍在禁止清单。发现 workflow_doctor.py 启动清理默认启用且含回收站删除能力，本次以 --skip-startup-cleanup 规避；默认值翻转与 AGENTS.md 补记已列为后续待办。未入 Git 的 `启动画布.bat` 仅把 Chrome 地址从项目列表页改为“无限画布 1”项目直达 URL，保持纯 CRLF；冷启动后 agent/web、直达页面与真实批次只读 `--watch` 均恢复，现场连续读取为 27 节点/32 条连接，最终提示词阶段与产物节点为成功，完整性门禁与报告节点保持 idle。六份关键正式产物哈希和 39 行事件账本复核不变，ComfyUI/QC/renders/repaired 仍为空；本次零真实 Codex/模型调用，未设置真实执行开关，未提交 `run:`/`retry:` 命令，未启动 `--serve`，未修改 manifest、schema、script、Skill、fork、正式产物或事件账本。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -136,7 +138,7 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 | 批次运行台（按批准临时启动） | 临时 cmd 窗口 | `python canvas-bridge/spike_canvas_push.py --serve <approved-manifest> --layout-path <approved-layout> --executor <approved-executor> --interval 2` |
 | 静态图片（按需） | :8801（仅图片演示需要） | `python -m http.server`（临时目录） |
 
-- **日常入口：仓库根目录 `启动画布.bat`**。双击后先确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `/canvas`，最后按窗口标题防重复启动真实批次只读投影。投影专用分支先等待页面 3 秒；若画布尚未连接或运行中断导致 `--watch` 非正常退出，则每 5 秒重试同一个固定命令，正常停止不重试。其中 `--watch` 对批次事实只读，只向画布同步投影；画布仍会显示运行台节点，但其中的 `run:` / `retry:` 命令不会被读取或执行。真正的 `--serve` 批次运行台不再随日常入口启动，只能在用户再次明确批准后按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
+- **日常入口：仓库根目录 `启动画布.bat`**。双击后先确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s`（“无限画布 1”项目直达；若更换工作画布，必须同步修改本行与启动器地址），最后按窗口标题防重复启动真实批次只读投影。投影专用分支先等待页面 3 秒；若画布尚未连接或运行中断导致 `--watch` 非正常退出，则每 5 秒重试同一个固定命令，正常停止不重试。其中 `--watch` 对批次事实只读，只向画布同步投影；画布仍会显示运行台节点，但其中的 `run:` / `retry:` 命令不会被读取或执行。真正的 `--serve` 批次运行台不再随日常入口启动，只能在用户再次明确批准后按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
 - 连接凭据：`%USERPROFILE%\.infinite-canvas\canvas-agent.json`（url + token）。**token 不随 agent 重启轮换**（文件存在即沿用）。
 - 用户（非程序员）的工作画布：Chrome 里"无限画布 1"（id hPbkNXg3WA0p2i46VOh3s，localhost:3000）；其浏览器 localStorage 已存 token，刷新自动重连。
 
