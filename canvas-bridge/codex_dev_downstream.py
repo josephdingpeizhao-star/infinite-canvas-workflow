@@ -458,6 +458,20 @@ def _is_confirmed_height_measurement(
         re.fullmatch(r"(?:(?:壶身|产品|整壶)?宽(?:度)?)", part.strip())
         for part in path
     )
+    natural_single_dimension_before = re.search(
+        r"(?:(?:壶身|产品|整壶|壶)?(?:长|深|厚))\s*[：:]?\s*"
+        r"(?:为|是)?\s*(?:约|大约|大概|近|about|approximately)?\s*$",
+        clause_prefix,
+        flags=re.IGNORECASE,
+    )
+    natural_single_dimension_after = re.match(
+        r"\s*(?:长|深|厚)(?=$|[\s的为是、:：()（）×xX*])",
+        clause_suffix,
+    )
+    natural_single_dimension_path = any(
+        re.fullmatch(r"(?:(?:壶身|产品|整壶|壶)?(?:长|深|厚))", part.strip())
+        for part in path
+    )
     competing_dimensions = (
         "宽度",
         "直径",
@@ -487,6 +501,9 @@ def _is_confirmed_height_measurement(
         natural_width_before
         or natural_width_after
         or natural_width_path
+        or natural_single_dimension_before
+        or natural_single_dimension_after
+        or natural_single_dimension_path
         or explicit_competing_dimension
     )
     return not any(

@@ -3148,6 +3148,70 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
 
                 self.assertIn("未确认参数", message)
 
+    def test_detail_vc_rejects_single_character_dimensions_before_number(self) -> None:
+        cases = ("壶长约 25 厘米", "壶身深约 25 厘米", "厚约 25 厘米")
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["中文营销文案"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-single-dimension-before-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_single_character_dimensions_after_number(self) -> None:
+        cases = ("约 25 厘米长", "约 25 厘米深", "约 25 厘米厚")
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["中文营销文案"] = value
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-single-dimension-after-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_rejects_single_character_dimensions_in_path(self) -> None:
+        cases = ("长", "深", "厚", "壶身长", "壶身深", "壶身厚")
+        for index, path_part in enumerate(cases, start=1):
+            with self.subTest(path_part=path_part):
+                response = valid_detail_variable_response()
+                response["common_constraints"]["已确认高度"] = {
+                    path_part: "约 25 厘米"
+                }
+
+                message = self._reject_detail_response(
+                    response,
+                    thread_id=f"thread-detail-single-dimension-path-{index}",
+                )
+
+                self.assertIn("未确认参数", message)
+
+    def test_detail_vc_accepts_height_and_non_measurement_single_character_words(
+        self,
+    ) -> None:
+        cases = ("高约 25 厘米", "整壶高度约 25 厘米", "提梁较长", "深色背景")
+        for index, value in enumerate(cases, start=1):
+            with self.subTest(value=value):
+                response = valid_detail_variable_response()
+                response["configs"][0]["per_image_overrides"]["中文营销文案"] = value
+
+                artifact, detail = self._run_detail_response(
+                    response,
+                    thread_id=f"thread-detail-safe-single-character-{index}",
+                )
+
+                self.assertEqual(
+                    value,
+                    artifact["configs"][0]["per_image_overrides"]["中文营销文案"],
+                )
+                self.assertEqual("详情图变量配置已生成", detail)
+
     def test_detail_vc_rejects_height_ranges_in_confirmed_height_path(self) -> None:
         for index, value in enumerate(("约 25-30 厘米", "25～30 厘米"), start=1):
             with self.subTest(value=value):
