@@ -835,7 +835,10 @@ class CodexDevFixture(unittest.TestCase):
 
 class CodexDevExecutorTest(CodexDevFixture):
     def test_registered_without_replacing_existing_executors(self) -> None:
-        self.assertEqual(("codex-dev", "demo", "openai-image"), build_registry().names())
+        self.assertEqual(
+            ("codex-dev", "demo", "image-production", "openai-image"),
+            build_registry().names(),
+        )
         executor = build_executor("codex-dev", {"product_id": "p1", "inputs": {}, "artifacts": {}})
         self.assertEqual("codex-dev", executor.name)
 

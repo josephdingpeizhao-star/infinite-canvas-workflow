@@ -10,6 +10,7 @@ from codex_dev_executor import CodexDevExecutor
 from demo_executor import DemoWorkspaceExecutor
 from executor_contract import Executor, ExecutorContext
 from executor_registry import ExecutorRegistry
+from image_production_executor import ImageProductionExecutor
 from openai_image_executor import OpenAIImageExecutor
 
 
@@ -25,6 +26,7 @@ def build_registry() -> ExecutorRegistry:
     registry = ExecutorRegistry()
     registry.register("codex-dev", CodexDevExecutor)
     registry.register("demo", _demo_factory)
+    registry.register("image-production", ImageProductionExecutor)
     registry.register("openai-image", OpenAIImageExecutor)
     return registry
 

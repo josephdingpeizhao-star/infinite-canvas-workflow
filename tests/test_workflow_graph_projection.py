@@ -201,6 +201,20 @@ class WorkflowGraphStructureTest(unittest.TestCase):
         for key, typed in SKILL_ARTIFACTS.values():
             self.assertIn(typed, detect_current_state.ARTIFACT_TYPES[key], key)
 
+    def test_image_production_metadata_is_narrow_and_topology_neutral(self) -> None:
+        by_id = {node["id"]: node for node in self.graph["nodes"]}
+        integrity = by_id["gate_final_prompt_integrity"]
+        render = by_id["stage_render"]
+
+        self.assertEqual("python", integrity["executor"])
+        self.assertEqual("scripts/validate_final_prompt_integrity.py", integrity["script"])
+        self.assertIn("image-production", integrity["notes"])
+        self.assertIn("--prompts-only", integrity["notes"])
+        self.assertEqual("python", render["executor"])
+        self.assertEqual("canvas-bridge/image_production_executor.py", render["script"])
+        self.assertIn("image-production", render["notes"])
+        self.assertIn("RENDER_ALLOW_REAL_EXECUTION", render["notes"])
+
 
 class WorkflowGraphRouteBatchConsistencyTest(unittest.TestCase):
     def simulated_skill_sequence(self, *, batch_type: str, user_declared_set_product: bool, requested) -> list[str]:

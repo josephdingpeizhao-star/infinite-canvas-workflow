@@ -100,14 +100,13 @@ class NodeRuntimeViewTest(unittest.TestCase):
         self.assertEqual("success", view["stage_product_identity"]["status"])
         self.assertTrue(view["stage_style_master"]["title"].startswith("▶ "), view["stage_style_master"]["title"])
 
-    def test_full_pipeline_with_renders_and_integrity(self) -> None:
+    def test_full_pipeline_outputs_and_integrity_with_metadata_only_render_node(self) -> None:
         produced = tuple(key for key in KEY_TYPES if key not in {"asset_manifest", "set_product_identity", "set_angle_layout_inventory"})
         batch, route = make_route(produced, white_bg=2, style_refs=1, renders=2)
         integrity = {"found": True, "path": "x", "status": "pass", "render_blocked": False}
         view = projector.node_runtime_view(GRAPH, batch, route, integrity)
         self.assertEqual("success", view["gate_final_prompt_integrity"]["status"])
-        self.assertEqual("success", view["stage_render"]["status"])
-        self.assertIn("renders: 2", view["stage_render"]["content"])
+        self.assertEqual("idle", view["stage_render"]["status"])
         self.assertEqual("success", view["stage_qc"]["status"])
         self.assertEqual("success", view["out_renders"]["status"])
 
