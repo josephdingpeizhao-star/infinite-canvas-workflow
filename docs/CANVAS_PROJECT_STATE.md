@@ -108,6 +108,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 2026-07-16 完成 `shuiping_20260712` 批次收口后的三项运行卫生收尾。校验器按窄范围 TDD 补齐“长/深/厚”单字紧邻已确认高度数值时的竞争维度拒绝，覆盖数值前、数值后和字段路径三种语境；“高约 25 厘米”“整壶高度约 25 厘米”、手持声明中的“整壶整体约 25 厘米”、尺寸比例锁定/已确认高度路径以及“提梁较长”“深色背景”等安全语境保持放行，宽/区间/尺寸组/其他单位既有拒绝不变，全仓由 188 项增至 192 项并全部通过，15 个 `canvas-bridge` Python 模块编译通过。状态报告以 `python scripts/workflow_doctor.py --skip-startup-cleanup` 刷新，实际 Git 变化全部位于 `reports/`；`current_state` 现与现场一致为 `ready`、下一 Skill 为空、missing=0、blocked=0，`startup_hygiene.status=pass`、`mode=report_only_no_delete`、清理动作与候选计数均为 0，渲染、ComfyUI 与缺少完整性门禁时渲染仍在禁止清单。发现 workflow_doctor.py 启动清理默认启用且含回收站删除能力，本次以 --skip-startup-cleanup 规避；默认值翻转与 AGENTS.md 补记已列为后续待办。未入 Git 的 `启动画布.bat` 仅把 Chrome 地址从项目列表页改为“无限画布 1”项目直达 URL，保持纯 CRLF；冷启动后 agent/web、直达页面与真实批次只读 `--watch` 均恢复，现场连续读取为 27 节点/32 条连接，最终提示词阶段与产物节点为成功，完整性门禁与报告节点保持 idle。六份关键正式产物哈希和 39 行事件账本复核不变，ComfyUI/QC/renders/repaired 仍为空；本次零真实 Codex/模型调用，未设置真实执行开关，未提交 `run:`/`retry:` 命令，未启动 `--serve`，未修改 manifest、schema、script、Skill、fork、正式产物或事件账本。
 
+同日完成上述 `workflow_doctor.py` 启动清理安全待办（代码提交 `ff622b9`）。参数解析已析出为可测试纯函数；无参数与兼容参数 `--skip-startup-cleanup` 均完全跳过清理选择、候选生成和回收站操作，只有显式 `--apply-startup-cleanup` 才会启用清理，两个参数同时出现仍报错。新增 5 项回归测试后全仓由 192 项增至 197 项并全部通过，Python 编译通过；唯一一次端到端验证使用无参数 `python scripts/workflow_doctor.py`，退出码为 0，汇总中 `applied=false`、候选数、移入回收站数和失败数均为 0，刷新后 `startup_hygiene.mode=report_only_no_delete`、清理动作与安全候选计数仍为 0。`AGENTS.md` 已补记四项校验报告与两份 `current_state` 的刷新范围、回收站无确认弹窗能力、默认关闭、显式启用参数和运行前审阅要求，并标明 `Stage Plan` 为旧流程遗留视图。六份关键正式产物、30 个最终提示词文件和 39 行事件账本保持不变，真实执行开关三个作用域均为空；全程未使用 `--apply-startup-cleanup`，零真实 Codex/模型调用，未修改 `detect_current_state.py`、`detect_current_stage.py`、manifest、schema、Skill、fork、真实工作区、正式产物或事件账本。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -174,6 +176,7 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 4. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
 5. **真实产品批次继续推进**：`shuiping_20260712` 已完成角度入库和主图变量配置；用户已决定不补拍缺失 D，并已确认后续配置与提示词范围。当前仍禁止生成图片，也不执行最终提示词之后的渲染或 QC。
 6. fork 上游同步演练（锁 tag、合并后逐条复核 FORK_NOTES.md + 跑全仓测试 + 桥接冒烟）。
+7. ✅ **已完成：`workflow_doctor` 启动清理改为显式启用**：默认运行仅刷新校验报告与 `current_state`，不生成清理候选、不移入回收站；仅显式 `--apply-startup-cleanup` 时启用清理，兼容 `--skip-startup-cleanup`。操作手册已补充删除能力、无确认弹窗与运行前审阅要求。
 
 ## 9. 维护协议（交接纪律）
 

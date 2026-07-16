@@ -42,6 +42,7 @@ Documentation-only tasks may update `AGENTS.md`, `ARCHITECTURE.md`, and files un
 - Human-readable project docs live in `AGENTS.md`, `ARCHITECTURE.md`, and `docs/`.
 - Machine-readable state lives in `reports/current_state.json`.
 - Human-readable current state lives in `reports/current_state.md`.
+- The `Stage Plan` section in `reports/current_state.md` is a legacy repository view of the old staged migration workflow. For the actual batch state, use the `Batches` section and `docs/CANVAS_PROJECT_STATE.md`.
 - Stage reports must be written as both JSON and Markdown under `reports/`.
 
 ## Self-Check Entry Points
@@ -55,7 +56,7 @@ python scripts/detect_current_stage.py
 python scripts/workflow_doctor.py
 ```
 
-`workflow_doctor.py` refreshes validation reports and rewrites `reports/current_state.json` and `reports/current_state.md`. Do not run it for a documentation-only task unless the user asks to refresh state.
+`workflow_doctor.py` runs the four validation entry points, refreshes their validation reports, and rewrites `reports/current_state.json` and `reports/current_state.md`. Startup cleanup is disabled by default. It runs only when `--apply-startup-cleanup` is supplied explicitly; candidates are selected by automatic state detection and moved to the Recycle Bin without a confirmation dialog. Before enabling cleanup, review the `startup_hygiene` / `cleanup_selection` output in the state reports. `--skip-startup-cleanup` remains accepted for compatibility and now states the default behavior. Do not run it for a documentation-only task unless the user asks to refresh state.
 
 ## Final Prompt Integrity Gate
 

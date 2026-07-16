@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-07-16T02:03:31.040042+00:00",
+  "checked_at": "2026-07-16T03:12:50.593922+00:00",
   "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
   "directories": [
     {
@@ -332,7 +332,7 @@
     {
       "path": "AGENTS.md",
       "exists": true,
-      "size": 5267
+      "size": 5949
     },
     {
       "path": "docs/ARCHITECTURE.md",
@@ -419,7 +419,7 @@
     {
       "path": "scripts/workflow_doctor.py",
       "exists": true,
-      "size": 9520
+      "size": 9611
     },
     {
       "path": "scripts/validate_production_readiness.py",
@@ -461,12 +461,12 @@
     {
       "path": "reports/current_state.json",
       "exists": true,
-      "size": 39118
+      "size": 48272
     },
     {
       "path": "reports/current_state.md",
       "exists": true,
-      "size": 5817
+      "size": 6049
     }
   ],
   "previous_reports": {

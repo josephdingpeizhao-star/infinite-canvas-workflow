@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-07-16T02:03:31.162876+00:00",
+  "checked_at": "2026-07-16T03:12:50.727532+00:00",
   "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
   "status": "ready",
   "current_stage": "ready",
@@ -11,25 +11,25 @@
       "path": "reports/workflow_architecture_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T02:03:30.137164+00:00"
+      "checked_at": "2026-07-16T03:12:49.674651+00:00"
     },
     "skill_tree_report": {
       "path": "reports/skill_tree_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T02:03:30.876374+00:00"
+      "checked_at": "2026-07-16T03:12:50.407058+00:00"
     },
     "reference_check_report": {
       "path": "reports/reference_check_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T02:03:30.984651+00:00"
+      "checked_at": "2026-07-16T03:12:50.516995+00:00"
     },
     "production_readiness_report": {
       "path": "reports/production_readiness_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T02:03:31.040042+00:00"
+      "checked_at": "2026-07-16T03:12:50.593922+00:00"
     }
   },
   "skill_tree": {
@@ -1364,7 +1364,7 @@
     "render_without_final_prompt_integrity_gate"
   ],
   "workflow_doctor": {
-    "checked_at": "2026-07-16T02:03:31.173014+00:00",
+    "checked_at": "2026-07-16T03:12:50.738127+00:00",
     "validation_runs": [
       {
         "script": "scripts/validate_workflow_architecture.py",
