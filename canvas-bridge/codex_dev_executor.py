@@ -39,6 +39,17 @@ from codex_dev_downstream import (
     write_bundle_exclusive,
     write_json_exclusive,
 )
+from codex_dev_qc import (
+    QcTransportCorruption,
+    assemble_qc_report,
+    build_qc_batch_prompt,
+    build_qc_summary_prompt,
+    load_qc_plan,
+    parse_qc_batch_response,
+    parse_qc_summary_response,
+    qc_batch_attachment_paths,
+    write_qc_report_exclusive,
+)
 from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext, ExecutorExecutionError
 
 
@@ -63,6 +74,7 @@ SUPPORTED_STEPS = frozenset(
         "main_vc",
         "detail_vc",
         "final_prompts",
+        "qc",
     }
 )
 FORBIDDEN_OUTPUT_FIELDS = {
@@ -609,7 +621,7 @@ class CodexDevExecutor:
         if request.step not in SUPPORTED_STEPS:
             raise ExecutorExecutionError(
                 "codex-dev 仅支持 identity、style_master、angle_inventory、main_vc，"
-                f"detail_vc、final_prompts，拒绝步骤：{request.step}"
+                f"detail_vc、final_prompts、qc，拒绝步骤：{request.step}"
             )
         if self.context.environment.get("CODEX_DEV_ALLOW_REAL_EXECUTION") != "1":
             raise ExecutorExecutionError("codex-dev 未获准真实执行；阶段 B 批准前保持禁用")
@@ -628,6 +640,8 @@ class CodexDevExecutor:
             return self._execute_detail_variable_config(product_id)
         if request.step == "final_prompts":
             return self._execute_final_prompts(product_id)
+        if request.step == "qc":
+            return self._execute_qc(product_id)
         return self._execute_identity(product_id)
 
     def _execute_identity(self, product_id: str) -> ExecutionResult:
@@ -1028,6 +1042,111 @@ class CodexDevExecutor:
                 "detail_thread_id": detail_turn.thread_id,
             },
         )
+
+    def _execute_qc(self, product_id: str) -> ExecutionResult:
+        plan = load_qc_plan(self.context.manifest, self.repository_root)
+        if plan.product_id != product_id:
+            raise ExecutorExecutionError("codex-dev 检测到 QC 计划与当前商品不匹配")
+
+        chunks: list[Mapping[str, Any]] = []
+        recovery_attempts = 0
+        thread_id = ""
+        for batch in plan.batches:
+            attachments = self._qc_attachments(qc_batch_attachment_paths(batch))
+            prompt = build_qc_batch_prompt(plan, batch)
+            turn = (
+                self._run_transport(prompt, attachments)
+                if batch.index == 1
+                else self._continue_transport(thread_id, prompt, attachments)
+            )
+            if batch.index == 1:
+                thread_id = turn.thread_id
+            elif turn.thread_id != thread_id:
+                raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+
+            while True:
+                try:
+                    chunk = parse_qc_batch_response(
+                        turn.text,
+                        batch,
+                        prior_chunks=tuple(chunks),
+                    )
+                    break
+                except QcTransportCorruption:
+                    if recovery_attempts >= 2:
+                        raise ExecutorExecutionError("codex-dev QC 传输恢复已达到上限") from None
+                    recovery_attempts += 1
+                    turn = self._continue_transport(
+                        thread_id,
+                        build_qc_batch_prompt(plan, batch, repair=True),
+                        (),
+                    )
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+            chunks.append(chunk)
+
+        summary_turn = self._continue_transport(
+            thread_id,
+            build_qc_summary_prompt(plan, tuple(chunks)),
+            (),
+        )
+        if summary_turn.thread_id != thread_id:
+            raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+        while True:
+            try:
+                summary = parse_qc_summary_response(
+                    summary_turn.text,
+                    plan,
+                    prior_chunks=tuple(chunks),
+                )
+                break
+            except QcTransportCorruption:
+                if recovery_attempts >= 2:
+                    raise ExecutorExecutionError("codex-dev QC 传输恢复已达到上限") from None
+                recovery_attempts += 1
+                summary_turn = self._continue_transport(
+                    thread_id,
+                    build_qc_summary_prompt(plan, tuple(chunks), repair=True),
+                    (),
+                )
+                if summary_turn.thread_id != thread_id:
+                    raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+
+        report = assemble_qc_report(plan, tuple(chunks), summary)
+        output_path = write_qc_report_exclusive(plan, report)
+        detail = "QC 报告已生成"
+        if recovery_attempts:
+            detail += f"（受控恢复 {recovery_attempts} 次）"
+        return ExecutionResult(
+            detail=detail,
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={
+                "thread_id": thread_id,
+                "batch_count": 8,
+                "recovery_attempts": recovery_attempts,
+            },
+        )
+
+    @staticmethod
+    def _qc_attachments(paths: tuple[Path, ...]) -> tuple[CodexAttachment, ...]:
+        attachments: list[CodexAttachment] = []
+        for path in paths:
+            mime_type = SUPPORTED_IMAGE_SUFFIXES.get(path.suffix.lower())
+            if mime_type is None:
+                raise ExecutorExecutionError("codex-dev 检测到 QC 附件格式无效")
+            try:
+                encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+            except OSError:
+                raise ExecutorExecutionError("codex-dev 无法读取 QC 附件") from None
+            attachments.append(
+                CodexAttachment(
+                    name=path.name,
+                    mime_type=mime_type,
+                    data_url=f"data:{mime_type};base64,{encoded}",
+                )
+            )
+        return tuple(attachments)
 
     def _run_transport(
         self,
