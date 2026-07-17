@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-17（`shuiping_20260712` 已完成一次且仅一次真实 `run: qc` 验收：事件于 12:06:06 记录 `step_started`、12:32:16 记录 `step_succeeded`，耗时 1569.9 秒；唯一 `qc_report.json` 的 SHA-256 为 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`。报告按序覆盖 14 张图和 175 条固定检查，`jsonschema` 校验通过；共有 19 个 issues（0 critical、0 major、2 minor、17 needs_review）和 19 个 repair_targets。事件现为 72 行，真实路由为 `ready`；14 张正式图字节数与六份上游指纹均未改变，真实执行开关和临时运行服务已清除，画布 QC 阶段、产物、运行台和日志已投影成功。本轮未重试，未执行 ComfyUI 或 repaired；返修路线待用户另行决定）。
+> 最后更新：2026-07-17（`shuiping_20260712` 已于 2026-07-17 14:25:49 +08:00 完成用户人工终审：用户原话“19 条全部裁定为人工复核后可接受，批次终审通过，正式关账。”QC 报告的 19 个 issues 已全部裁定为人工复核后可接受，其中唯一 `fail` 检查 `main_03.png` 清水液面真实感及其对应 minor 问题均由用户人工接受；其余 1 个 minor 与 17 个 needs_review 同样接受。批次最终交付物为 14 张正式 PNG 与唯一 `qc_report.json`（SHA-256 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`），真实路由为 `ready`，本批次不返修并正式关账。QC 报告原样保留作为审计记录；任何将来的图片追加、覆盖或重生成均须重新单独批准）。
 
 ## 1. 定位与目标
 
@@ -48,7 +48,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | 3 | 受控编辑（wfedit 节点，三段门禁，--apply-edits） | ✅ | 28788bb | 2026-07-11 晚现场四步验收（含 banana 拒绝、210 字符长 notes 回读无截断） |
 | 4 | 执行接入（wfrun 运行台 + 事件日志 + --serve 常驻） | ✅ | 6f4e361 | 2026-07-11 深夜现场：9 步全链路画布触发跑通、门禁拒绝、retry；66/66 测试绿 |
 | 4b | 生产图片执行链（prompts-only 门禁 + 索引组装 + image-production） | ✅ 真实出图完成，QC 已验收 | 5f98b35、6f9ffcb | 238/238 测试；真实门禁 pass；14 张正式图完整，QC 后字节数复核不变 |
-| 4c | `codex-dev / qc`（7 个两图批次 + 全批总结） | ✅ 离线 TDD 与真实 QC 均完成 | 634c58f | 260/260 测试；真实报告 175 条、19 issues、19 repair_targets；事件 72 行，路由 `ready` |
+| 4c | `codex-dev / qc`（7 个两图批次 + 全批总结） | ✅ 离线 TDD 与真实 QC 均完成；人工终审通过，批次关账 | 634c58f | 260/260 测试；真实报告 175 条、19 issues、19 repair_targets；事件 72 行，路由 `ready` |
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
@@ -132,6 +132,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日随后完成真实 QC 独立闸门。阶段 A 从 `HEAD 51a5000` 只读复核 260 项测试、70 行事件、`needs_qc_reports` 路由、14 张成图名称/字节数、两份完整性报告、六份正式上游 SHA-256、14 资产/7 批/3 张手持计划、三作用域执行开关、唯一只读 `--watch` 及画布连接，全部通过；用户于 12:03:03 明确回复“执行，代写”。用户关闭只读投影后，临时 `codex-dev --serve` 只在自身进程设置 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`，并从原项目运行台一次且仅一次代写 `run: qc`。事件于 12:06:06 记录 `step_started`，同一专用 thread 完成 7 个两图批次和第 8 段无附件总结，于 12:32:16 记录 `step_succeeded`，总耗时 1569.9 秒；未发生受控传输恢复、重试或第二条画布命令。正式 `qc_report.json` 为 56,371 bytes，SHA-256 为 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`，无 U+FFFD 或禁止字段，按序覆盖 14 张图；12 个固定项 × 14、3 个手持项和 4 个全批总结项合计恰好 175 条且无重复，`jsonschema` 校验通过。结果为 156 pass、18 needs_review、1 fail，共 19 个 issues（0 critical、0 major、2 minor、17 needs_review）与 19 个逐一引用有效 issue 的 repair_targets；报告固定 `adds_new_generation_direction=false`。两份完整性报告仍为 5,136 / 3,258 bytes，14 张图字节数与六份上游指纹全部不变；事件由 70 增至 72，路由收敛为 `ready`、missing/blocked 均为空。QC 阶段、报告产物、运行台和日志节点已投影成功；临时终端停止后发现唯一 Python `--serve` 子进程仍残留，按本轮完整命令行唯一识别后精确停止，最终 `WATCH_COUNT=0`、`SERVE_COUNT=0`，三个作用域的真实执行开关和 API key 均为空。`workflow_doctor.py` 以默认 `report_only_no_delete` 模式刷新状态与校验报告，无清理候选或删除动作。本轮未修改代码、schema、Skill、批次 manifest 内容、fork、成图、提示词或两份既有完整性报告，未执行 ComfyUI 或 repaired；QC 指出的返修路线待用户另行决定。
 
+2026-07-17 完成 `shuiping_20260712` 人工终审结案。用户于 2026-07-17 14:25:49 +08:00 明确裁定：“19 条全部裁定为人工复核后可接受，批次终审通过，正式关账。”QC 报告的 19 个 issues 全部处置为“人工复核后可接受”：2 个 minor（`main_03.png` 清水液面真实感，对应全报告唯一 `fail` 检查；`detail_03.png` 清水液面真实感）和 17 个 needs_review 均由用户接受，不进入任何 repair_target 或返修阶段。批次最终交付物为 `outputs\renders` 中 14 张正式 PNG，以及原样保留作为审计记录的唯一 `qc_report.json`；该报告 SHA-256 为 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`。真实路由保持 `ready`，本批次不返修并正式关账；任何将来的图片追加、覆盖或重生成均须重新单独批准。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -192,13 +194,14 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 ## 8. 后续路线图（候选，未排期）
 
-1. **②b 14 张正式成图与真实 QC 已经完成**：`main_01` 至 `main_06` 六张主图均为有效 `1254x1254` PNG；`detail_01` 至 `detail_08` 八张详情图均为有效且精确 3:4 的 PNG。真实 QC 后事件为 72 行，正式目录仍恰好 14 个文件且字节数不变，唯一 `qc_report.json` 已通过 175 条覆盖与 schema 校验，真实路由为 `ready`。
+1. **②b 14 张正式成图与真实 QC 已经完成**：`main_01` 至 `main_06` 六张主图均为有效 `1254x1254` PNG；`detail_01` 至 `detail_08` 八张详情图均为有效且精确 3:4 的 PNG。真实 QC 后事件为 72 行，正式目录仍恰好 14 个文件且字节数不变，唯一 `qc_report.json` 已通过 175 条覆盖与 schema 校验，真实路由为 `ready`。人工终审已于 2026-07-17 通过，批次关账。
 2. **②b 详情图比例决策已经闭环**：继续保留现有 `1024x1536` 请求映射，不裁剪、不缩放、不拉伸主体。供应端原图已是 3:4 时保持原文件；返回其他竖版比例时先保存供应端原图，再只扩展不足方向的柔和虚化背景。当前实际扩展的是 `detail_02` 与 `detail_05`，两张原图均保存在外部工作区 `artifacts/audit/render_originals`，中央原图区域逐像素一致。
-3. **下一闸门是返修路线决策，当前继续冻结**：真实 QC 报告含 2 个 minor、17 个 needs_review 和 19 个 repair_targets，无 critical 或 major。不得提交 `retry: qc`、`run: renders`/`retry: renders`，不得追加或重生成图片，也不得执行 ComfyUI 或 repaired；manifest、schema、Skill、fork、提示词、尺寸映射和正式上游产物均保持不变。是否人工复核、返修哪些图片及采用哪一返回阶段，待用户另行决定并批准。
+3. **返修路线已裁定为“人工终审接受、不返修”，本批次关账**：真实 QC 报告的 2 个 minor、17 个 needs_review 和 19 个 repair_targets 已由用户完成终审，唯一 `fail` 检查 `main_03.png` 清水液面真实感也已人工接受；本批次不执行任何返修目标。不得提交 `retry: qc`、`run: renders` / `retry: renders`，不得追加、覆盖或重生成图片，也不得执行 ComfyUI 或 repaired；manifest、schema、Skill、fork、提示词、尺寸映射和正式上游产物均保持不变。重生成冻结长期有效，解除须新批准。
 4. **模型 API 执行器**：为 identity/style/angle/vc 等非生图步骤及未来中央化 QC 增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。现有 `codex-dev / qc` 只作为可选开发适配器，不改变中央后台方向。
 5. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
 6. fork 上游同步演练（锁 tag、合并后逐条复核 FORK_NOTES.md + 跑全仓测试 + 桥接冒烟）。
 7. ✅ **已完成：`workflow_doctor` 启动清理改为显式启用**：默认运行仅刷新校验报告与 `current_state`，不生成清理候选、不移入回收站；仅显式 `--apply-startup-cleanup` 时启用清理，兼容 `--skip-startup-cleanup`。操作手册已补充删除能力、无确认弹窗与运行前审阅要求。
+8. **第二批次关键参数前置确认**：第二批次开批前由用户确认产品尺寸等关键参数；本批 needs_review 中约 5 条尺寸参照类问题的根因，是本批仅确认了高度约 25 厘米。
 
 ## 9. 维护协议（交接纪律）
 

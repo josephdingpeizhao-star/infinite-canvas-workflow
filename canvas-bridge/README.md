@@ -79,4 +79,4 @@ python canvas-bridge/make_demo_workspace.py --reset
 
 ## 状态
 
-阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 和 `qc` 均已完成 `shuiping_20260712` 真实验收。正式目录包含 14 份最终提示词 JSON、14 份同名 Markdown 和两份索引；生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识、可配置无数据等待上限与真实断点续跑，当前全仓 260 项测试通过。正式 renders 恰好 14 张：六张正方形主图、八张精确 3:4 详情图；真实 QC 报告按序覆盖 14 张与 175 条检查，事件 72 行，路由 `ready`。ComfyUI 作业与 repaired 均为 0；19 个 issues 与 19 个 repair_targets 的后续处置待用户另行决定。
+阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 和 `qc` 均已完成 `shuiping_20260712` 真实验收。正式目录包含 14 份最终提示词 JSON、14 份同名 Markdown 和两份索引；生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识、可配置无数据等待上限与真实断点续跑，当前全仓 260 项测试通过。正式 renders 恰好 14 张：六张正方形主图、八张精确 3:4 详情图；真实 QC 报告按序覆盖 14 张与 175 条检查，事件 72 行，路由 `ready`。ComfyUI 作业与 repaired 均为 0；19 个 issues 与 19 个 repair_targets 的后续处置待用户另行决定。真实 QC 与用户人工终审均已完成，19 条问题已按用户裁定处置，批次正式关账，路由保持 `ready`；QC 报告作为审计记录原样保留，任何图片追加、覆盖或重生成仍须另行批准。
