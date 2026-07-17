@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>批次已关账 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}main{width:min(940px,calc(100% - 36px));margin:0 auto;padding:42px 0 64px}.hero{background:var(--success-soft);border-radius:16px;padding:28px}.success{display:flex;align-items:center;gap:12px;color:oklch(.32 .09 150);font-weight:800}.icon{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--success);color:var(--bg);font-size:1.2rem}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:14px 0 8px}.hero p{margin:0;color:oklch(.34 .06 150);max-width:68ch}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-top:24px}.panel{border:1px solid var(--line);border-radius:14px;padding:21px}.panel h2{font-size:1.15rem;margin:0 0 12px}.row{display:flex;justify-content:space-between;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row span{color:var(--muted)}.path{background:var(--surface);border-radius:10px;padding:12px;font-family:ui-monospace,"Cascadia Code",monospace;font-size:13px;overflow-wrap:anywhere}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font:inherit;font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn:hover{filter:brightness(.96)}.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.audit{margin-top:18px;padding:17px;background:var(--surface);border-radius:12px;color:var(--muted)}.footer{margin-top:30px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between}@media(max-width:720px){.grid{grid-template-columns:1fr}.footer{flex-direction:column}.btn{flex:1}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+    @media(max-width:720px){.actions{flex-direction:column}.btn{width:100%;flex:auto}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span style="font-size:13px;color:var(--muted)">演示环境</span></header>
+  <main>
+    <section class="hero"><div class="success"><span class="icon" aria-hidden="true">✓</span>批次已完成并关账</div><h1>晨雾保温杯可以交付了</h1><p>14 张正式图片和 1 份 QC 报告已经齐全；19 条问题均完成人工裁定。本批次不返修，后续如需重新生成必须重新确认。</p></section>
+    <div class="grid">
+      <section class="panel" data-contract="C47" aria-labelledby="delivery-title"><h2 id="delivery-title">最终交付物</h2><div class="row"><strong>主图</strong><span>6 张 PNG</span></div><div class="row"><strong>详情图</strong><span>8 张 PNG</span></div><div class="row"><strong>QC 报告</strong><span>1 份</span></div><div class="row"><strong>人工终审</strong><span>已通过</span></div></section>
+      <section class="panel" aria-labelledby="place-title"><h2 id="place-title">保存位置</h2><p style="margin:0 0 10px;color:var(--muted)">正式图片和 QC 报告分别保存在本批次的交付目录中。</p><div class="path">演示工作区 / 输出 / 正式图片<br>演示工作区 / 质检 / QC 报告</div><div class="actions"><button class="btn" type="button" data-contract="C44">打开保存位置</button><button class="btn primary" type="button" data-contract="C45">下载全部交付物</button></div></section>
+    </div>
+    <div class="audit">QC 原报告保持不变，人工裁定作为独立终审记录保存。下载包只应包含 14 张正式图片和 1 份 QC 报告。</div>
+    <div class="actions"><a class="btn" data-contract="C02" href="s1_batch_list.html">返回批次列表</a><a class="btn" data-contract="C01" href="index.html">返回原型导航</a></div>
+    <div class="footer"><span>关账时间：今天 16:18</span><span>演示数据 · 不连接后台</span></div>
+  </main>
+</body>
+</html>

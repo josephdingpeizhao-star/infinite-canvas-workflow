@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>图片生成未完成 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--danger:oklch(.53 .17 25);--danger-soft:oklch(.95 .04 25);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}.env{font-size:13px;font-weight:700;background:var(--danger-soft);color:var(--danger);padding:5px 10px;border-radius:999px}main{width:min(820px,calc(100% - 36px));margin:0 auto;padding:42px 0 64px}.fail-mark{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:var(--danger-soft);color:var(--danger);font-size:1.5rem;font-weight:900}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:14px 0 8px}.lede{margin:0;color:var(--muted)}.notice{margin:25px 0;padding:20px;background:var(--danger-soft);border-radius:12px}.notice strong{display:block;color:var(--danger);font-size:1.05rem;margin-bottom:4px}.kept{border:1px solid var(--line);border-radius:14px;padding:20px}.kept h2{font-size:1.15rem;margin:0 0 12px}.row{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--line)}.row:last-child{border-bottom:0}.row span{color:var(--muted)}.actions{display:flex;gap:10px;margin-top:24px}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn:hover{filter:brightness(.96)}.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.rule{margin-top:18px;color:var(--muted);font-size:14px}.footer{margin-top:30px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between}@media(max-width:600px){.actions,.footer{flex-direction:column}.btn{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span class="env">演示环境</span></header>
+  <main>
+    <div class="fail-mark" aria-hidden="true">!</div><h1>图片生成没有完成</h1><p class="lede">系统已安全停止，没有自动重试。你可以先查看原因，再决定是否重新确认执行。</p>
+    <div class="notice" role="alert"><strong>图片服务暂时没有返回可用结果</strong>这通常不是资料错误。请稍后重试；如果连续发生，请联系管理员。</div>
+    <section class="kept" aria-labelledby="kept-title"><h2 id="kept-title">已有结果已经保留</h2><div class="row"><strong>已成功保存</strong><span>4 / 14 张</span></div><div class="row"><strong>失败位置</strong><span>主图 05</span></div><div class="row"><strong>未开始</strong><span>其余 9 张</span></div><div class="row"><strong>自动重试</strong><span>没有发生</span></div></section>
+    <p class="rule">重新执行也必须经过同一套预检和确认，不会在本页直接开始。</p>
+    <div class="actions"><a class="btn" data-contract="C03" href="s3_batch_overview.html">返回批次总览</a><a class="btn primary" data-contract="C36" href="s8_failure_help.html">查看原因与下一步</a></div>
+    <div class="footer"><span>生成状态：失败后安全停止</span><span>演示数据 · 不连接后台</span></div>
+  </main>
+</body>
+</html>

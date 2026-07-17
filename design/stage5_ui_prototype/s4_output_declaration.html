@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>产出声明 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--primary-soft:oklch(.94 .035 250);--warning:oklch(.64 .14 80);--warning-soft:oklch(.96 .04 80);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}.env{font-size:13px;font-weight:700;background:var(--warning-soft);color:oklch(.38 .10 80);padding:5px 10px;border-radius:999px}main{width:min(860px,calc(100% - 36px));margin:0 auto;padding:36px 0 64px}.crumb{font-size:13px;color:var(--muted);margin-bottom:8px}.crumb a{color:inherit;text-decoration:none}.crumb a:hover{text-decoration:underline}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:0}h2{font-size:1.15rem;margin:0}.lede{color:var(--muted);margin:8px 0 28px;max-width:70ch}.notice{padding:15px 17px;border-radius:12px;background:var(--primary-soft);color:oklch(.32 .07 250);margin-bottom:22px}.options{border-top:1px solid var(--line)}.option{position:relative;display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:14px;align-items:center;padding:19px 4px;border-bottom:1px solid var(--line)}.option input{width:20px;height:20px;accent-color:var(--primary)}.option label{font-weight:800;cursor:pointer}.option p{margin:3px 0 0;color:var(--muted)}.count{font-weight:750;background:var(--surface);padding:5px 9px;border-radius:999px;font-size:13px}.notes{padding:26px 0}.notes h2{margin-bottom:6px}.notes p{margin:0 0 12px;color:var(--muted)}textarea{width:100%;min-height:110px;resize:vertical;border:1px solid var(--line);border-radius:10px;padding:11px;background:var(--bg);font:inherit;color:var(--ink)}input:focus-visible,textarea:focus-visible,.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.actions{border-top:1px solid var(--line);padding-top:24px;display:flex;justify-content:space-between;gap:12px}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font:inherit;font-weight:750;text-decoration:none;color:inherit;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.btn:hover{background:var(--surface)}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn.primary:hover{background:var(--primary-strong)}.footer{text-align:center;margin-top:30px;color:var(--muted);font-size:13px}@media(max-width:620px){.option{grid-template-columns:28px 1fr}.count{grid-column:2;justify-self:start}.actions{flex-direction:column}.btn{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span class="env">演示环境</span></header>
+  <main>
+    <div class="crumb"><a data-contract="C03" href="s3_batch_overview.html">晨雾保温杯</a> / 产出内容</div>
+    <h1>这次需要交付什么？</h1><p class="lede">只选择本批次真正需要的产出。取消某项会停止对应的后续阶段，但不会删除已经存在的文件。</p>
+    <div class="notice" role="note">当前建议保留全部四项，才能完整走完“建批到关账”的演示旅程。</div>
+    <form action="s3_batch_overview.html" method="get">
+      <div class="options">
+        <div class="option"><input id="main-images" data-contract="C24" type="checkbox" name="output" value="main" checked><div><label for="main-images">主图</label><p>用于商品列表和第一视觉，共计划 6 张。</p></div><span class="count">6 张</span></div>
+        <div class="option"><input id="detail-images" data-contract="C25" type="checkbox" name="output" value="detail" checked><div><label for="detail-images">详情图</label><p>覆盖卖点、结构、尺寸和场景，共计划 8 张。</p></div><span class="count">8 张</span></div>
+        <div class="option"><input id="final-instructions" data-contract="C26" type="checkbox" name="output" value="instructions" checked><div><label for="final-instructions">最终制作说明</label><p>每张图片一份可追溯的制作说明。</p></div><span class="count">14 份</span></div>
+        <div class="option"><input id="qc-report" data-contract="C27" type="checkbox" name="output" value="qc" checked><div><label for="qc-report">机器质检报告</label><p>图片生成后逐张检查，并交给人工终审。</p></div><span class="count">1 份</span></div>
+      </div>
+      <section class="notes"><h2>批次备注</h2><p>只写已经确认且需要贯穿本批次的补充说明。</p><label for="notes" style="position:absolute;left:-999px">批次备注</label><textarea id="notes" data-contract="C28" name="notes">演示批次。只使用已确认高度 24 厘米；不补写容量、材质、重量、认证、品牌或型号。</textarea></section>
+      <div class="actions"><a class="btn" data-contract="C03" href="s3_batch_overview.html">取消并返回</a><button class="btn primary" data-contract="C29" type="submit">保存产出内容</button></div>
+    </form>
+    <div class="footer">演示数据 · 保存按钮不连接后台</div>
+  </main>
+</body>
+</html>

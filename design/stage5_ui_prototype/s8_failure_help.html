@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>失败与求助 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--danger:oklch(.53 .17 25);--danger-soft:oklch(.95 .04 25);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}main{width:min(820px,calc(100% - 36px));margin:0 auto;padding:38px 0 64px}.crumb{font-size:13px;color:var(--muted);margin-bottom:8px}.crumb a{text-decoration:none}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:0}.lede{color:var(--muted);margin:8px 0 24px}.alert{padding:20px;background:var(--danger-soft);border-radius:12px}.alert strong{display:block;color:var(--danger);font-size:1.08rem;margin-bottom:5px}.steps{margin:26px 0;border-top:1px solid var(--line)}.step{display:grid;grid-template-columns:32px 1fr;gap:12px;padding:16px 0;border-bottom:1px solid var(--line)}.num{width:28px;height:28px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font-weight:800}.step p{margin:3px 0 0;color:var(--muted)}details{border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:12px}summary{cursor:pointer;font-weight:800;color:var(--primary-strong)}details p,details ul{color:var(--muted)}code{font-family:ui-monospace,"Cascadia Code",monospace;background:var(--surface-2);padding:2px 5px;border-radius:5px}.actions{display:flex;justify-content:space-between;gap:10px;margin-top:24px}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn:hover{filter:brightness(.96)}.btn:focus-visible,summary:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.footer{text-align:center;margin-top:30px;color:var(--muted);font-size:13px}@media(max-width:600px){.actions{flex-direction:column}.btn{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span style="font-size:13px;color:var(--muted)">演示环境</span></header>
+  <main>
+    <div class="crumb"><a data-contract="C03" href="s3_batch_overview.html">晨雾保温杯</a> / 失败与求助</div><h1>先保留结果，再决定是否重试</h1><p class="lede">这次失败没有改坏已有图片，也没有自动发起新的费用请求。</p>
+    <div class="alert" role="alert"><strong>图片服务暂时没有返回可用结果</strong>系统在主图 05 处停止。前 4 张已安全保存，其余图片尚未开始。</div>
+    <section class="steps" aria-label="建议处理步骤"><div class="step"><span class="num">1</span><div><strong>先等待几分钟</strong><p>短暂的服务拥堵通常不需要修改产品资料。</p></div></div><div class="step"><span class="num">2</span><div><strong>重新查看预检与费用</strong><p>重试仍要经过同款确认卡，不会在失败页直接开始。</p></div></div><div class="step"><span class="num">3</span><div><strong>连续失败时联系管理员</strong><p>提供批次编号和失败时间，不要发送密钥或完整制作说明。</p></div></div></section>
+    <details data-contract="C42"><summary>查看联系管理员时需要提供什么</summary><ul><li>批次：晨雾保温杯（demo_thermos_20260717）</li><li>失败时间：今天 15:50</li><li>失败位置：主图 05</li><li>已有结果：4 张图片已保存</li></ul></details>
+    <details data-contract="C41"><summary>查看技术详情</summary><p>事件：<code>step_failed</code><br>步骤：<code>renders</code><br>脱敏说明：图片服务未返回可用结果。原始响应、密钥和完整制作说明均未显示。</p></details>
+    <div class="actions"><a class="btn" data-contract="C03" href="s3_batch_overview.html">暂不重试，返回总览</a><a class="btn primary" data-contract="C43" href="s5_execution_confirm.html?mode=retry">准备受控重试</a></div>
+    <div class="footer">演示数据 · 本页没有自动重试按钮</div>
+  </main>
+</body>
+</html>

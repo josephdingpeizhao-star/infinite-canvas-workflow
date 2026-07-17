@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>新建演示批次 · 图像生产台演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--primary-soft:oklch(.94 .035 250);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--danger:oklch(.53 .17 25);--danger-soft:oklch(.95 .04 25);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}.env{font-size:13px;font-weight:700;background:var(--primary-soft);color:var(--primary-strong);padding:5px 10px;border-radius:999px}main{width:min(920px,calc(100% - 36px));margin:0 auto;padding:36px 0 64px}.crumb{font-size:13px;color:var(--muted);margin-bottom:8px}.crumb a{text-decoration:none}.crumb a:hover{text-decoration:underline}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:0}h2{font-size:1.15rem;margin:0 0 4px}.lede{color:var(--muted);margin:8px 0 26px;max-width:70ch}.progress{display:flex;align-items:center;gap:10px;margin-bottom:24px;color:var(--muted);font-size:14px}.progress strong{color:var(--ink)}.bar{height:6px;flex:1;background:var(--surface-2);border-radius:999px;overflow:hidden}.bar span{display:block;width:50%;height:100%;background:var(--primary)}.section{border-top:1px solid var(--line);padding:24px 0}.section-head{display:flex;justify-content:space-between;gap:18px;margin-bottom:18px}.section-head p{margin:0;color:var(--muted);max-width:54ch}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.field{display:flex;flex-direction:column;gap:7px}.field.full{grid-column:1/-1}label,legend{font-weight:750}.hint{font-size:13px;color:var(--muted)}input,select,textarea{width:100%;min-height:44px;border:1px solid var(--line);border-radius:10px;padding:9px 11px;background:var(--bg);color:var(--ink);font:inherit}input[type=file]{padding:8px}input:focus-visible,select:focus-visible,textarea:focus-visible,.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px;border-color:var(--primary)}input:invalid:not(:placeholder-shown){border-color:var(--danger);background:var(--danger-soft)}fieldset{border:0;padding:0;margin:0}.choice-row{display:flex;gap:8px;flex-wrap:wrap}.choice{position:relative}.choice input{position:absolute;opacity:0;width:1px;height:1px}.choice label{display:inline-flex;min-height:42px;align-items:center;padding:8px 14px;border:1px solid var(--line);border-radius:10px;cursor:pointer}.choice input:checked+label{border-color:var(--primary);background:var(--primary-soft);color:var(--primary-strong)}.choice input:focus-visible+label{outline:3px solid var(--focus);outline-offset:2px}.fixed{display:flex;align-items:center;gap:10px}.fixed input{max-width:110px;background:var(--surface)}.notice{margin-top:18px;padding:14px 16px;background:var(--success-soft);border-radius:12px;color:oklch(.31 .09 150)}.actions{display:flex;justify-content:space-between;gap:12px;align-items:center;padding-top:26px;border-top:1px solid var(--line)}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font:inherit;font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}.btn:hover{background:var(--surface)}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn.primary:hover{background:var(--primary-strong)}.footer{text-align:center;margin-top:30px;color:var(--muted);font-size:13px}@media(max-width:680px){.grid{grid-template-columns:1fr}.field.full{grid-column:auto}.section-head,.actions{flex-direction:column;align-items:flex-start}.actions .btn{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span class="env">演示环境</span></header>
+  <main>
+    <div class="crumb"><a data-contract="C02" href="s1_batch_list.html">批次列表</a> / 新建演示批次</div>
+    <h1>先把已确认的信息说清楚</h1>
+    <p class="lede">这些信息会约束后续所有图片。没有确认的容量、材质、重量、认证、品牌和型号，不会被系统自行补充。</p>
+    <div class="progress" aria-label="新建进度"><strong>第 1 步，共 2 步</strong><div class="bar" aria-hidden="true"><span></span></div><span>信息与资料</span></div>
+    <form action="s3_batch_overview.html" method="get">
+      <section class="section" aria-labelledby="basic-title"><div class="section-head"><div><h2 id="basic-title">产品与批次</h2><p>先确定这个批次是谁，以及已经确认的基础信息。</p></div></div>
+        <div class="grid">
+          <div class="field"><label for="product-id">产品编号</label><input id="product-id" name="product-id" data-contract="C08" value="demo_thermos_20260717" required pattern="[A-Za-z0-9_-]+" aria-describedby="id-hint"><span class="hint" id="id-hint">只能使用字母、数字、下划线或短横线；创建后不会覆盖同名批次。</span></div>
+          <div class="field"><label for="product-type">商品品类</label><input id="product-type" name="product-type" data-contract="C09" value="保温杯" required><span class="hint">填写你已经确认的商品类别。</span></div>
+          <div class="field"><label for="height">已确认高度（厘米）</label><input id="height" name="height" data-contract="C10" type="number" min="1" step="1" value="24" required><span class="hint">必须是大于 0 的整数。</span></div>
+          <div class="field"><label>手持图片安排</label><div class="fixed"><input data-contract="C11" aria-label="主图手持数量" value="2" readonly><span>张主图</span><input data-contract="C12" aria-label="详情图手持数量" value="1" readonly><span>张详情图</span></div><span class="hint">固定为 2 + 1，不在本向导中更改。</span></div>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="rules-title"><div class="section-head"><div><h2 id="rules-title">画面边界确认</h2><p>每一项都必须明确选择，避免后续图片表达超出真实信息。</p></div></div>
+        <div class="grid">
+          <fieldset class="field"><legend>是否允许出现清水？</legend><div class="choice-row"><span class="choice"><input id="water-yes" data-contract="C13" type="radio" name="water" value="yes" checked required><label for="water-yes">允许</label></span><span class="choice"><input id="water-no" data-contract="C13" type="radio" name="water" value="no"><label for="water-no">不允许</label></span></div><span class="hint">不允许时，只能表现空置状态。</span></fieldset>
+          <fieldset class="field"><legend>是否禁止倾倒与加热画面？</legend><div class="choice-row"><span class="choice"><input id="action-yes" data-contract="C14" type="radio" name="actions" value="yes" checked required><label for="action-yes">禁止</label></span><span class="choice"><input id="action-no" data-contract="C14" type="radio" name="actions" value="no"><label for="action-no">不额外禁止</label></span></div><span class="hint">“不额外禁止”也不代表主动授权这些动作。</span></fieldset>
+          <fieldset class="field full"><legend>D 角度缺失时，是否确认不补拍？</legend><div class="choice-row"><span class="choice"><input id="retake-yes" data-contract="C15" type="radio" name="retake" value="yes" checked required><label for="retake-yes">确认不补拍</label></span><span class="choice"><input id="retake-no" data-contract="C15" type="radio" name="retake" value="no"><label for="retake-no">需要补拍</label></span></div><span class="hint">选择“需要补拍”时，后续制作会在使用图片前停下。</span></fieldset>
+        </div>
+      </section>
+
+      <section class="section" aria-labelledby="files-title"><div class="section-head"><div><h2 id="files-title">准备图片资料</h2><p>这里只演示选择控件，不上传、不复制，也不会读取图片内容。</p></div></div>
+        <div class="grid">
+          <div class="field"><label for="white-bg">白底图文件夹</label><input id="white-bg" data-contract="C16" type="file" accept="image/*" multiple webkitdirectory directory aria-describedby="white-hint"><span class="hint" id="white-hint">建议按正面、侧面、顶部等角度准备清晰图片。</span></div>
+          <div class="field"><label for="style-ref">风格参考图</label><input id="style-ref" data-contract="C17" type="file" accept="image/*"><span class="hint">选择一张最能代表目标氛围的参考图。</span></div>
+        </div>
+        <div class="notice" role="status">示例信息已填写完整，可以进入批次总览。</div>
+      </section>
+      <div class="actions"><a class="btn" data-contract="C02" href="s1_batch_list.html">返回批次列表</a><button class="btn primary" data-contract="C18" type="submit">检查并查看总览</button></div>
+    </form>
+    <div class="footer">演示数据 · 页面不会保存或上传任何内容</div>
+  </main>
+</body>
+</html>

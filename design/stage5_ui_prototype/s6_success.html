@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>图片生成完成 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}.env{font-size:13px;font-weight:700;background:var(--success-soft);color:oklch(.32 .09 150);padding:5px 10px;border-radius:999px}main{width:min(900px,calc(100% - 36px));margin:0 auto;padding:42px 0 64px}.success-mark{width:52px;height:52px;border-radius:50%;display:grid;place-items:center;background:var(--success-soft);color:var(--success);font-size:1.6rem;font-weight:900}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:14px 0 8px}.lede{margin:0;color:var(--muted);max-width:68ch}.summary{display:flex;gap:1px;background:var(--line);border-radius:14px;overflow:hidden;margin:28px 0}.summary div{flex:1;padding:17px;background:var(--surface)}.summary strong{display:block}.summary span{color:var(--muted);font-size:13px}.panel{border:1px solid var(--line);border-radius:14px;padding:21px}.panel h2{font-size:1.15rem;margin:0 0 12px}.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px}.file{padding:10px 12px;background:var(--surface);border-radius:9px;font-weight:650;font-size:14px}.next{margin-top:20px;padding:19px;background:var(--success-soft);border-radius:12px;display:flex;justify-content:space-between;align-items:center;gap:18px}.next p{margin:3px 0 0;color:oklch(.34 .06 150)}.btn{min-height:42px;padding:8px 15px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;white-space:nowrap}.btn.primary{background:var(--primary);border-color:var(--primary);color:var(--bg)}.btn:hover{filter:brightness(.96)}.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.back{margin-top:22px}.footer{margin-top:30px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between}@media(max-width:620px){.summary,.next,.footer{flex-direction:column;align-items:flex-start}.btn{width:100%}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span class="env">演示环境</span></header>
+  <main>
+    <div class="success-mark" aria-hidden="true">✓</div><h1>14 张图片已经生成完成</h1><p class="lede">所有图片都已保存，没有覆盖既有文件。下一步是机器质检，质检完成后仍需你进行人工终审。</p>
+    <section class="summary" aria-label="成功摘要"><div><strong>6 张主图</strong><span>全部完成</span></div><div><strong>8 张详情图</strong><span>全部完成</span></div><div><strong>本次失败</strong><span>0 张</span></div></section>
+    <section class="panel" data-contract="C47" aria-labelledby="files-title"><h2 id="files-title">已保存文件</h2><div class="files"><span class="file">主图 01–06</span><span class="file">详情图 01–04</span><span class="file">详情图 05–08</span><span class="file">共 14 个图片文件</span></div></section>
+    <section class="next"><div><strong>下一步：查看机器质检结果</strong><p>质检将逐张标出通过、待复核或不合格项目。</p></div><a class="btn primary" data-contract="C35" href="s7_qc_review.html">查看 QC 结果</a></section>
+    <div class="back"><a class="btn" data-contract="C03" href="s3_batch_overview.html">返回批次总览</a></div>
+    <div class="footer"><span>生成状态：成功</span><span>演示数据 · 不连接后台</span></div>
+  </main>
+</body>
+</html>

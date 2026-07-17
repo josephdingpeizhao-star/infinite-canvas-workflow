@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>质检与人工终审 · 晨雾保温杯演示</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--primary-soft:oklch(.94 .035 250);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--review:oklch(.55 .12 300);--review-soft:oklch(.95 .03 300);--danger:oklch(.53 .17 25);--danger-soft:oklch(.95 .04 25);--warning:oklch(.64 .14 80);--warning-soft:oklch(.96 .04 80);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.top{height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 24px;position:sticky;top:0;background:var(--bg);z-index:3}.brand{display:flex;align-items:center;gap:10px;font-weight:800}.mark{width:32px;height:32px;border-radius:9px;display:grid;place-items:center;background:var(--primary);color:var(--bg)}.env{font-size:13px;font-weight:700;background:var(--warning-soft);color:oklch(.38 .10 80);padding:5px 10px;border-radius:999px}.shell{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:calc(100vh - 64px)}.side{background:var(--surface);border-right:1px solid var(--line);padding:20px 14px}.nav{display:flex;flex-direction:column;gap:5px}.nav a{padding:10px 12px;border-radius:9px;text-decoration:none;color:var(--muted);font-weight:650}.nav a:hover,.nav a.active{background:var(--bg);color:var(--ink)}main{width:min(1220px,100%);padding:34px}.crumb{color:var(--muted);font-size:13px;margin-bottom:8px}h1{font-size:2rem;line-height:1.2;letter-spacing:-.02em;margin:0}h2{font-size:1.2rem;line-height:1.3;margin:0}.lede{color:var(--muted);margin:8px 0 0;max-width:70ch}.head{display:flex;justify-content:space-between;gap:20px;align-items:flex-end}.state{font-weight:800;color:var(--review);background:var(--review-soft);padding:6px 11px;border-radius:999px;white-space:nowrap}.summary{display:flex;gap:1px;background:var(--line);border-radius:14px;overflow:hidden;margin:26px 0}.summary div{flex:1;padding:15px 18px;background:var(--surface)}.summary strong{display:block}.summary span{font-size:13px;color:var(--muted)}.section-head{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin:30px 0 14px}.section-head p{margin:0;color:var(--muted)}.thumbs{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}.thumb{border:1px solid var(--line);border-radius:12px;overflow:hidden}.visual{aspect-ratio:1/1;background:var(--surface);display:grid;place-items:center;color:var(--muted);font-size:13px}.thumb.detail .visual{aspect-ratio:3/4}.thumb-info{padding:10px}.thumb-info strong{display:block;font-size:14px}.badge{display:inline-flex;align-items:center;gap:5px;margin-top:5px;padding:3px 7px;border-radius:999px;font-size:12px;font-weight:800}.badge:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}.badge.pass{background:var(--success-soft);color:var(--success)}.badge.review{background:var(--review-soft);color:var(--review)}.badge.fail{background:var(--danger-soft);color:var(--danger)}.review-form{margin-top:12px}.issue-group{border:1px solid var(--line);border-radius:12px;margin-bottom:10px;overflow:hidden}.issue-group summary{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:15px 17px;font-weight:800;background:var(--surface);list-style:none}.issue-group summary::-webkit-details-marker{display:none}.issue-count{font-size:12px;background:var(--review-soft);color:var(--review);padding:3px 8px;border-radius:999px}.issues{padding:0 17px}.issue{display:grid;grid-template-columns:minmax(0,1fr) 190px;gap:18px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line)}.issue:last-child{border-bottom:0}.issue-title{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.severity{font-size:12px;font-weight:800;border-radius:999px;padding:2px 7px;background:var(--review-soft);color:var(--review)}.severity.minor{background:var(--warning-soft);color:oklch(.38 .10 80)}.issue p{margin:4px 0 0;color:var(--muted);font-size:14px}.issue label{font-size:13px;color:var(--muted);display:block;margin-bottom:5px}.issue select{width:100%;min-height:40px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--ink);font:inherit;padding:7px 9px}.issue select:focus-visible,summary:focus-visible,.btn:focus-visible,.nav a:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.closebar{position:sticky;bottom:14px;margin-top:24px;background:var(--ink);color:var(--bg);border-radius:14px;padding:16px 18px;display:flex;align-items:center;justify-content:space-between;gap:18px;box-shadow:0 8px 24px oklch(.2 0 0/.16)}.closebar p{margin:3px 0 0;color:oklch(.82 .015 250);font-size:13px}.actions{display:flex;gap:9px}.btn{min-height:42px;padding:8px 14px;border-radius:10px;border:1px solid oklch(.55 .02 250);background:transparent;color:var(--bg);font:inherit;font-weight:750;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;white-space:nowrap}.btn.primary{background:var(--primary);border-color:var(--primary)}.btn:hover{filter:brightness(1.12)}.footer{margin-top:28px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between}@media(max-width:850px){.shell{display:block}.side{border-right:0;border-bottom:1px solid var(--line);padding:10px}.nav{flex-direction:row;overflow:auto}.nav a{white-space:nowrap}main{padding:24px 18px}.head,.section-head{align-items:flex-start;flex-direction:column}.summary{flex-direction:column}.issue{grid-template-columns:1fr}.closebar{position:static;align-items:flex-start;flex-direction:column}.actions{width:100%;flex-direction:column}.btn{width:100%}.footer{flex-direction:column}}@media(prefers-reduced-motion:reduce){*{transition:none!important}}
+    .closebar{position:static}
+  </style>
+</head>
+<body>
+  <header class="top"><div class="brand"><span class="mark" aria-hidden="true">图</span>图像生产台</div><span class="env">演示环境</span></header>
+  <div class="shell">
+    <aside class="side"><nav class="nav" aria-label="主要导航"><a data-contract="C01" href="index.html">原型导航</a><a data-contract="C02" href="s1_batch_list.html">批次列表</a><a data-contract="C03" href="s3_batch_overview.html">批次总览</a><a class="active" data-contract="C04" href="s7_qc_review.html">质检与终审</a><a data-contract="C05" href="s9_completed.html">完成与交付</a></nav></aside>
+    <main>
+      <div class="head"><div><div class="crumb">晨雾保温杯 / 质检与人工终审</div><h1>机器发现 19 条需要你判断的问题</h1><p class="lede">先逐图查看，再决定“人工复核后接受”或“需要返修”。机器判断不会替代你的最终决定。</p></div><span class="state">等待人工终审</span></div>
+      <section class="summary" aria-label="QC 摘要"><div><strong>14 张图片已检查</strong><span>主图 6 + 详情图 8</span></div><div><strong>175 条检查</strong><span>156 通过 · 18 待复核 · 1 不合格</span></div><div><strong>19 个问题</strong><span>2 轻微 · 17 待复核</span></div></section>
+
+      <section aria-labelledby="images-title"><div class="section-head"><div><h2 id="images-title">逐图结果</h2><p>状态同时用文字和颜色表达。</p></div><p>5 张通过 · 8 张待复核 · 1 张不合格</p></div>
+        <div class="thumbs">
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 01</strong><span class="badge pass">通过</span></div></article>
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 02</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 03</strong><span class="badge fail">不合格</span></div></article>
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 04</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 05</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb"><div class="visual">演示图片</div><div class="thumb-info"><strong>主图 06</strong><span class="badge pass">通过</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 01</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 02</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 03</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 04</strong><span class="badge pass">通过</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 05</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 06</strong><span class="badge review">待复核</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 07</strong><span class="badge pass">通过</span></div></article>
+          <article class="thumb detail"><div class="visual">演示图片</div><div class="thumb-info"><strong>详情图 08</strong><span class="badge pass">通过</span></div></article>
+        </div>
+      </section>
+
+      <form class="review-form" action="s9_completed.html" method="get">
+        <div class="section-head"><div><h2>19 条问题，按图片分组</h2><p>每条问题都有对应的人工裁定，不修改机器 QC 原报告。</p></div></div>
+
+        <details class="issue-group" data-contract="C37" open><summary><span>主图 02</span><span class="issue-count">3 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>拍摄角度需要复核</strong><span class="severity">待复核</span></div><p>画面更接近正面，斜侧面的纵深不够明显。</p></div><div><label for="i01">人工裁定</label><select id="i01" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>手持比例缺少真实尺寸依据</strong><span class="severity">待复核</span></div><p>视觉上自然，但现有资料不足以完全验证比例。</p></div><div><label for="i02">人工裁定</label><select id="i02" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>整批上架准备仍待确认</strong><span class="severity">待复核</span></div><p>需在其他问题裁定后再确认整批是否可交付。</p></div><div><label for="i03">人工裁定</label><select id="i03" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37" open><summary><span>主图 03</span><span class="issue-count">1 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>清水液面的真实感不足</strong><span class="severity minor">轻微</span></div><p>液面偏灰，透明度和自然反光不足；该检查被机器判为不合格。</p></div><div><label for="i04">人工裁定</label><select id="i04" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>主图 04</span><span class="issue-count">1 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>产品视觉占比可能偏小</strong><span class="severity">待复核</span></div><p>主体完整，但在画面中的高度占比需要人工确认。</p></div><div><label for="i05">人工裁定</label><select id="i05" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>主图 05</span><span class="issue-count">5 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>斜侧角度不够明显</strong><span class="severity">待复核</span></div><p>侧面纵深表现不足，可能偏回正面视角。</p></div><div><label for="i06">人工裁定</label><select id="i06" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>手部占据画面较多</strong><span class="severity">待复核</span></div><p>手部应保持辅助互动，不应压过商品主体。</p></div><div><label for="i07">人工裁定</label><select id="i07" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>手与产品比例需复核</strong><span class="severity">待复核</span></div><p>产品真实尺寸依据不足，无法完全确认比例。</p></div><div><label for="i08">人工裁定</label><select id="i08" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>拿起动作关系需复核</strong><span class="severity">待复核</span></div><p>下方辅助手较多，轻微离桌关系不够明确。</p></div><div><label for="i09">人工裁定</label><select id="i09" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>主图组一致性待最终确认</strong><span class="severity">待复核</span></div><p>需要结合主图组其他问题的人工裁定。</p></div><div><label for="i10">人工裁定</label><select id="i10" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>详情图 01</span><span class="issue-count">3 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>首屏主体可能偏小</strong><span class="severity">待复核</span></div><p>产品占竖版画面的高度需要人工复核。</p></div><div><label for="i11">人工裁定</label><select id="i11" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>道具边界需要复核</strong><span class="severity">待复核</span></div><p>浅色器物可能过于具体，超出低干扰道具边界。</p></div><div><label for="i12">人工裁定</label><select id="i12" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>道具可能暗示未确认尺寸</strong><span class="severity">待复核</span></div><p>具体器物可能形成强比例参照。</p></div><div><label for="i13">人工裁定</label><select id="i13" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>详情图 02</span><span class="issue-count">1 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>拍摄角度需要复核</strong><span class="severity">待复核</span></div><p>斜侧面纵深不足，可能偏回正面视角。</p></div><div><label for="i14">人工裁定</label><select id="i14" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>详情图 03</span><span class="issue-count">3 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>清水液面需要复核</strong><span class="severity minor">轻微</span></div><p>透明感和轻微反光不足，可能影响真实感。</p></div><div><label for="i15">人工裁定</label><select id="i15" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>产品宽度占比可能偏小</strong><span class="severity">待复核</span></div><p>需要人工确认是否符合该图的构图要求。</p></div><div><label for="i16">人工裁定</label><select id="i16" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+          <div class="issue"><div><div class="issue-title"><strong>详情图链路待最终确认</strong><span class="severity">待复核</span></div><p>需结合其他详情图问题的人工裁定。</p></div><div><label for="i17">人工裁定</label><select id="i17" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>详情图 05</span><span class="issue-count">1 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>尺寸图主体占比需复核</strong><span class="severity">待复核</span></div><p>高度标注正确，但产品在画面中的高度可能偏小。</p></div><div><label for="i18">人工裁定</label><select id="i18" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <details class="issue-group" data-contract="C37"><summary><span>详情图 06</span><span class="issue-count">1 条</span></summary><div class="issues">
+          <div class="issue"><div><div class="issue-title"><strong>质感图主体占比需复核</strong><span class="severity">待复核</span></div><p>静物氛围自然，但产品高度占比可能偏小。</p></div><div><label for="i19">人工裁定</label><select id="i19" data-contract="C38"><option>待裁定</option><option>人工复核后接受</option><option>需要返修</option></select></div></div>
+        </div></details>
+
+        <div class="closebar"><div><strong>人工终审完成后才能正式关账</strong><p>“全部接受”不会自动重做图片，机器 QC 原报告也保持不变。</p></div><div class="actions"><a class="btn" data-contract="C40" href="s3_batch_overview.html">暂不关账</a><button class="btn primary" data-contract="C39" type="submit">全部接受并关账</button></div></div>
+      </form>
+      <div class="footer"><span>QC 数据形状参照真实报告并已匿名化</span><span>演示数据 · 不连接后台</span></div>
+    </main>
+  </div>
+</body>
+</html>

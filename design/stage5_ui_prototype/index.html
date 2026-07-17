@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>阶段 5A 操作界面设计稿 · 纯本地原型</title>
+  <style>
+    :root{--bg:oklch(1 0 0);--surface:oklch(.975 .006 250);--surface-2:oklch(.945 .012 250);--ink:oklch(.22 .025 250);--muted:oklch(.44 .03 250);--line:oklch(.88 .014 250);--primary:oklch(.55 .149 250);--primary-strong:oklch(.47 .15 250);--primary-soft:oklch(.94 .035 250);--success:oklch(.5 .13 150);--success-soft:oklch(.95 .035 150);--warning:oklch(.64 .14 80);--warning-soft:oklch(.96 .04 80);--danger:oklch(.53 .17 25);--danger-soft:oklch(.95 .04 25);--focus:oklch(.72 .12 250)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}a{color:inherit}.skip{position:absolute;left:-999px;top:8px}.skip:focus{left:12px;z-index:5;background:var(--ink);color:var(--bg);padding:8px 12px;border-radius:8px}.top{min-height:64px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:12px 5vw;position:sticky;top:0;background:var(--bg);z-index:3}.brand{display:flex;align-items:center;gap:10px;font-weight:750}.mark{width:32px;height:32px;border-radius:9px;background:var(--primary);color:var(--bg);display:grid;place-items:center}.chip{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 10px;background:var(--warning-soft);color:oklch(.38 .10 80);font-weight:700;font-size:13px}.dot{width:8px;height:8px;border-radius:50%;background:var(--warning)}main{width:min(1120px,90vw);margin:0 auto;padding:48px 0 72px}.hero{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:36px;align-items:end;padding-bottom:36px;border-bottom:1px solid var(--line)}h1{font-size:2.5rem;line-height:1.15;letter-spacing:-.025em;margin:0 0 16px;text-wrap:balance}h2{font-size:1.25rem;line-height:1.3;margin:0;text-wrap:balance}p{margin:0}.lede{font-size:1.06rem;color:var(--muted);max-width:68ch}.notice{background:var(--primary-soft);padding:18px;border-radius:14px;color:oklch(.31 .08 250)}.notice strong{display:block;margin-bottom:4px}.journey{margin-top:38px}.journey-head{display:flex;justify-content:space-between;gap:18px;align-items:end;margin-bottom:18px}.journey-head p{color:var(--muted);max-width:54ch}.steps{border-top:1px solid var(--line)}.step{display:grid;grid-template-columns:48px minmax(170px,.55fr) minmax(0,1fr) auto;align-items:center;gap:18px;padding:18px 0;border-bottom:1px solid var(--line)}.num{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--surface-2);font-weight:800;color:var(--primary-strong)}.step p{color:var(--muted)}.links{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:8px 14px;border-radius:10px;text-decoration:none;font-weight:750;border:1px solid var(--line);background:var(--bg);transition:background .18s ease,color .18s ease,border-color .18s ease}.btn:hover{background:var(--surface)}.btn.primary{background:var(--primary);color:var(--bg);border-color:var(--primary)}.btn.primary:hover{background:var(--primary-strong)}.btn:focus-visible{outline:3px solid var(--focus);outline-offset:2px}.docs{margin-top:42px;background:var(--surface);border-radius:16px;padding:26px}.doc-grid{display:flex;flex-wrap:wrap;gap:10px;margin-top:16px}.footer{margin-top:34px;color:var(--muted);font-size:13px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}@media(max-width:820px){.hero{grid-template-columns:1fr}.step{grid-template-columns:42px 1fr}.step p,.links{grid-column:2}.links{justify-content:flex-start}h1{font-size:2rem}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important;transition:none!important}}
+  </style>
+</head>
+<body>
+  <a class="skip" data-contract="C49" href="#main">跳到主要内容</a>
+  <header class="top">
+    <div class="brand"><span class="mark" aria-hidden="true">图</span><span>图像生产台 · 阶段 5A</span></div>
+    <span class="chip"><span class="dot" aria-hidden="true"></span>纯本地演示</span>
+  </header>
+  <main id="main">
+    <section class="hero">
+      <div>
+        <h1>从新建批次，到终审关账</h1>
+        <p class="lede">这套逐屏设计稿把现有电商图片流程翻译成普通人能直接操作的界面。按下方顺序查看，即可走完“晨雾保温杯（演示）”的完整旅程。</p>
+      </div>
+      <div class="notice" role="note"><strong>不会执行任何真实操作</strong>页面不保存输入、不连接后台、不产生费用。所有结果均为演示数据。</div>
+    </section>
+
+    <section class="journey" aria-labelledby="journey-title">
+      <div class="journey-head"><div><h2 id="journey-title">九屏验收旅程</h2><p>每一步都说明用户做什么，以及系统接下来告诉他什么。</p></div><a class="btn primary" data-contract="C02" href="s1_batch_list.html">从批次入口开始</a></div>
+      <div class="steps">
+        <article class="step"><span class="num">1</span><h2>批次入口</h2><p>看到当前阶段和下一步，不需要先读说明。</p><div class="links"><a class="btn" data-contract="C02" href="s1_batch_list.html">打开</a></div></article>
+        <article class="step"><span class="num">2</span><h2>新建批次</h2><p>填写产品编号、七项确认信息和资料位置。</p><div class="links"><a class="btn" data-contract="C06" href="s2_new_batch.html">打开</a></div></article>
+        <article class="step"><span class="num">3</span><h2>批次总览</h2><p>用普通语言看懂已完成、待办、受阻与唯一下一步。</p><div class="links"><a class="btn" data-contract="C03" href="s3_batch_overview.html">打开</a></div></article>
+        <article class="step"><span class="num">4</span><h2>产出声明</h2><p>选择主图、详情图、最终制作说明和质检报告。</p><div class="links"><a class="btn" data-contract="C20" href="s4_output_declaration.html">打开</a></div></article>
+        <article class="step"><span class="num">5</span><h2>执行确认</h2><p>先看预检与费用风险，再完成二次确认。</p><div class="links"><a class="btn" data-contract="C23" href="s5_execution_confirm.html">打开</a></div></article>
+        <article class="step"><span class="num">6</span><h2>运行状态</h2><p>同一屏分别展示运行中、成功和失败。</p><div class="links"><a class="btn" data-contract="C46" href="s6_running.html">运行中</a><a class="btn" data-contract="C33" href="s6_success.html">成功</a><a class="btn" data-contract="C34" href="s6_failed.html">失败</a></div></article>
+        <article class="step"><span class="num">7</span><h2>QC 与终审</h2><p>14 张图片、19 条问题，逐条裁定后关账。</p><div class="links"><a class="btn" data-contract="C04" href="s7_qc_review.html">打开</a></div></article>
+        <article class="step"><span class="num">8</span><h2>失败与求助</h2><p>先给人话解释，再按需展开脱敏技术详情。</p><div class="links"><a class="btn" data-contract="C36" href="s8_failure_help.html">打开</a></div></article>
+        <article class="step"><span class="num">9</span><h2>完成与交付</h2><p>确认最终图片、QC 报告和保存位置。</p><div class="links"><a class="btn" data-contract="C05" href="s9_completed.html">打开</a></div></article>
+      </div>
+    </section>
+
+    <section class="docs" aria-labelledby="docs-title">
+      <h2 id="docs-title">配套对账资料</h2>
+      <p>设计稿里的每个动作都必须在契约清单中找到来源；不存在的能力会明确登记为新提案。</p>
+      <div class="doc-grid"><a class="btn" data-contract="C48" href="README.md">使用说明</a><a class="btn" data-contract="C48" href="contract_map.md">契约清单</a><a class="btn" data-contract="C48" href="backend_gaps.md">后台缺口</a><a class="btn" data-contract="C48" href="hosting_options.md">承载方案对比</a></div>
+    </section>
+    <div class="footer"><span>阶段 5A · 可丢弃静态原型</span><span>演示数据 · 不连接后台</span></div>
+  </main>
+</body>
+</html>
