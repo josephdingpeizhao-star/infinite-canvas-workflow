@@ -64,17 +64,17 @@ python canvas-bridge/make_demo_workspace.py --reset
 - canvas-agent token 只从本机配置读取并放在鉴权请求头中；`codex-dev` 只接受 `http://127.0.0.1`、`http://localhost` 或 `http://[::1]` 回环地址，并显式禁用系统代理。事件日志只记录通用成功说明或彻底切断原始异常链的脱敏错误，不记录 token、完整提示词、Codex 原始错误正文或产品图片内容。
 - GPT Image 2 密钥只从服务端环境变量 `OPENAI_API_KEY` 读取；可选 `OPENAI_IMAGE_MODEL` 和 `OPENAI_BASE_URL` 只属于该适配器。`OPENAI_BASE_URL` 可填写已带 `/v1` 的 API 根路径，也可填写裸域名（自动补为 `/v1`）；生产 HTTP 传输使用固定且不含敏感信息的 `Codex-Canvas-Bridge/1.0` 客户端标识，并保留调用方显式传入的标识。密钥不得写入 manifest、画布节点、事件日志或仓库文件。
 - 可选 `OPENAI_IMAGE_TIMEOUT_SECONDS` 只接受 `30` 至 `1800` 的整数；未设置时保持默认 `180` 秒，内部显式传入的等待值优先。该值表示连接或响应连续无新数据时的等待上限，不是整次任务的总时长；非法值在联网前拒绝。闸门执行可在获批的临时进程中设为 `900`，不得持久化。
-- 当前状态报告仍禁止生成图片；在最终提示词完整性门禁通过并明确批准真实 API 消耗前，不得现场调用。
+- `shuiping_20260712` 的 14 张正式图片已按用户批准完成；任何追加、覆盖或重新生成仍必须重新批准真实 API 成本。当前停在正式 QC 之前。
 - 未来接入其他图片服务时，实现相同的 `execute(ExecutionRequest) -> ExecutionResult` 契约并在 `executor_factory.py` 注册即可，上层画布逻辑不变。
 
-## 生产图片执行链（已实现，现场仍冻结）
+## 生产图片执行链（已实现，现场停在 QC 前）
 
 1. `image-production / integrity` 调用既有校验脚本的 `--prompts-only` 模式，只检查 6+8 数量与顺序、既有 Schema、来源文件与逐项解析指纹、手持数量、1:1/3:4 字面、高度约 25 厘米语义和 UTF-8/Unicode 完整性。它不读取 ComfyUI 作业清单，并在 JSON/Markdown 报告中逐项记录跳过旧内容启发式扫描与旧编译器字面扫描的原因；默认 ComfyUI 模式未改变。
 2. 门禁通过后，`image-production / renders` 从索引读取 14 项，逐项绑定 manifest 白底图目录中唯一同名参考图，并把 `final_prompt` 原文与 `negative_prompt` 原文用固定分隔符组合；不改写正向正文。
 3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。连接、正常响应读取或错误响应读取超时均统一为不含密钥、提示词和原始响应的中文失败；超时永不自动重试，也不留下半成品。
-4. 主图请求固定 `1024x1024`。详情图请求仍使用暂定 `1024x1536`（2:3）且不做裁剪、拉伸或后处理；相同执行链下 `detail_01` 返回 `1086x1448`（3:4），`detail_02` 却返回 `1024x1536`（2:3），说明供应端返回比例并不稳定。用户已接受 `detail_01` 的 3:4，但 `detail_02` 因不符合后续批准的 3:4 口径而保留为失败证据；任何继续方案必须重新决定是否同时接受两种竖版比例。
-5. `shuiping_20260712` 已完成 prompts-only 门禁与模型探测。六张主图均为有效 `1254x1254` PNG；用户接受 `detail_01` 的 3:4 后批准按 `1+6` 续跑最后七张，单张 `detail_02` 图片传输成功，但实际为 `1024x1536`（2:3），不符合本轮批准的 3:4，按规则停止且未启动最后六张。事件账本现为 58 行，正式 renders 有 8 个文件，其中六张主图与 `detail_01` 通过，`detail_02` 作为尺寸失败证据保留。后续现场闸门见 `docs/CANVAS_PROJECT_STATE.md` §8，不能自动连续执行。
+4. 主图请求固定 `1024x1024`，详情图请求继续使用既有 `1024x1536` 映射。供应端实际可能返回 3:4 或 2:3；本批最终统一要求精确 3:4。供应端原图已是 3:4 时保持不变；其他竖版比例先备份供应端原图，再通过扩展不足方向的柔和虚化背景统一为 3:4，原商品与文字区域不裁剪、不缩放、不拉伸。当前 `detail_02` 与 `detail_05` 从 `1024x1536` 左右各扩展 64 像素为 `1152x1536`，供应端原图保存在外部工作区 `artifacts/audit/render_originals`；其余详情图保持供应端原文件。
+5. `shuiping_20260712` 已完成 prompts-only 门禁、模型探测与全部真实出图。六张主图均为有效 `1254x1254` PNG；八张详情图均为有效且精确 3:4 的 PNG。正式 renders 恰好 14 个文件，事件账本 70 行，ComfyUI 作业与 repaired 均为 0；真实路由为 `needs_qc_reports`。本轮没有执行 QC，后续闸门见 `docs/CANVAS_PROJECT_STATE.md` §8。
 
 ## 状态
 
-阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc` 和 `final_prompts` 已完成 `shuiping_20260712` 真实验收；正式目录包含 14 份 JSON、14 份同名 Markdown 和两份索引。生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识和可配置无数据等待上限，当前全仓 238 项测试通过。正式 renders 现有六张通过主图、已获用户接受的 3:4 `detail_01`，以及因实际为 2:3、不符合本轮 3:4 口径而未通过的 `detail_02`；`detail_03` 至 `detail_08` 未生成。真实路由为 `needs_qc_reports`，但 14 张业务任务仍未完成；事件 58 行，ComfyUI 作业与 repaired 均为 0，QC 未执行，渲染继续冻结。
+阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc` 和 `final_prompts` 已完成 `shuiping_20260712` 真实验收；正式目录包含 14 份 JSON、14 份同名 Markdown 和两份索引。生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识、可配置无数据等待上限与真实断点续跑，当前全仓 238 项测试通过。正式 renders 恰好 14 张：六张正方形主图、八张精确 3:4 详情图；事件 70 行，ComfyUI 作业与 repaired 均为 0。真实路由为 `needs_qc_reports`，QC 未执行，现场停在 QC 闸门前。
