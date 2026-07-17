@@ -1,5 +1,5 @@
 {
-  "checked_at": "2026-07-16T03:12:50.727532+00:00",
+  "checked_at": "2026-07-17T04:35:35.050018+00:00",
   "project_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
   "status": "ready",
   "current_stage": "ready",
@@ -11,25 +11,25 @@
       "path": "reports/workflow_architecture_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T03:12:49.674651+00:00"
+      "checked_at": "2026-07-17T04:35:34.120156+00:00"
     },
     "skill_tree_report": {
       "path": "reports/skill_tree_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T03:12:50.407058+00:00"
+      "checked_at": "2026-07-17T04:35:34.757640+00:00"
     },
     "reference_check_report": {
       "path": "reports/reference_check_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T03:12:50.516995+00:00"
+      "checked_at": "2026-07-17T04:35:34.875590+00:00"
     },
     "production_readiness_report": {
       "path": "reports/production_readiness_report.json",
       "exists": true,
       "status": "pass",
-      "checked_at": "2026-07-16T03:12:50.593922+00:00"
+      "checked_at": "2026-07-17T04:35:34.942321+00:00"
     }
   },
   "skill_tree": {
@@ -483,7 +483,7 @@
     "reports": {
       "path": "reports",
       "exists": true,
-      "file_count": 12,
+      "file_count": 14,
       "files": [
         "reports/current_state.json",
         "reports/current_state.md",
@@ -493,6 +493,8 @@
         "reports/reference_check_report.md",
         "reports/runtime_rule_index.json",
         "reports/runtime_rule_index.md",
+        "reports/shuiping_20260712_final_prompt_integrity_report.json",
+        "reports/shuiping_20260712_final_prompt_integrity_report.md",
         "reports/skill_tree_report.json",
         "reports/skill_tree_report.md",
         "reports/workflow_architecture_report.json",
@@ -511,7 +513,8 @@
       "requested_outputs": [
         "main",
         "detail",
-        "final_prompts"
+        "final_prompts",
+        "qc_reports"
       ],
       "current_stage": "ready",
       "next_skill": null,
@@ -523,7 +526,8 @@
         "angle_inventory",
         "main_variable_configs",
         "detail_variable_configs",
-        "final_prompts"
+        "final_prompts",
+        "qc_reports"
       ],
       "missing_required_artifacts": [],
       "blocked_reasons": [],
@@ -1039,12 +1043,31 @@
               "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports",
               "exists": true,
               "is_dir": true,
-              "file_count": 0,
-              "files": []
+              "file_count": 3,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports\\final_prompt_integrity_report.json",
+                  "artifact_type": "final_prompt_integrity_report",
+                  "size": 5136
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports\\final_prompt_integrity_report.md",
+                  "artifact_type": null,
+                  "size": 3258
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\artifacts\\qc_reports\\qc_report.json",
+                  "artifact_type": "qc_report",
+                  "size": 56371
+                }
+              ]
             }
           ],
-          "file_count": 0,
-          "typed_artifact_counts": {}
+          "file_count": 3,
+          "typed_artifact_counts": {
+            "final_prompt_integrity_report": 1,
+            "qc_report": 1
+          }
         }
       },
       "outputs": {
@@ -1055,11 +1078,82 @@
               "resolved_path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders",
               "exists": true,
               "is_dir": true,
-              "file_count": 0,
-              "files": []
+              "file_count": 14,
+              "files": [
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_01.png",
+                  "artifact_type": null,
+                  "size": 1731927
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_02.png",
+                  "artifact_type": null,
+                  "size": 1973722
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_03.png",
+                  "artifact_type": null,
+                  "size": 1953114
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_04.png",
+                  "artifact_type": null,
+                  "size": 1875860
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_05.png",
+                  "artifact_type": null,
+                  "size": 1849803
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_06.png",
+                  "artifact_type": null,
+                  "size": 1686312
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_07.png",
+                  "artifact_type": null,
+                  "size": 1887660
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\detail_08.png",
+                  "artifact_type": null,
+                  "size": 1603576
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_01.png",
+                  "artifact_type": null,
+                  "size": 1919369
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_02.png",
+                  "artifact_type": null,
+                  "size": 1810414
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_03.png",
+                  "artifact_type": null,
+                  "size": 1650028
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_04.png",
+                  "artifact_type": null,
+                  "size": 1752815
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_05.png",
+                  "artifact_type": null,
+                  "size": 1974280
+                },
+                {
+                  "path": "D:\\onedrive\\OneDrive\\Desktop\\杯类\\shuiping_20260712\\outputs\\renders\\main_06.png",
+                  "artifact_type": null,
+                  "size": 1782951
+                }
+              ]
             }
           ],
-          "file_count": 0,
+          "file_count": 14,
           "typed_artifact_counts": {}
         },
         "repaired": {
@@ -1364,7 +1458,7 @@
     "render_without_final_prompt_integrity_gate"
   ],
   "workflow_doctor": {
-    "checked_at": "2026-07-16T03:12:50.738127+00:00",
+    "checked_at": "2026-07-17T04:35:35.060375+00:00",
     "validation_runs": [
       {
         "script": "scripts/validate_workflow_architecture.py",

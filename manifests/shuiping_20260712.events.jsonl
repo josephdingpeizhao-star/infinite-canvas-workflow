@@ -68,3 +68,5 @@
 {"ts": "2026-07-17T01:08:05", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 12）（114.2s）"}
 {"ts": "2026-07-17T01:08:40", "event": "step_started", "step": "renders", "command": "retry: renders"}
 {"ts": "2026-07-17T01:09:38", "event": "step_succeeded", "step": "renders", "detail": "成功 1/计划 1（跳过 13）（57.2s）"}
+{"ts": "2026-07-17T12:06:06", "event": "step_started", "step": "qc", "command": "run: qc"}
+{"ts": "2026-07-17T12:32:16", "event": "step_succeeded", "step": "qc", "detail": "QC 报告已生成（1569.9s）"}
