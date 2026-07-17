@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-17（用户批准将八张详情图统一为精确 3:4，并按六次独立单张请求完成 `detail_03` 至 `detail_08`。正式目录现有 14 张：六张正方形主图、八张精确 3:4 详情图；`detail_02` 与 `detail_05` 通过无损扩展画布统一比例，供应端原图已保存在外部工作区审计目录。事件 70 行，真实路由为 `needs_qc_reports`；QC、ComfyUI 与 repaired 均未执行）。
+> 最后更新：2026-07-17（`codex-dev / qc` 已按批准方案完成离线 TDD，代码提交为 `634c58f`，全仓 260 项测试通过；真实 manifest 只读预检确认 14 张图、7 个两图批次和 3 张手持图。正式目录仍为六张正方形主图、八张精确 3:4 详情图；事件仍为 70 行，真实路由仍为 `needs_qc_reports`，`qc_report.json` 不存在。未启动真实 Codex、未访问网络、未执行 QC、ComfyUI 或 repaired；真实 `run: qc` 属独立闸门，待用户另行批准）。
 
 ## 1. 定位与目标
 
@@ -48,6 +48,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | 3 | 受控编辑（wfedit 节点，三段门禁，--apply-edits） | ✅ | 28788bb | 2026-07-11 晚现场四步验收（含 banana 拒绝、210 字符长 notes 回读无截断） |
 | 4 | 执行接入（wfrun 运行台 + 事件日志 + --serve 常驻） | ✅ | 6f4e361 | 2026-07-11 深夜现场：9 步全链路画布触发跑通、门禁拒绝、retry；66/66 测试绿 |
 | 4b | 生产图片执行链（prompts-only 门禁 + 索引组装 + image-production） | ✅ 真实出图完成，QC 待办 | 5f98b35、6f9ffcb | 238/238 测试；真实门禁 pass；14 张正式图完整，事件 70 行，路由 `needs_qc_reports` |
+| 4c | `codex-dev / qc` 离线适配器（7 个两图批次 + 全批总结） | ✅ 离线 TDD 完成，真实 QC 待独立批准 | 634c58f | 260/260 测试；真实 manifest 只读预检通过；无网络、无正式报告、无事件变化 |
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
@@ -127,13 +128,15 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日用户批准以“无损扩展画布”把八张详情图统一为精确 3:4，并批准最多六次新请求完成 `detail_03` 至 `detail_08`。费用前从 HEAD `2de8696bbfb37e38b82509aca225e98b8a084e7d` 复核 238 项测试、`git diff --check`、58 行事件、8 张既有图片指纹、0 个渲染/监听服务、0 个持久化渲染变量和原画布项目均通过。一次性本机 Pillow 工具先在临时副本验证 3:4 原图不动、2:3 扩展后原像素逐点一致、异常图片拒绝、原子失败不覆盖及无临时文件，再把 `detail_02` 的供应端原图备份到外部工作区 `artifacts/audit/render_originals/detail_02.png`，将正式图从 `1024x1536` 左右各扩展 64 像素为 `1152x1536`；六张主图与 `detail_01` 指纹未变。随后从原画布按六个独立临时服务各提交一次 `retry: renders`：`detail_03` 至 `detail_08` 全部成功，跳过数依次为 8 至 13，未发生失败或自动重试。其中 `detail_03`、`detail_04`、`detail_06`、`detail_07`、`detail_08` 供应端原图本身为 `1086x1448` 精确 3:4，保持原文件；`detail_05` 的 `1024x1536` 供应端原图先审计备份，再以相同方式无损扩展为 `1152x1536`。最终正式目录恰好 14 张：六张 `1254x1254` 主图与八张精确 3:4 详情图；扩展后的中央原图区域与审计原图逐像素一致，审计目录恰好保存 `detail_02`、`detail_05` 两张供应端原图。事件由 58 增至 70，repaired=0、comfyui_jobs=0，无临时文件；临时服务、密钥代理、密钥与渲染变量均已清除。真实路由为 `needs_qc_reports`，本轮停在正式 QC 之前。
 
+同日用户批准阶段 B 方案并进入阶段 C/D，范围严格限定为离线 TDD，不运行真实 QC。提交 `634c58f` 新增 `codex_dev_qc.py` 并以最小分发接入 `codex_dev_executor.py`：首个回合前一次性核对 14 张正式 PNG 的精确名称、1:1/3:4 比例、正式提示词与白底图绑定、主/详情变量配置、3 张手持声明、QC Skill/运行规则/三份完整参考正文、`qc_report.schema.json` 合同以及 20 MiB 单批附件和 28 MiB 整体请求上限；运行协议固定为同一 thread 内 7 个两图批次加 1 个无附件全批总结。只有 U+FFFD 或明确 JSON 截断可同线程恢复，整次最多 2 次；合法 JSON 业务错误不重试。所有批次只在内存聚合，全部通过后才排他写入唯一 `qc_report.json`，本地固定 `adds_new_generation_direction=false`，既有完整性报告不覆盖。新增 22 项 QC 测试后全仓 260/260 通过，逐个 `py_compile` 通过，真实 manifest 只读计划预检为 14 张图、7 批、手持 `main_02/main_05/detail_02`。本轮没有启动 `--serve`、没有设置 `CODEX_DEV_ALLOW_REAL_EXECUTION`、没有访问网络或读取密钥、没有调用模型、没有写正式报告/事件/manifest/schema/Skill/fork/外部工作区；事件仍为 70 行，真实路由仍为 `needs_qc_reports`。真实 `run: qc` 验收是独立闸门，待用户另行批准。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
 
-- `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2、生产任务组装与 `image-production` 组合执行器、`codex-dev` identity/style master/angle inventory/main/detail/final-prompts 适配器、驱动脚本 spike_canvas_push）。
+- `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2、生产任务组装与 `image-production` 组合执行器、`codex-dev` identity/style master/angle inventory/main/detail/final-prompts/qc 适配器、QC 专用离线校验与报告装配模块、驱动脚本 spike_canvas_push）。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 238 个测试内，运行 `python -m unittest discover -s tests`）。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 260 个测试内，运行 `python -m unittest discover -s tests`）。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
@@ -183,14 +186,14 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层使用 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已完成 identity、style master、angle inventory、`main_vc`、`detail_vc` 与 `final_prompts` 的 `shuiping_20260712` 真实验收。`image-production` 已完成 prompts-only 门禁、14 项任务组装与真实断点续跑；正式目录现有六张正方形主图和八张精确 3:4 详情图，事件 70 行。`requested_outputs` 已含 `qc_reports`，真实路由为 `needs_qc_reports`；本轮未执行 QC、ComfyUI 或 repaired，任何后续运行仍需单独批准。默认 ComfyUI 模式、默认 demo 执行器和现有 `openai-image` 适配器行为不变。
+- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层使用 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已完成 identity、style master、angle inventory、`main_vc`、`detail_vc` 与 `final_prompts` 的 `shuiping_20260712` 真实验收，`qc` 仅完成离线 TDD、尚未现场执行。`image-production` 已完成 prompts-only 门禁、14 项任务组装与真实断点续跑；正式目录现有六张正方形主图和八张精确 3:4 详情图，事件 70 行。`requested_outputs` 已含 `qc_reports`，真实路由为 `needs_qc_reports`，`qc_report.json` 不存在；任何真实 `run: qc`、ComfyUI 或 repaired 都必须单独批准。默认 ComfyUI 模式、默认 demo 执行器和现有 `openai-image` 适配器行为不变。
 
 ## 8. 后续路线图（候选，未排期）
 
 1. **②b 14 张正式成图已经完成**：`main_01` 至 `main_06` 六张主图均为有效 `1254x1254` PNG；`detail_01` 至 `detail_08` 八张详情图均为有效且精确 3:4 的 PNG。事件 70 行，正式目录恰好 14 个文件，真实路由为 `needs_qc_reports`。这表示出图阶段已完成、下一业务阶段是 QC，不代表 QC 已执行。
 2. **②b 详情图比例决策已经闭环**：继续保留现有 `1024x1536` 请求映射，不裁剪、不缩放、不拉伸主体。供应端原图已是 3:4 时保持原文件；返回其他竖版比例时先保存供应端原图，再只扩展不足方向的柔和虚化背景。当前实际扩展的是 `detail_02` 与 `detail_05`，两张原图均保存在外部工作区 `artifacts/audit/render_originals`，中央原图区域逐像素一致。
-3. **下一闸门是正式 QC，当前继续冻结**：不得再提交 `run: renders`/`retry: renders`，不得追加或重生成图片，也不得执行 QC、ComfyUI 或 repaired；manifest、schema、Skill、fork、提示词、尺寸映射和正式上游产物均保持不变。只有用户另行批准正式 QC 方案后才能继续。
-4. **模型 API 执行器**：为 identity/style/angle/vc/qc 等非生图步骤增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。
+3. **下一闸门是正式 QC，当前继续冻结**：离线 `codex-dev / qc` 适配器已经完成，不代表真实 QC 已获准。不得再提交 `run: renders`/`retry: renders`，不得追加或重生成图片，也不得执行 `run: qc`、ComfyUI 或 repaired；manifest、schema、Skill、fork、提示词、尺寸映射和正式上游产物均保持不变。只有用户另行批准正式 QC 验收后才能继续。
+4. **模型 API 执行器**：为 identity/style/angle/vc 等非生图步骤及未来中央化 QC 增加独立的文本/视觉模型适配器；不得把这些业务步骤写死到 Codex。现有 `codex-dev / qc` 只作为可选开发适配器，不改变中央后台方向。
 5. **中央后台**：把当前本机 `--serve` 逐步迁移为公司统一服务，包括任务队列、用户权限、中央存储、密钥管理和实时状态；同事最终只使用浏览器画布。
 6. fork 上游同步演练（锁 tag、合并后逐条复核 FORK_NOTES.md + 跑全仓测试 + 桥接冒烟）。
 7. ✅ **已完成：`workflow_doctor` 启动清理改为显式启用**：默认运行仅刷新校验报告与 `current_state`，不生成清理候选、不移入回收站；仅显式 `--apply-startup-cleanup` 时启用清理，兼容 `--skip-startup-cleanup`。操作手册已补充删除能力、无确认弹窗与运行前审阅要求。
