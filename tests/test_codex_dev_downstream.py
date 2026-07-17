@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -33,6 +34,16 @@ NOTES = (
     "主图手持数量: 2 | 详情图手持数量: 1 | "
     "允许清水场景: 是 | 禁止倾倒与加热: 是 | D槽位不补拍: 是"
 )
+
+STRUCTURED_FACTS = {
+    "product_type": "家居盛水水壶",
+    "height_cm": 25,
+    "handheld_main": 2,
+    "handheld_detail": 1,
+    "allow_clear_water": True,
+    "forbid_pouring_and_heating": True,
+    "missing_d_no_retake": True,
+}
 
 
 FINAL_PROMPT_BINDINGS = {
@@ -143,6 +154,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
         *,
         angle_inventory: dict[str, object] | None = None,
         variable_config: dict[str, object] | None = None,
+        requirements_manifest: dict[str, object] | None = None,
     ) -> str:
         return build_final_prompt_batch_prompt(
             mode=mode,
@@ -152,7 +164,9 @@ class CodexDevDownstreamTest(unittest.TestCase):
             style_master={"artifact_type": "style_master"},
             angle_inventory=angle_inventory or final_prompt_angle_inventory(),
             variable_config=variable_config or final_prompt_variable_config(mode, enabled_ids),
-            requirements=parse_user_confirmed_requirements({"notes": NOTES}),
+            requirements=parse_user_confirmed_requirements(
+                requirements_manifest or {"notes": NOTES}
+            ),
         )
 
     def test_final_prompt_builder_lists_main_handheld_literal_contract_per_config(self) -> None:
@@ -232,6 +246,34 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 self.assertIn("必须且只返回这些配置", prompt)
                 self.assertIn("只返回一个 JSON 对象", prompt)
 
+    def test_final_prompt_builder_applies_scene_switches_without_action_authorization(self) -> None:
+        no_clear_or_action_ban = self.build_final_prompt(
+            "main",
+            {"main_02", "main_05"},
+            requirements_manifest={
+                "user_confirmed_facts": {
+                    **STRUCTURED_FACTS,
+                    "allow_clear_water": False,
+                    "forbid_pouring_and_heating": False,
+                }
+            },
+        )
+        clear_allowed_without_action_ban = self.build_final_prompt(
+            "main",
+            {"main_02", "main_05"},
+            requirements_manifest={
+                "user_confirmed_facts": {
+                    **STRUCTURED_FACTS,
+                    "forbid_pouring_and_heating": False,
+                }
+            },
+        )
+
+        self.assertIn("禁止 D、被拒绝源图、清水场景，以及容量", no_clear_or_action_ban)
+        self.assertIn("禁止 D、被拒绝源图，以及容量", clear_allowed_without_action_ban)
+        for prompt in (no_clear_or_action_ban, clear_allowed_without_action_ban):
+            self.assertNotIn("禁止 D、被拒绝源图、倾倒、加热", prompt)
+
     def test_final_prompt_builder_disambiguates_negative_handheld_substring(self) -> None:
         prompt = self.build_final_prompt("main", {"main_02", "main_05"})
 
@@ -301,6 +343,199 @@ class CodexDevDownstreamTest(unittest.TestCase):
 
         self.assertEqual("codex-dev 缺少有效的用户确认商品信息", str(caught.exception))
         self.assertNotIn("secret-token-123", str(caught.exception))
+
+    def test_structured_user_requirements_take_precedence_over_notes(self) -> None:
+        manifest = {
+            "notes": NOTES,
+            "user_confirmed_facts": {
+                **STRUCTURED_FACTS,
+                "product_type": "玻璃收纳罐",
+                "height_cm": 31,
+                "allow_clear_water": False,
+            },
+        }
+
+        requirements = parse_user_confirmed_requirements(manifest)
+
+        self.assertEqual("玻璃收纳罐", requirements.product_type)
+        self.assertEqual(31, requirements.height_cm)
+        self.assertFalse(requirements.allow_clear_water)
+
+    def test_structured_user_requirements_require_exact_keys_and_types(self) -> None:
+        invalid_facts = (
+            {key: value for key, value in STRUCTURED_FACTS.items() if key != "height_cm"},
+            {**STRUCTURED_FACTS, "unexpected": "private-value"},
+            {**STRUCTURED_FACTS, "product_type": "   "},
+            {**STRUCTURED_FACTS, "height_cm": True},
+            {**STRUCTURED_FACTS, "handheld_main": 3},
+            {**STRUCTURED_FACTS, "handheld_detail": 2},
+            {**STRUCTURED_FACTS, "allow_clear_water": 1},
+            {**STRUCTURED_FACTS, "forbid_pouring_and_heating": "是"},
+            {**STRUCTURED_FACTS, "missing_d_no_retake": None},
+        )
+        for facts in invalid_facts:
+            with self.subTest(facts=facts):
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    parse_user_confirmed_requirements(
+                        {"notes": NOTES, "user_confirmed_facts": facts}
+                    )
+                self.assertEqual(
+                    "codex-dev 缺少有效的用户确认商品信息",
+                    str(caught.exception),
+                )
+                self.assertNotIn("private-value", str(caught.exception))
+
+    def test_legacy_notes_accept_any_nonempty_product_type_and_exact_booleans(self) -> None:
+        requirements = parse_user_confirmed_requirements(
+            {
+                "notes": (
+                    "用户确认产品类型: 玻璃收纳罐 | 用户确认高度厘米: 31 | "
+                    "主图手持数量: 2 | 详情图手持数量: 1 | "
+                    "允许清水场景: 否 | 禁止倾倒与加热: 否 | D槽位不补拍: 否"
+                )
+            }
+        )
+
+        self.assertEqual("玻璃收纳罐", requirements.product_type)
+        self.assertEqual(31, requirements.height_cm)
+        self.assertFalse(requirements.allow_clear_water)
+        self.assertFalse(requirements.forbid_pouring_and_heating)
+        self.assertFalse(requirements.missing_d_no_retake)
+
+        with self.assertRaises(ExecutorExecutionError):
+            parse_user_confirmed_requirements(
+                {"notes": NOTES.replace("允许清水场景: 是", "允许清水场景: 已确认")}
+            )
+
+    def test_structured_and_legacy_water_facts_compile_identical_prompt_bytes(self) -> None:
+        legacy = self.build_final_prompt("main", {"main_02", "main_05"})
+        structured = self.build_final_prompt(
+            "main",
+            {"main_02", "main_05"},
+            requirements_manifest={
+                "user_confirmed_facts": {**STRUCTURED_FACTS, "product_type": "水壶"}
+            },
+        )
+
+        self.assertEqual(legacy.encode("utf-8"), structured.encode("utf-8"))
+
+    def test_manifest_template_is_a_non_executable_confirmation_skeleton(self) -> None:
+        template = json.loads(
+            (ROOT / "manifests" / "batch_manifest.template.json").read_text(encoding="utf-8")
+        )
+
+        self.assertEqual(
+            {
+                "product_type": "",
+                "height_cm": None,
+                "handheld_main": None,
+                "handheld_detail": None,
+                "allow_clear_water": None,
+                "forbid_pouring_and_heating": None,
+                "missing_d_no_retake": None,
+            },
+            template["user_confirmed_facts"],
+        )
+        with self.assertRaises(ExecutorExecutionError):
+            parse_user_confirmed_requirements(template)
+
+    def test_manifest_builder_dry_run_emits_structured_facts_without_writing(self) -> None:
+        product_id = "__structured_dry_run_test__"
+        manifest_path = ROOT / "manifests" / f"{product_id}.batch_manifest.json"
+        asset_manifest_path = ROOT / "manifests" / f"{product_id}.asset_manifest.json"
+        input_path = ROOT / "inputs" / "products" / product_id
+        artifact_path = ROOT / "artifacts" / product_id
+        self.assertFalse(manifest_path.exists())
+        command = [
+            sys.executable,
+            str(ROOT / "scripts" / "build_batch_manifest.py"),
+            "--product-id",
+            product_id,
+            "--product-type",
+            "玻璃收纳罐",
+            "--height-cm",
+            "31",
+            "--handheld-main",
+            "2",
+            "--handheld-detail",
+            "1",
+            "--allow-clear-water",
+            "false",
+            "--forbid-pouring-and-heating",
+            "true",
+            "--missing-d-no-retake",
+            "false",
+            "--dry-run",
+        ]
+
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        result = json.loads(completed.stdout)
+        self.assertEqual(
+            {
+                **STRUCTURED_FACTS,
+                "product_type": "玻璃收纳罐",
+                "height_cm": 31,
+                "allow_clear_water": False,
+                "missing_d_no_retake": False,
+            },
+            result["manifest_data"]["user_confirmed_facts"],
+        )
+        self.assertFalse(manifest_path.exists())
+        self.assertFalse(asset_manifest_path.exists())
+        self.assertFalse(input_path.exists())
+        self.assertFalse(artifact_path.exists())
+
+    def test_manifest_builder_invalid_confirmation_writes_nothing(self) -> None:
+        product_id = "__invalid_structured_dry_run_test__"
+        manifest_path = ROOT / "manifests" / f"{product_id}.batch_manifest.json"
+        asset_manifest_path = ROOT / "manifests" / f"{product_id}.asset_manifest.json"
+        input_path = ROOT / "inputs" / "products" / product_id
+        artifact_path = ROOT / "artifacts" / product_id
+        command = [
+            sys.executable,
+            str(ROOT / "scripts" / "build_batch_manifest.py"),
+            "--product-id",
+            product_id,
+            "--product-type",
+            "玻璃收纳罐",
+            "--height-cm",
+            "31",
+            "--handheld-main",
+            "3",
+            "--handheld-detail",
+            "1",
+            "--allow-clear-water",
+            "false",
+            "--forbid-pouring-and-heating",
+            "true",
+            "--missing-d-no-retake",
+            "false",
+            "--dry-run",
+        ]
+
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertNotEqual(0, completed.returncode)
+        self.assertFalse(manifest_path.exists())
+        self.assertFalse(asset_manifest_path.exists())
+        self.assertFalse(input_path.exists())
+        self.assertFalse(artifact_path.exists())
 
     def test_artifact_file_resolves_list_directory_under_artifacts_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

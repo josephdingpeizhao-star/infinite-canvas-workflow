@@ -134,6 +134,16 @@ DOWNSTREAM_NOTES = (
     "允许清水场景: 是 | 禁止倾倒与加热: 是 | D槽位不补拍: 是"
 )
 
+STRUCTURED_FACTS = {
+    "product_type": "家居盛水水壶",
+    "height_cm": 25,
+    "handheld_main": 2,
+    "handheld_detail": 1,
+    "allow_clear_water": True,
+    "forbid_pouring_and_heating": True,
+    "missing_d_no_retake": True,
+}
+
 MAIN_REQUIRED_OVERRIDE_FIELDS = (
     "主图核心承诺",
     "绑定角度槽位",
@@ -485,6 +495,19 @@ class FakeResponse:
 
 
 class CodexDevFixture(unittest.TestCase):
+    def with_structured_facts(
+        self,
+        context: ExecutorContext,
+        **overrides: object,
+    ) -> ExecutorContext:
+        manifest = copy.deepcopy(context.manifest)
+        manifest["user_confirmed_facts"] = {**STRUCTURED_FACTS, **overrides}
+        return ExecutorContext(
+            manifest=manifest,
+            manifest_path=context.manifest_path,
+            environment=context.environment,
+        )
+
     def make_fixture(self, root: Path) -> tuple[ExecutorContext, Path]:
         skill_dir = root / ".agents" / "skills" / "product-identity-archive"
         reference_dir = skill_dir / "references"
@@ -912,6 +935,189 @@ class CodexDevExecutorTest(CodexDevFixture):
 
             self.assertEqual((output_path,), result.outputs)
             self.assertEqual(2, handheld_count(json.loads(output_path.read_text(encoding="utf-8"))))
+
+    def test_main_vc_uses_structured_arbitrary_product_type_over_legacy_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path = self.make_downstream_fixture(root)
+            context = self.with_structured_facts(
+                context,
+                product_type="电热水壶",
+            )
+            response = valid_main_variable_response()
+            response["common_constraints"]["产品类型"] = "电热水壶"
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(response, ensure_ascii=False),
+                    thread_id="thread-structured-category",
+                )
+            )
+
+            result = CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                ExecutionRequest(step="main_vc")
+            )
+
+            self.assertEqual((output_path,), result.outputs)
+            prompt = transport.calls[0][0]
+            self.assertIn('"product_type": "电热水壶"', prompt)
+
+    def test_clear_water_false_rejects_positive_clear_water_in_all_three_stages(self) -> None:
+        cases: list[tuple[str, object, object]] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+
+            main_context, main_output = self.make_downstream_fixture(root / "main")
+            main_context = self.with_structured_facts(main_context, allow_clear_water=False)
+            main_transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                    thread_id="thread-main-clear-water-rejected",
+                )
+            )
+            cases.append(("main_vc", (main_context, main_transport), main_output))
+
+            detail_context, detail_output, _main_path = self.make_detail_fixture(root / "detail")
+            detail_context = self.with_structured_facts(detail_context, allow_clear_water=False)
+            detail_transport = FakeTransport(
+                detail_chunk_turns(valid_detail_chunk_responses(), thread_id="thread-detail-clear-water-rejected")
+            )
+            cases.append(("detail_vc", (detail_context, detail_transport), detail_output))
+
+            final_context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(
+                root / "final"
+            )
+            final_context = self.with_structured_facts(final_context, allow_clear_water=False)
+            final_transport = FakeTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
+                        thread_id="thread-final-clear-water-rejected",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
+                        thread_id="unused",
+                    ),
+                ]
+            )
+            cases.append(("final_prompts", (final_context, final_transport), final_dir))
+
+            for step, context_and_transport, output in cases:
+                with self.subTest(step=step):
+                    case_context, case_transport = context_and_transport
+                    with self.assertRaises(ExecutorExecutionError) as caught:
+                        CodexDevExecutor(
+                            case_context,
+                            transport=case_transport,
+                            repository_root=case_context.manifest_path.parents[1],
+                        ).execute(ExecutionRequest(step=step))
+                    self.assertIn("场景边界", str(caught.exception))
+                    self.assertFalse(output.exists())
+                    prompt = case_transport.calls[0][0]
+                    if step == "final_prompts":
+                        self.assertIn("清水场景", prompt)
+                    else:
+                        self.assertIn("只允许空置", prompt)
+
+    def test_clear_water_false_accepts_explicit_negative_guardrails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path = self.make_downstream_fixture(root)
+            context = self.with_structured_facts(context, allow_clear_water=False)
+            response = valid_main_variable_response()
+            response["common_constraints"]["动作边界"] = "禁止清水；禁止倾倒、加热、沸腾或热水动作"
+            for config in response["configs"]:
+                config["per_image_overrides"]["内容物状态"] = "空置，禁止出现清水"
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(response, ensure_ascii=False),
+                    thread_id="thread-no-clear-water",
+                )
+            )
+
+            result = CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                ExecutionRequest(step="main_vc")
+            )
+
+            self.assertEqual((output_path,), result.outputs)
+            self.assertIn("只允许空置", transport.calls[0][0])
+
+    def test_pouring_and_heating_switch_controls_positive_action_rejection(self) -> None:
+        for forbidden in (True, False):
+            with self.subTest(forbidden=forbidden), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                context, output_path = self.make_downstream_fixture(root)
+                context = self.with_structured_facts(
+                    context,
+                    forbid_pouring_and_heating=forbidden,
+                )
+                response = valid_main_variable_response()
+                response["configs"][0]["per_image_overrides"]["内容物状态"] = (
+                    "清水自然倾倒展示，禁止改变产品身份"
+                )
+                transport = FakeTransport(
+                    CodexTurnResult(
+                        text=json.dumps(response, ensure_ascii=False),
+                        thread_id=f"thread-action-{forbidden}",
+                    )
+                )
+                executor = CodexDevExecutor(context, transport=transport, repository_root=root)
+
+                if forbidden:
+                    with self.assertRaises(ExecutorExecutionError) as caught:
+                        executor.execute(ExecutionRequest(step="main_vc"))
+                    self.assertIn("场景边界", str(caught.exception))
+                    self.assertFalse(output_path.exists())
+                else:
+                    result = executor.execute(ExecutionRequest(step="main_vc"))
+                    self.assertEqual((output_path,), result.outputs)
+                    self.assertNotIn("禁止倾倒、沸腾、炉灶加热、热水动作", transport.calls[0][0])
+
+    def test_missing_d_requires_confirmation_before_transport(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path = self.make_downstream_fixture(root)
+            context = self.with_structured_facts(context, missing_d_no_retake=False)
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                    thread_id="unused",
+                )
+            )
+
+            with self.assertRaises(ExecutorExecutionError) as caught:
+                CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                    ExecutionRequest(step="main_vc")
+                )
+
+            self.assertIn("D 槽位", str(caught.exception))
+            self.assertFalse(output_path.exists())
+            self.assertEqual([], transport.calls)
+
+    def test_available_d_does_not_block_but_remains_excluded_from_downstream(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path = self.make_downstream_fixture(root)
+            angle_path = (
+                Path(context.manifest["artifacts"]["angle_inventory"])
+                / "angle_inventory.json"
+            )
+            angle = json.loads(angle_path.read_text(encoding="utf-8"))
+            angle["missing_angle_slots"] = []
+            angle_path.write_text(json.dumps(angle, ensure_ascii=False), encoding="utf-8")
+            context = self.with_structured_facts(context, missing_d_no_retake=False)
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                    thread_id="thread-d-available",
+                )
+            )
+
+            result = CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                ExecutionRequest(step="main_vc")
+            )
+
+            self.assertEqual((output_path,), result.outputs)
+            self.assertNotIn("img_004", transport.calls[0][0])
 
     def test_main_vc_rejects_invalid_responses_before_formal_write(self) -> None:
         def five_configs(value: dict[str, object]) -> None:

@@ -119,6 +119,17 @@ class UserConfirmedRequirements:
     missing_d_no_retake: bool
 
 
+_USER_CONFIRMED_FACT_KEYS = (
+    "product_type",
+    "height_cm",
+    "handheld_main",
+    "handheld_detail",
+    "allow_clear_water",
+    "forbid_pouring_and_heating",
+    "missing_d_no_retake",
+)
+
+
 class DetailChunkTransportCorruption(ExecutorExecutionError):
     """A detail chunk was damaged in transport and may be resent in full."""
 
@@ -139,35 +150,75 @@ def _required_match(notes: str, pattern: str) -> str:
 
 
 def _yes_value(notes: str, label: str) -> bool:
-    return _required_match(notes, rf"{re.escape(label)}\s*:\s*([^|]+)").strip() == "是"
+    raw = _required_match(notes, rf"{re.escape(label)}\s*:\s*([^|]+)").strip()
+    if raw not in {"是", "否"}:
+        raise ValueError("invalid boolean requirement")
+    return raw == "是"
+
+
+def _validated_user_requirements(requirements: UserConfirmedRequirements) -> UserConfirmedRequirements:
+    if (
+        not requirements.product_type
+        or requirements.height_cm <= 0
+        or requirements.handheld_main != 2
+        or requirements.handheld_detail != 1
+    ):
+        raise ValueError("invalid requirement")
+    return requirements
+
+
+def _parse_structured_user_requirements(raw: Any) -> UserConfirmedRequirements:
+    if not isinstance(raw, Mapping) or set(raw) != set(_USER_CONFIRMED_FACT_KEYS):
+        raise ValueError("invalid structured requirements")
+    product_type = raw["product_type"]
+    height_cm = raw["height_cm"]
+    handheld_main = raw["handheld_main"]
+    handheld_detail = raw["handheld_detail"]
+    boolean_values = (
+        raw["allow_clear_water"],
+        raw["forbid_pouring_and_heating"],
+        raw["missing_d_no_retake"],
+    )
+    if (
+        not isinstance(product_type, str)
+        or type(height_cm) is not int
+        or type(handheld_main) is not int
+        or type(handheld_detail) is not int
+        or any(type(value) is not bool for value in boolean_values)
+    ):
+        raise ValueError("invalid structured requirement types")
+    return _validated_user_requirements(
+        UserConfirmedRequirements(
+            product_type=product_type.strip(),
+            height_cm=height_cm,
+            handheld_main=handheld_main,
+            handheld_detail=handheld_detail,
+            allow_clear_water=boolean_values[0],
+            forbid_pouring_and_heating=boolean_values[1],
+            missing_d_no_retake=boolean_values[2],
+        )
+    )
 
 
 def parse_user_confirmed_requirements(manifest: Mapping[str, Any]) -> UserConfirmedRequirements:
-    """Parse only the controlled user facts recorded in manifest notes."""
+    """Read structured user facts, with notes retained only for legacy manifests."""
 
     try:
+        if "user_confirmed_facts" in manifest:
+            return _parse_structured_user_requirements(manifest["user_confirmed_facts"])
         notes = str(manifest.get("notes") or "")
-        requirements = UserConfirmedRequirements(
-            product_type=_required_match(notes, r"用户确认产品类型\s*:\s*([^|]+)").strip(),
-            height_cm=int(_required_match(notes, r"用户确认高度厘米\s*:\s*(\d+)")),
-            handheld_main=int(_required_match(notes, r"主图手持数量\s*:\s*(\d+)")),
-            handheld_detail=int(_required_match(notes, r"详情图手持数量\s*:\s*(\d+)")),
-            allow_clear_water=_yes_value(notes, "允许清水场景"),
-            forbid_pouring_and_heating=_yes_value(notes, "禁止倾倒与加热"),
-            missing_d_no_retake=_yes_value(notes, "D槽位不补拍"),
+        return _validated_user_requirements(
+            UserConfirmedRequirements(
+                product_type=_required_match(notes, r"用户确认产品类型\s*:\s*([^|]+)").strip(),
+                height_cm=int(_required_match(notes, r"用户确认高度厘米\s*:\s*(\d+)")),
+                handheld_main=int(_required_match(notes, r"主图手持数量\s*:\s*(\d+)")),
+                handheld_detail=int(_required_match(notes, r"详情图手持数量\s*:\s*(\d+)")),
+                allow_clear_water=_yes_value(notes, "允许清水场景"),
+                forbid_pouring_and_heating=_yes_value(notes, "禁止倾倒与加热"),
+                missing_d_no_retake=_yes_value(notes, "D槽位不补拍"),
+            )
         )
-        if (
-            requirements.product_type != "水壶"
-            or requirements.height_cm <= 0
-            or requirements.handheld_main < 0
-            or requirements.handheld_detail < 0
-            or not requirements.allow_clear_water
-            or not requirements.forbid_pouring_and_heating
-            or not requirements.missing_d_no_retake
-        ):
-            raise ValueError("invalid requirement")
-        return requirements
-    except (TypeError, ValueError):
+    except (KeyError, TypeError, ValueError):
         raise ExecutorExecutionError("codex-dev 缺少有效的用户确认商品信息") from None
 
 
@@ -281,6 +332,19 @@ def qualified_angle_assets(angle_doc: Mapping[str, Any]) -> dict[str, dict[str, 
     if not qualified:
         raise ExecutorExecutionError("codex-dev 没有可用于后续配置的合格角度源图")
     return qualified
+
+
+def _validate_missing_d_confirmation(
+    angle_doc: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
+) -> None:
+    missing = angle_doc.get("missing_angle_slots")
+    if (
+        not requirements.missing_d_no_retake
+        and isinstance(missing, list)
+        and any(isinstance(slot, str) and slot.strip() == "D" for slot in missing)
+    ):
+        raise ExecutorExecutionError("codex-dev 检测到 D 槽位缺失且尚未确认不补拍")
 
 
 def stable_json_sha256(value: Any) -> str:
@@ -637,6 +701,80 @@ def _reject_unsupported_claims(value: Mapping[str, Any], height_cm: int, label: 
         raise ExecutorExecutionError(_format_unsupported_claims_error(label, violations))
 
 
+_SCENE_NEGATION_MARKERS = (
+    "禁止",
+    "不得",
+    "不要",
+    "不可",
+    "不允许",
+    "不出现",
+    "不生成",
+    "避免",
+    "未出现",
+    "没有",
+    "无清水",
+)
+_PROHIBITED_ACTION_TERMS = ("倾倒", "倒水", "倒出", "加热", "沸腾", "炉灶", "热水")
+
+
+def _term_has_scene_negation(clause: str, term_start: int) -> bool:
+    prefix = clause[:term_start]
+    return any(marker in prefix for marker in _SCENE_NEGATION_MARKERS) or bool(
+        re.search(r"(?:不|无|未)(?:会|再|进行|出现|使用|包含|装入|呈现)?\s*$", prefix)
+    )
+
+
+def _reject_scene_policy_violations(
+    value: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
+    label: str,
+) -> None:
+    for _path, text in _walk_string_contexts(value):
+        scene_text = text.replace(requirements.product_type, "")
+        if not requirements.allow_clear_water:
+            for clause in re.split(r"[，,。；;\n]+", scene_text):
+                clear_water_at = clause.find("清水")
+                if clear_water_at >= 0 and not _term_has_scene_negation(clause, clear_water_at):
+                    raise ExecutorExecutionError(f"codex-dev 收到的{label}违反用户确认场景边界")
+        if requirements.forbid_pouring_and_heating:
+            for sentence in re.split(r"[。；;\n]+", scene_text):
+                for clause in re.split(r"[，,]+", sentence):
+                    term_positions = [
+                        clause.find(term)
+                        for term in _PROHIBITED_ACTION_TERMS
+                        if term in clause
+                    ]
+                    if not term_positions:
+                        continue
+                    if not _term_has_scene_negation(clause, min(term_positions)):
+                        raise ExecutorExecutionError(
+                            f"codex-dev 收到的{label}违反用户确认场景边界"
+                        )
+
+
+def _variable_scene_rule(requirements: UserConfirmedRequirements) -> str:
+    content_rule = (
+        "允许空壶或清水静置"
+        if requirements.allow_clear_water
+        else "只允许空置，不得出现清水或其他内容物"
+    )
+    if requirements.forbid_pouring_and_heating:
+        return f"{content_rule}；禁止倾倒、沸腾、炉灶加热、热水动作。"
+    return f"{content_rule}。"
+
+
+def _final_forbidden_rule(requirements: UserConfirmedRequirements) -> str:
+    prohibited = ["D", "被拒绝源图"]
+    if not requirements.allow_clear_water:
+        prohibited.append("清水场景")
+    if requirements.forbid_pouring_and_heating:
+        prohibited.extend(("倾倒", "加热", "沸腾", "热水动作"))
+    return (
+        f"禁止 {'、'.join(prohibited)}，以及容量、其他尺寸、重量、具体材质、耐热、认证、"
+        "品牌和型号等未确认事实。"
+    )
+
+
 def _load_skill_text(repository_root: Path, skill_name: str, label: str) -> str:
     try:
         text = (repository_root / ".agents" / "skills" / skill_name / "SKILL.md").read_text(
@@ -673,8 +811,13 @@ def build_variable_config_prompt(
         f"runtime_rule_slices/{skill_name}.runtime_rule_slices.json",
         label,
     )
+    _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
-    allowed_angles = [qualified[key] for key in sorted(qualified)]
+    allowed_angles = [
+        qualified[key]
+        for key in sorted(qualified)
+        if str(qualified[key].get("angle_slot") or "").strip() in {"A", "B", "C"}
+    ]
     facts = {
         "product_type": requirements.product_type,
         "height": f"约 {requirements.height_cm} 厘米",
@@ -704,7 +847,7 @@ def build_variable_config_prompt(
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
 尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”；不得补写容量、其他尺寸、重量、具体材质、耐热、认证、品牌或型号。
-允许空壶或清水静置；禁止倾倒、沸腾、炉灶加热、热水动作。手持只能自然握住把手、轻扶壶身或轻微拿起，不能改变绑定角度。
+{_variable_scene_rule(requirements)}手持只能自然握住把手、轻扶壶身或轻微拿起，不能改变绑定角度。
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
 【Skill 原文】
@@ -736,7 +879,7 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
 所有尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”。模块05是唯一尺寸标注图，只能标注“高度约 {requirements.height_cm} 厘米”，必须明确禁止容量、宽度、直径、重量、材质等未确认参数，并且不得启用手持；其他模块不得启用尺寸标注信息。
-详情页全批恰好一项启用手持，只能自然握住把手、轻扶壶身或轻微拿起；允许空壶或清水静置；禁止倾倒、沸腾、炉灶加热、热水动作。
+详情页全批恰好一项启用手持，只能自然握住把手、轻扶壶身或轻微拿起；{_variable_scene_rule(requirements)}
 模块01须承接正式主图配置中的已支持核心承诺，但不得复制或新增任何未确认说法。
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
@@ -1019,6 +1162,7 @@ def _validate_detail_chunk_business_content(
 
     label = "详情图变量配置"
     _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_scene_policy_violations(value, requirements, label)
     if chunk_index == 1 and (
         not isinstance(value.get("common_constraints"), dict)
         or not value["common_constraints"]
@@ -1168,6 +1312,7 @@ def parse_variable_config_response(
         raise ExecutorExecutionError(f"codex-dev 收到的{label}包含越界顶层字段")
     _reject_unicode_damage_or_forbidden_keys(value, label)
     _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_scene_policy_violations(value, requirements, label)
 
     common = value.get("common_constraints")
     configs = value.get("configs")
@@ -1307,8 +1452,13 @@ def build_final_prompt_batch_prompt(
         "runtime_rule_slices/final-prompt-compiler.runtime_rule_slices.json",
         "最终提示词",
     )
+    _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
-    allowed_angles = [qualified[key] for key in sorted(qualified)]
+    allowed_angles = [
+        qualified[key]
+        for key in sorted(qualified)
+        if str(qualified[key].get("angle_slot") or "").strip() in {"A", "B", "C"}
+    ]
     configs = _validate_variable_config_document(
         variable_config,
         mode=mode,
@@ -1402,7 +1552,7 @@ def build_final_prompt_batch_prompt(
 这是提示词编译，不生成图片、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须且只返回这些配置：{json.dumps(expected_ids, ensure_ascii=False)}。
 每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 A/B/C 槽位、画布比例 {expected_ratio}、产品高度约 {requirements.height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。
-恰好 {expected_handheld} 份保持启用手持；禁止 D、被拒绝源图、倾倒、加热、沸腾、热水动作，以及容量、其他尺寸、重量、具体材质、耐热、认证、品牌和型号等未确认事实。
+恰好 {expected_handheld} 份保持启用手持；{_final_forbidden_rule(requirements)}
 不得新增变量配置没有的道具、文字、卖点或页面任务，不得把 Skill 或运行规则正文复制成最终画面要求。
 只返回一个 JSON 对象，形状必须严格为 {{"prompts":[{{"config_id":"...","final_prompt":"...","negative_prompt":"..."}}]}}，不要 Markdown、说明、上游路径、图片、QC 或其他字段。
 
@@ -1486,6 +1636,7 @@ def parse_final_prompt_batch_response(
     if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
         raise ExecutorExecutionError(f"codex-dev 收到的{label}包含损坏字符")
     _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_scene_policy_violations(value, requirements, label)
 
     configs = _validate_variable_config_document(variable_config, mode=mode, product_id=product_id)
     expected_ids = [config["config_id"] for config in configs]

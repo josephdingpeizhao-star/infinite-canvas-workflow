@@ -6,6 +6,15 @@
   "requested_outputs": [],
   "current_stage": "not_started",
   "next_skill": "workflow-router",
+  "user_confirmed_facts": {
+    "product_type": "",
+    "height_cm": null,
+    "handheld_main": null,
+    "handheld_detail": null,
+    "allow_clear_water": null,
+    "forbid_pouring_and_heating": null,
+    "missing_d_no_retake": null
+  },
   "workspace": {
     "mode": "repository",
     "root": "",

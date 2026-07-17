@@ -58,6 +58,25 @@ def absolute_text(path: Path) -> str:
     return str(path.resolve())
 
 
+def positive_integer(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be a positive integer") from None
+    if value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return value
+
+
+def strict_boolean(raw: str) -> bool:
+    normalized = raw.strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise argparse.ArgumentTypeError("must be true or false")
+
+
 def ensure_dirs(paths: list[Path], *, dry_run: bool) -> None:
     if dry_run:
         return
@@ -168,6 +187,13 @@ def apply_repository_workspace(manifest: dict, root: Path, product_id: str) -> t
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create a product batch manifest and workspace folders.")
     parser.add_argument("--product-id", required=True, help="Product id used for the manifest name and batch id.")
+    parser.add_argument("--product-type", required=True, help="Confirmed non-empty product category.")
+    parser.add_argument("--height-cm", required=True, type=positive_integer)
+    parser.add_argument("--handheld-main", required=True, type=int, choices=(2,))
+    parser.add_argument("--handheld-detail", required=True, type=int, choices=(1,))
+    parser.add_argument("--allow-clear-water", required=True, type=strict_boolean)
+    parser.add_argument("--forbid-pouring-and-heating", required=True, type=strict_boolean)
+    parser.add_argument("--missing-d-no-retake", required=True, type=strict_boolean)
     parser.add_argument(
         "--workspace-root",
         help="Optional external run folder. When provided, all batch inputs and outputs are scaffolded there.",
@@ -180,6 +206,10 @@ def main() -> int:
     if not product_id:
         print("product-id must not be empty")
         return 2
+    product_type = args.product_type.strip()
+    if not product_type:
+        print("product-type must not be empty")
+        return 2
 
     manifest = load_template(root)
     manifest["product_id"] = product_id
@@ -188,6 +218,15 @@ def main() -> int:
     manifest["user_declared_set_product"] = False
     manifest["current_stage"] = "not_started"
     manifest["next_skill"] = "workflow-router"
+    manifest["user_confirmed_facts"] = {
+        "product_type": product_type,
+        "height_cm": args.height_cm,
+        "handheld_main": args.handheld_main,
+        "handheld_detail": args.handheld_detail,
+        "allow_clear_water": args.allow_clear_water,
+        "forbid_pouring_and_heating": args.forbid_pouring_and_heating,
+        "missing_d_no_retake": args.missing_d_no_retake,
+    }
 
     if args.workspace_root:
         directories, workspace_paths = apply_external_workspace(manifest, root, product_id, Path(args.workspace_root))
