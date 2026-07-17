@@ -37,7 +37,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | ④ | 暂不做多人协作 | 同上 |
 | ⑤ | 执行层采用可替换执行器边界；Codex 只作为开发工具或可选适配器，正式方向为中央后台直接调用模型 API，不把业务逻辑绑定到 Codex、模型名或供应商 | 2026-07-12 更新 |
 | ⑥ | 布局文件（canvas_layout）进 Git | 同上 |
-| ⑦ | 阶段 5 采用 UI-first：先用 demo 沙盒验证非技术用户的完整操作体验，再接后台。四项护栏固定为仓库事实来源不变、真实执行继续受既有门禁保护、交互原型可丢弃且未经 TDD 不得直接上线、所有界面动作必须经契约清单对账。唯一验收剧本是用户只用界面走完一个 demo 批次的建批、确认、执行状态、QC 人工终审与关账；本阶段不扩展协作、权限、通知或报表 | 2026-07-17 |
+| ⑦ | 阶段 5 采用 UI-first：先用 demo 沙盒验证非技术用户的完整操作体验，再接后台。四项护栏固定为仓库事实来源不变、真实执行继续受既有门禁保护、交互原型可丢弃且未经 TDD 不得直接上线、所有界面动作必须经契约清单对账。唯一验收剧本是用户只用界面走完一个 demo 批次的建批、确认、执行状态、QC 人工终审与关账；本阶段不扩展协作、权限、通知或报表。2026-07-17 修订：界面承载方式改为 Infinite Canvas 画布原生节点卡片；独立轻量操作面板方案已被用户否决，旧线性页面仅作信息架构与文案参考 | 2026-07-17 |
 
 ## 4. 阶段进度台账
 
@@ -50,7 +50,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | 4 | 执行接入（wfrun 运行台 + 事件日志 + --serve 常驻） | ✅ | 6f4e361 | 2026-07-11 深夜现场：9 步全链路画布触发跑通、门禁拒绝、retry；66/66 测试绿 |
 | 4b | 生产图片执行链（prompts-only 门禁 + 索引组装 + image-production） | ✅ 真实出图完成，QC 已验收 | 5f98b35、6f9ffcb | 238/238 测试；真实门禁 pass；14 张正式图完整，QC 后字节数复核不变 |
 | 4c | `codex-dev / qc`（7 个两图批次 + 全批总结） | ✅ 离线 TDD 与真实 QC 均完成；人工终审通过，批次关账 | 634c58f | 260/260 测试；真实报告 175 条、19 issues、19 repair_targets；事件 72 行，路由 `ready` |
-| 5 | 操作界面层（UI-first） | 5A 交互设计稿完成；5B 后台接入待单独批准 | 本次提交 | `design/stage5_ui_prototype/`：9 屏完整流程、12 个静态页面状态、49 项动作契约、10 项后台缺口与两种承载方案；全程仅演示数据、零后台连接 |
+| 5 | 操作界面层（UI-first） | 5A-R 画布原生交互设计稿完成；5B demo 接入待单独批准 | 本次提交 | `design/stage5_canvas_native/`：6 幕画布旅程、9 类节点卡片、49 项既有动作契约差异表与 6 项画布局部行为；全程仅演示数据、零后台连接、零真实调用 |
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
@@ -143,7 +143,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 **主仓库（本仓库）**：
 
 - `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2、生产任务组装与 `image-production` 组合执行器、`codex-dev` identity/style master/angle inventory/main/detail/final-prompts/qc 适配器、QC 专用离线校验与报告装配模块、驱动脚本 spike_canvas_push）。
-- `design/stage5_ui_prototype/`——阶段 5A 的可丢弃静态交互设计稿：覆盖 demo 建批至 QC 关账的 9 屏业务流程、运行中/成功/失败状态、动作契约对账、后台缺口和承载方案；未经 TDD 不得直接固化上线，不连接现有后台、画布、模型或真实批次。
+- `design/stage5_ui_prototype/`——阶段 5A 的旧线性页面设计稿；该承载形态已被用户否决，仅保留作信息架构与文案参考，不连接现有后台、画布、模型或真实批次。
+- `design/stage5_canvas_native/`——阶段 5A-R 的现行画布原生交互设计稿：覆盖 F1—F6 完整 demo 旅程、K01—K09 九类节点卡片、14 张图片结果卡、19 条 QC 问题卡、49 项既有动作契约差异与 fork 实施落点；未经 TDD 不得直接固化上线，不连接任何后台或真实批次。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
 - `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 274 个测试内，运行 `python -m unittest discover -s tests`）。
 
