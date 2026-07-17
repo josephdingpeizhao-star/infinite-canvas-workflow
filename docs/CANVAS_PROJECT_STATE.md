@@ -134,13 +134,15 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 2026-07-17 完成 `shuiping_20260712` 人工终审结案。用户于 2026-07-17 14:25:49 +08:00 明确裁定：“19 条全部裁定为人工复核后可接受，批次终审通过，正式关账。”QC 报告的 19 个 issues 全部处置为“人工复核后可接受”：2 个 minor（`main_03.png` 清水液面真实感，对应全报告唯一 `fail` 检查；`detail_03.png` 清水液面真实感）和 17 个 needs_review 均由用户接受，不进入任何 repair_target 或返修阶段。批次最终交付物为 `outputs\renders` 中 14 张正式 PNG，以及原样保留作为审计记录的唯一 `qc_report.json`；该报告 SHA-256 为 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`。真实路由保持 `ready`，本批次不返修并正式关账；任何将来的图片追加、覆盖或重生成均须重新单独批准。
 
+同日按获批方案完成“管线品类泛化 + 用户确认信息结构化”的纯离线 TDD。新批次 manifest 顶层新增固定七字段 `user_confirmed_facts`：任意非空商品品类、正整数高度、固定主图/详情手持数量 2+1，以及“允许清水”“禁止倾倒与加热”“D 缺失不补拍”三个真实行为开关；缺字段、多字段、类型错误或错误手持数量均在执行前脱敏拒绝。结构化对象优先，历史 manifest 仅在该对象完全不存在时继续使用严格 notes 兼容路径；`shuiping_20260712` 的旧字段解析结果及 main/detail/final 提示词 UTF-8 字节指纹保持不变。清水关闭会在 main/detail/final 三阶段拒绝正向清水描述但允许明确否定语句；动作禁令关闭时不再注入该禁令，也不会把它解释成主动授权；D 缺失而未确认不补拍时在首个传输前阻断，确认不补拍后仍只使用 A/B/C。建批脚本只有收齐七项确认才可创建，`--dry-run` 与非法输入均为零写入，仓库 manifest 继续作为事实入口，外部工作区副本仍只作初始副本。全仓由 260 项增至 274 项并全部离线通过；未新增依赖，未修改 QC、executor 调度、run controller、三段门禁、Schema、Skill、fork、真实 manifest/产物/事件或外部工作区，未启动服务、画布命令、网络、密钥或真实模型调用，也未创建第二批次。第二批次仍等待用户提供实际数据并确认商品品类与七项事实。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
 
 - `canvas-bridge/`——全部桥接逻辑，模块职责见 `canvas-bridge/README.md`（投影 projector、状态读取 state_reader、布局 layout_store、受控编辑 batch_editor、执行接入 run_controller、可替换执行器契约/注册表/组合入口、demo、GPT Image 2、生产任务组装与 `image-production` 组合执行器、`codex-dev` identity/style master/angle inventory/main/detail/final-prompts/qc 适配器、QC 专用离线校验与报告装配模块、驱动脚本 spike_canvas_push）。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 260 个测试内，运行 `python -m unittest discover -s tests`）。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 274 个测试内，运行 `python -m unittest discover -s tests`）。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
