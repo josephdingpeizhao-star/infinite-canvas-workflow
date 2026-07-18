@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-18（《产品形态蓝图 v1.0》定稿并完成 M0“清桌子”：旧九工序监控投影从用户画布退役，日常启动器恢复为只启动 canvas-agent、网页和 Chrome 直达；`shuiping_20260712` 的关账状态、14 张正式 PNG、唯一 QC 报告及长期重生成冻结均保持不变）。
+> 最后更新：2026-07-18（M1-a“工作流机器节点 + 流式占位图”已在 Infinite Canvas fork 中完成纯前端零成本演示：素材连接、固定信息卡、14 张/0 元确认、6+8 逐张上桌、自动连线、避让与重跑保留均通过现场验收；未接后台、模型、真实批次或生产门禁，`shuiping_20260712` 的关账状态与长期重生成冻结保持不变）。
 
 ## 1. 定位与目标
 
@@ -52,7 +52,8 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | 4b | 生产图片执行链（prompts-only 门禁 + 索引组装 + image-production） | ✅ 真实出图完成，QC 已验收 | 5f98b35、6f9ffcb | 238/238 测试；真实门禁 pass；14 张正式图完整，QC 后字节数复核不变 |
 | 4c | `codex-dev / qc`（7 个两图批次 + 全批总结） | ✅ 离线 TDD 与真实 QC 均完成；人工终审通过，批次关账 | 634c58f | 260/260 测试；真实报告 175 条、19 issues、19 repair_targets；事件 72 行，路由 `ready` |
 | 5 | 操作界面层（UI-first） | 5A 线性页面与 5A-R 卡片上画布形态已被 2026-07-18《产品形态蓝图 v1.0》取代；全部设计资产保留作契约、缺口、实现路径与人话文案参考 | 78ff735 | `design/stage5_ui_prototype/`、`design/stage5_canvas_native/` |
-| 6 | 创作工作台 | ✅ M0 清桌子完成；用户画布恢复原生创作台，监控投影退出日常启动，蓝图入账；M1 工作流节点 MVP 待后续单独批准 | 本次提交 | 删除前后画布节点核对、C 类保护、全仓测试与启动器目验 |
+| 6 | 创作工作台 | ✅ M0 清桌子完成；用户画布恢复原生创作台，监控投影退出日常启动，蓝图入账；M1-a 零成本演示已完成，真实接入待后续单独批准 | 80d2e68 | 删除前后画布节点核对、C 类保护、全仓测试与启动器目验 |
+| M1-a | 工作流机器节点 + 流式占位图 | ✅ fork 纯前端 demo 完成；真实信息、后台、模型和生产门禁均未接入 | fork `b240f36`（基线修复）、`b537f3c`（功能） | 7 项 fork 测试、TypeScript、生产构建、28.6 秒现场完整运行；14 张 = 6 主图 + 8 详情图，旧结果保留、无外网请求/控制台错误 |
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
@@ -142,6 +143,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 2026-07-18 用户定稿《产品形态蓝图 v1.0》并批准执行 M0“清桌子”。执行前主仓库为 `78ff735`，仅有意未跟踪的 `启动画布.bat`；274 项测试通过、事件账本 72 行、fork 为 `91e40d04` 且干净。目标画布“无限画布 1”连续读取为 29 个 `shuiping_20260712` 在册投影节点、0 个 `demo_live` 残留、0 个用户自建或未知节点，共 35 条连接；不存在 `--watch` 或 `--serve` 进程。新增 `--clear-projection <manifest>` 前先以假客户端锁定“只删当前活跃且在册节点、未知同前缀与其他节点零触碰”，全仓增至 276 项测试。获批清单逐项复核一致后只提交一次精确删除，等待缓存刷新后画布为 0 节点、0 连接，C 类保持 0→0，视口数值不变。未跟踪启动器随后移除第三服务及其重试分支，保留 agent、web 与 Chrome 直达且继续保持纯 CRLF；蓝图正文写入 `docs/PRODUCT_BLUEPRINT.md`，5A/5A-R 资产保留参考。全过程零真实模型调用、零外网、零密钥、零费用；manifest、schema、scripts、Skill、fork、真实工作区、事件账本、六份上游正式产物、14 张成图与 QC 报告均未修改。撤掉运行台节点后暂时没有生产命令入口；首批已关账且重生成长期冻结，M1 将由工作流节点按钮承接相同门禁语义。
 
+同日用户于 11:56:36 +08:00 批准执行 M1-a。执行前先把 fork 既有 TypeScript 基线错误限定为 `project.tsx` 的一个不可能分支判断，单行修复并以 `b240f36` 独立提交；该修复不改变任何用户行为。随后只在 `D:\dev\infinite-canvas` 的登记锚点和新增文件中实现“生图工作流 · 演示”：工具栏放置机器，至少一张已连接图片才可开始；只读信息固定为保温杯演示、高度 24 厘米、主图 6、详情 8、手持 2+1；每次开始先显示 14 张、0 元、约 30 秒的不可跳过确认卡，取消为零产物；确认后由浏览器本地 Canvas 逐张绘制 6 张主图和 8 张详情占位图，作为普通图片节点自动连回机器并向右避让排布；重新运行保留旧结果，删除、清空、离开和刷新中断均有停止或恢复保护。现场验收使用隔离的临时浏览器画布，不触碰用户“无限画布 1”：无输入拦截、费用卡、取消、刷新恢复、完整运行和再次运行均通过；最终一次完整运行耗时 28.611 秒，新增恰好 14 张（6+8），此前 28 张测试结果全部保留，合计 43 条连线，无重叠、无外网请求、无控制台错误。fork 的 `bun run typecheck`、7 项测试、`bun run build` 与 `git diff --check` 均通过，功能以 `b537f3c` 提交且工作区干净。全过程未新增依赖，未接 canvas-agent/bridge、后台、模型、密钥、网络或真实费用；主仓库代码、manifest、事件、正式产物与真实批次均未修改，本文件是主仓唯一变更。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -150,13 +153,13 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - `design/stage5_ui_prototype/`——阶段 5A 的旧线性页面设计稿；该承载形态已被用户否决，仅保留作信息架构与文案参考，不连接现有后台、画布、模型或真实批次。
 - `design/stage5_canvas_native/`——阶段 5A-R 的现行画布原生交互设计稿：覆盖 F1—F6 完整 demo 旅程、K01—K09 九类节点卡片、14 张图片结果卡、19 条 QC 问题卡、49 项既有动作契约差异与 fork 实施落点；未经 TDD 不得直接固化上线，不连接任何后台或真实批次。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 274 个测试内，运行 `python -m unittest discover -s tests`）。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试（当前含在全仓库 276 个测试内，运行 `python -m unittest discover -s tests`）。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
-- 位置：`D:\dev\infinite-canvas`，分支 `workflow-editor`，当前 @ 91e40d04，上游基线 ebd8ae2（2026-07-09 origin/main）。
-- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——列出全部锚点（截至 2026-07-14 共 8 个，包含 canvas-agent 可选模型、真实 turn status、无新增依赖的测试入口和 Codex stdout 连续 UTF-8 解码）。动 fork 前必读，同步上游后逐条复核。
-- 锚点 #5–#8 及其配套 CHANGELOG、测试登记与 `web/bun.lock`（bun install 副产物）已随 `91e40d04` 提交；fork 工作区在本次存档后应保持干净。
+- 位置：`D:\dev\infinite-canvas`，分支 `workflow-editor`，当前 @ `b537f3c`，上游基线 ebd8ae2（2026-07-09 origin/main）。
+- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——截至 2026-07-18 共 17 个锚点：#5–#8 为 canvas-agent 可选模型、真实 turn status、测试入口和连续 UTF-8 解码；#9 为 TypeScript 基线单行修复；#10–#17 为 M1-a 节点类型、默认规格、专用渲染、工具栏、页面控制器、类型显示、CHANGELOG 与人工待测登记。动 fork 前必读，同步上游后逐条复核。
+- M1-a 新增五个文件：`canvas-workflow-demo.ts`（纯前端合同、时序与布局）、`canvas-workflow-node.tsx`（机器卡与信息卡）、`canvas-workflow-cost-card.tsx`（0 元确认卡）、`use-canvas-workflow-demo.ts`（页面生命周期控制器）、`canvas-workflow-demo.test.ts`（7 项回归测试）。基线修复为 `b240f36`，功能为 `b537f3c`；fork 工作区在本次存档后干净。
 
 **演示工作区（可丢弃）**：`D:\dev\canvas-demo-workspace`，由 `canvas-bridge/make_demo_workspace.py` 管理（`--init/--add-inputs/--advance <步骤>/--reset`），带 `.canvas_demo` 安全标记，绝不写仓库。工作区文件仍保留，但 `demo_live` 的 29 个画布演示节点已于 2026-07-12 清理。
 
@@ -177,7 +180,7 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 - **日常入口：仓库根目录 `启动画布.bat`**。双击后只确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s`（“无限画布 1”项目直达；若更换工作画布，必须同步修改本行与启动器地址）。启动器不再启动真实批次 `--watch`，因此旧九工序节点不会随日常启动重新投影。`--watch` 机制继续保留为经批准的后台只读工具，`--serve` 继续只允许按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
 - 连接凭据：`%USERPROFILE%\.infinite-canvas\canvas-agent.json`（url + token）。**token 不随 agent 重启轮换**（文件存在即沿用）。
 - 用户（非程序员）的工作画布：Chrome 里"无限画布 1"（id hPbkNXg3WA0p2i46VOh3s，localhost:3000）；其浏览器 localStorage 已存 token，刷新自动重连。
-- M0 完成后该画布是原生创作台，不再显示旧运行台或九工序监控节点，暂时也没有生产命令入口。首批已关账且重生成长期冻结，因此没有运营损失；M1 将由“制图机器”工作流节点按钮承接相同门禁语义。
+- M0 完成后该画布是原生创作台，不再显示旧运行台或九工序监控节点。M1-a 已在底部工具栏提供“工作流”按钮，可放置零成本演示机器并生成本地占位图；它不是生产命令入口，不读取真实批次、不调用模型，也不解除首批关账与重生成冻结。真实信息和原门禁语义仍待后续里程碑单独批准接入。
 
 **连接机制要点（2026-07-11 实证）**：
 
@@ -206,7 +209,7 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 ## 8. 产品路线图
 
 1. **M0 清桌子（已完成）**：撤掉旧九工序监控投影，恢复原生创作台；日常启动器不再投影真实批次；《产品形态蓝图 v1.0》入账。
-2. **M1 工作流节点 MVP**：以 demo、零成本方式把“制图机器”节点摆上画布，验证素材、信息卡、节点连线与流式成图交互。
+2. **M1 工作流节点 MVP（M1-a 已完成）**：零成本“制图机器”节点已验证素材输入、固定信息卡、费用确认、节点连线、6+8 流式占位成图、避让和重跑保留；真实业务信息与生产门禁接入尚未开始，需后续单独批准。
 3. **M2 通真电**：接入真实图片流式输出、费用确认卡、QC 角标、收货框关账和单图重做链路。
 4. **M3 AI 助手到岗**：支持自然语言指令、异常翻译和受控查看机器内部状态。
 
