@@ -305,3 +305,20 @@ def execute_step(executor: Executor, step: str, payload: Any = None) -> Executio
     """Invoke an executor without exposing provider details to orchestration."""
 
     return executor.execute(ExecutionRequest(step=step, payload=payload))
+
+
+def execute_step_with_metadata(
+    executor: Executor,
+    step: str,
+    payload: Any = None,
+    *,
+    metadata: dict[str, Any] | None = None,
+) -> ExecutionResult:
+    """M1-b additive entry for a demo run's progress/cancellation callbacks.
+
+    The original ``execute_step`` entry and every real-batch caller remain
+    unchanged.  Metadata is provider-neutral and is used only by the separately
+    registered ``workflow-demo`` adapter.
+    """
+
+    return executor.execute(ExecutionRequest(step=step, payload=payload, metadata=metadata or {}))

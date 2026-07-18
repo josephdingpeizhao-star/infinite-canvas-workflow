@@ -12,6 +12,7 @@ from executor_contract import Executor, ExecutorContext
 from executor_registry import ExecutorRegistry
 from image_production_executor import ImageProductionExecutor
 from openai_image_executor import OpenAIImageExecutor
+from workflow_demo_executor import WorkflowDemoExecutor
 
 
 def _demo_factory(context: ExecutorContext) -> DemoWorkspaceExecutor:
@@ -31,6 +32,13 @@ def build_registry() -> ExecutorRegistry:
     return registry
 
 
+def build_workflow_demo_registry() -> ExecutorRegistry:
+    """M1-b additive registry; the existing four-adapter registry is unchanged."""
+    registry = build_registry()
+    registry.register("workflow-demo", WorkflowDemoExecutor)
+    return registry
+
+
 def build_executor(
     name: str,
     manifest: Mapping[str, Any],
@@ -42,4 +50,6 @@ def build_executor(
         manifest_path=manifest_path,
         environment=os.environ if environment is None else environment,
     )
+    if name == "workflow-demo":
+        return build_workflow_demo_registry().create(name, context)
     return build_registry().create(name, context)

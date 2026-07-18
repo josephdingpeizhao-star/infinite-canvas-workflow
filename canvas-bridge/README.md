@@ -19,6 +19,9 @@
 - `executor_contract.py` / `executor_registry.py`：可替换执行器边界。上层只认识 `ExecutionRequest` / `ExecutionResult` 和执行器名称，不认识供应商 API、模型或 SDK。
 - `executor_factory.py`：组合入口，显式注册具体适配器；新增供应商不修改画布命令和门禁。
 - `demo_executor.py`：现有演示工作区的兼容适配器。
+- `workflow_demo_executor.py`：M1-b 独立的零成本演示执行器。只接受 `renders`，每轮在带 `.canvas_demo` 标记的工作区建立独立目录，原子写出 6 张 `720x720` 主图与 8 张 `720x960` 详情 PNG；每次建目录、临时写入和正式替换前都复核安全标记与解析后路径边界。取消发生在开始前时零目录，运行中断时保留已完成 PNG 且不留临时文件。
+- `workflow_demo_projection.py`：把已经落盘的演示 PNG 逐张投影成普通图片节点并连回工作流机器，节点 id 固定使用 `wfdemo-output:<machine>:<run>:<index>`；只替换同一轮同一张，旧轮结果保留并向右避让。画布中的 data URI 只用于本地 demo 展示，M2 的真实图片交付、存储与访问必须另行设计。
+- `workflow_demo_service.py`：M1-b 常驻桥接服务。只消费 `workflow` 节点中处于 `queued` 的命令，不投影九工序、运行台或日志；命令复用动词白名单、批次路由与注册执行器三段门禁，按文件落盘顺序流式上桌，并用 demo 工作区内事件账本与单实例锁防止重复执行。服务离线、陈旧或非法命令都转成人话状态。
 - `openai_image_executor.py`：GPT Image 2 适配器（默认模型 `gpt-image-2`），纯标准库 HTTP；无参考图走 `/v1/images/generations`，有参考图走 `/v1/images/edits`。HTTP 传输可注入，自动测试不访问真实网络。
 - `render_task_assembler.py`：从 `final_prompt_index.json` 按原顺序组装供应商无关的图片任务。整批先核对提示词、唯一白底参考图和输出边界；主图映射 `1024x1024`，详情图暂映射 `1024x1536`；已有同名 PNG 自动跳过，便于安全续跑。
 - `image_production_executor.py`：生产图片组合执行器 `image-production`，只接受 `integrity` 与 `renders`。前者运行 prompts-only 确定性门禁，后者在双开关通过后复用既有 `openai-image` 逐张执行；任一张失败即停止，已成功图片保留，错误不回显密钥或提示词正文。
@@ -26,8 +29,8 @@
 - 新建批次以 manifest 顶层 `user_confirmed_facts` 为唯一权威用户确认入口，字段固定为 `product_type`、`height_cm`、`handheld_main=2`、`handheld_detail=1` 及三个布尔开关；商品品类只要求非空，不再锁死为水壶。旧 manifest 没有该对象时继续精确解析 `notes`；对象一旦存在就不回退，缺字段、多字段或类型错误均在执行前脱敏拒绝。允许清水为 `false` 时只允许空置；禁止倾倒与加热为 `true` 时拒绝正向动作描述，为 `false` 时不额外注入禁令但也不等于授权；D 缺失且“不补拍”为 `false` 时在传输前阻断，为 `true` 时仍只使用 A/B/C，不启用 D。
 - `codex_dev_qc.py`：`codex-dev / qc` 的纯标准库业务模块。它在首个传输前一次性核对 manifest 路径边界、14 张 PNG 名称与 1:1/3:4 比例、14 份最终提示词绑定、3 张正式手持声明、白底参考图格式、QC Skill + 运行规则 + 三份完整参考正文、`qc_report.schema.json` 合同以及 20/28 MiB 请求上限；随后固定为 7 个两图批次加 1 个不带附件的全批总结，全部在同一 thread 内完成。只有 U+FFFD 或明确 JSON 截断可同线程重发，全局最多 2 次；合法 JSON 业务错误不重试。八批全部通过后才以排他原子方式只写 `qc_report.json`，永不覆盖既有报告，也不改动同目录完整性报告；`adds_new_generation_direction` 由本地固定为 `false`。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
-- `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）。
-- `spike_canvas_push.py`：驱动脚本，见 `--help`。`--clear-projection <manifest>` 只删除指定批次当前活跃且在册的投影节点，并保护其他批次、未知同前缀节点和用户自建节点；`--serve` 正常仍一次提交完整初始投影，若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。
+- `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）；M1-b 只新增 `--prepare-workflow-demo` 分支，补齐 demo 路由所需的最小档案且永不覆盖既有文件。
+- `spike_canvas_push.py`：驱动脚本，见 `--help`。`--clear-projection <manifest>` 只删除指定批次当前活跃且在册的投影节点，并保护其他批次、未知同前缀节点和用户自建节点；`--serve` 正常仍一次提交完整初始投影，若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。M1-b 另增 `--serve-workflow-demo` 与只供人工验收使用的 `--clear-workflow-demo <machine-id>`；后者只删除精确 `wfdemo-output:` 前缀结果，未接入启动器。
 
 ## 前置条件
 
@@ -48,11 +51,14 @@ python canvas-bridge/spike_canvas_push.py --status-demo
 python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
 python canvas-bridge/spike_canvas_push.py --clear-projection <批次manifest>
 python canvas-bridge/spike_canvas_push.py --clear-mine
+python canvas-bridge/spike_canvas_push.py --serve-workflow-demo D:\dev\canvas-demo-workspace\manifests\batch_manifest.json --interval 2
+python canvas-bridge/spike_canvas_push.py --clear-workflow-demo <隔离画布机器id>  # 仅人工验收清理
 
 # 演示工作区（逐阶段点亮）
 python canvas-bridge/make_demo_workspace.py --init
 python canvas-bridge/make_demo_workspace.py --add-inputs
 python canvas-bridge/make_demo_workspace.py --advance identity   # ...直到 qc
+python canvas-bridge/make_demo_workspace.py --prepare-workflow-demo
 python canvas-bridge/make_demo_workspace.py --reset
 
 # 新批次只读预检；去掉 --dry-run 才会创建 manifest 与目录
@@ -62,6 +68,7 @@ python scripts/build_batch_manifest.py --product-id <批次编号> --product-typ
 ## 可替换执行器边界
 
 - 业务路由负责判断“现在能不能运行”；适配器只负责“如何执行”，不得绕过门禁。
+- M1-b 的 `workflow-demo` 只在 `build_executor("workflow-demo", ...)` 的独立分支注册；原 `build_registry()` 的既有四个适配器与所有真实批次调用保持原样。它只允许标记后的 demo 工作区，不读取生产图片、不开真实执行开关，也不发起外部请求。
 - `--serve` 的默认执行器仍是 `demo`。`codex-dev` 已注册为可选开发适配器，支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc`、只产出提示词的 `final_prompts` 与只产出结构化报告的 `qc`；`image-production` 已注册为生产图片组合入口，内部复用 `openai-image`，不替换也不改变现有三个适配器的行为。
 - `codex-dev` 复用 canvas-agent 的 `/agent/codex/threads/new`、`/agent/codex/turn`、`/events` 与 thread 读取接口，Python 不启动另一套 Codex 会话。新线程请求可在适配器内部选择模型；上层业务仍只认识 `codex-dev` 名称和统一契约。SSE 只作为完成通知，`failed` / `interrupted` 会先收敛为脱敏失败，只有 `completed` 才从本次专用 thread 重新读取最终文本，避免把共享事件流中其他线程的消息当成本次结果。identity、style master 和 angle inventory 的既有行为不变；main/detail 变量配置只在对应正式上游存在后运行，最终提示词只在两类变量配置均存在后运行，QC 只在 14 张正式渲染图与全部上游正式产物完整时运行。七类输出都必须位于 manifest 声明的 `artifacts_root` 范围内；越界产物、异常格式、Unicode 损坏字符和不受支持事实均在写入前拒绝，已有档案不会被覆盖。最终提示词整包与 QC 报告都使用同目录临时文件和排他落盘；任一批失败不留下正式半成品。
 - `codex-dev` 的自动测试使用假传输和临时工作区，不启动真实 Codex、不访问网络、不读取真实批次图片。2026-07-15 完成本次详情配置校验器的类级修复后，全仓 180 项测试通过；既有四段覆盖、同线程续传、传输恢复与包装纠正上限、业务错误不重试、完整八项手持数量及汇总校验、失败零正式文件等行为保持不变。canvas-agent 继续使用连续 UTF-8 解码，避免中文字符跨数据块时被替换为 U+FFFD；fork 侧既有 3 项测试与 TypeScript 编译结果不受本次主仓库修改影响。
@@ -85,4 +92,4 @@ python scripts/build_batch_manifest.py --product-id <批次编号> --product-typ
 
 ## 状态
 
-阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 和 `qc` 均已完成 `shuiping_20260712` 真实验收。正式目录包含 14 份最终提示词 JSON、14 份同名 Markdown 和两份索引；生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识、可配置无数据等待上限与真实断点续跑，当前全仓 274 项测试通过。正式 renders 恰好 14 张：六张正方形主图、八张精确 3:4 详情图；真实 QC 报告按序覆盖 14 张与 175 条检查，事件 72 行，路由 `ready`。ComfyUI 作业与 repaired 均为 0；19 个 issues 与 19 个 repair_targets 的后续处置待用户另行决定。真实 QC 与用户人工终审均已完成，19 条问题已按用户裁定处置，批次正式关账，路由保持 `ready`；QC 报告作为审计记录原样保留，任何图片追加、覆盖或重生成仍须另行批准。
+阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。M1-b 的零成本后台 demo 也已通过两轮 6+8 文件落盘、流式投影、取消、离线提示和启动器冷启动验收，当前全仓 297 项测试通过。`codex-dev` 的 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 和 `qc` 均已完成 `shuiping_20260712` 真实验收。正式目录包含 14 份最终提示词 JSON、14 份同名 Markdown 和两份索引；生产图片链已完成 prompts-only 门禁、14 项任务组装、裸 API 基址兼容、固定客户端标识、可配置无数据等待上限与真实断点续跑。正式 renders 恰好 14 张：六张正方形主图、八张精确 3:4 详情图；真实 QC 报告按序覆盖 14 张与 175 条检查，事件 72 行，路由 `ready`。ComfyUI 作业与 repaired 均为 0；19 个 issues 与 19 个 repair_targets 的后续处置待用户另行决定。真实 QC 与用户人工终审均已完成，19 条问题已按用户裁定处置，批次正式关账，路由保持 `ready`；QC 报告作为审计记录原样保留，任何图片追加、覆盖或重生成仍须另行批准。

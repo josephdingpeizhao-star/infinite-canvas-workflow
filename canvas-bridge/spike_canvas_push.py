@@ -27,6 +27,7 @@ import layout_store
 import projector
 import run_controller
 import state_reader
+import workflow_demo_service
 
 STRESS_PREFIX = "wfstress:"
 IMAGE_PREFIX = "wfimg:"
@@ -586,6 +587,17 @@ def main() -> int:
         help="只删除指定批次当前活跃且在册的投影节点，不触碰其他画布节点",
     )
     parser.add_argument("--clear-mine", action="store_true")
+    parser.add_argument(
+        "--serve-workflow-demo",
+        type=Path,
+        metavar="DEMO_MANIFEST",
+        help="M1-b：只消费工作流机器命令并流式投影真实演示 PNG；不投影九工序/运行台/日志",
+    )
+    parser.add_argument(
+        "--clear-workflow-demo",
+        metavar="MACHINE_ID",
+        help="M1-b 手工验收清理：只删除指定机器的 wfdemo-output: 结果节点",
+    )
     args = parser.parse_args()
 
     ran = False
@@ -627,6 +639,12 @@ def main() -> int:
         ran = True
     if args.clear_mine:
         cmd_clear_mine()
+        ran = True
+    if args.serve_workflow_demo:
+        workflow_demo_service.cmd_serve_workflow_demo(args.serve_workflow_demo, args.interval)
+        ran = True
+    if args.clear_workflow_demo:
+        workflow_demo_service.cmd_clear_workflow_demo(args.clear_workflow_demo)
         ran = True
     if not ran:
         parser.print_help()

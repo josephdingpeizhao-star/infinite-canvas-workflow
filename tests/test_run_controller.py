@@ -234,6 +234,27 @@ class UpperLayerExecutorBoundaryTest(unittest.TestCase):
         self.assertEqual("future handled identity", result.detail)
         self.assertEqual("future-provider", result.provider)
 
+    def test_additive_entry_passes_demo_metadata_without_changing_existing_entry(self) -> None:
+        class FakeExecutor:
+            name = "future-provider"
+
+            def __init__(self) -> None:
+                self.requests = []
+
+            def execute(self, request: ExecutionRequest) -> ExecutionResult:
+                self.requests.append(request)
+                return ExecutionResult(detail="ok", provider=self.name)
+
+        fake = FakeExecutor()
+        result = run_controller.execute_step_with_metadata(
+            fake,
+            "renders",
+            metadata={"run_id": "run-001"},
+        )
+
+        self.assertEqual("ok", result.detail)
+        self.assertEqual({"run_id": "run-001"}, fake.requests[0].metadata)
+
 
 class BuildExecutorTest(unittest.TestCase):
     def test_unregistered_executor_rejected(self) -> None:
@@ -246,6 +267,15 @@ class BuildExecutorTest(unittest.TestCase):
 
     def test_demo_executor_built(self) -> None:
         executor = build_executor("demo", {"workspace": {"root": "D:/dev/canvas-demo-workspace"}})
+        self.assertEqual(Path("D:/dev/canvas-demo-workspace"), executor.workspace_root)
+
+    def test_workflow_demo_executor_built_without_changing_demo_default(self) -> None:
+        manifest = {
+            "workspace": {"root": "D:/dev/canvas-demo-workspace"},
+            "outputs": {"renders": ["D:/dev/canvas-demo-workspace/outputs/renders"]},
+        }
+        executor = build_executor("workflow-demo", manifest)
+        self.assertEqual("workflow-demo", executor.name)
         self.assertEqual(Path("D:/dev/canvas-demo-workspace"), executor.workspace_root)
 
 

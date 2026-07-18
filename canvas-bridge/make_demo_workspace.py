@@ -114,6 +114,52 @@ def ensure_demo_root(root: Path) -> None:
         raise SystemExit(f"refusing to touch {root}: missing {MARKER} marker (run --init first, or wrong --root)")
 
 
+def _new_demo_write_path(root: Path, *parts: str) -> Path:
+    """M1-b additive write guard; existing demo commands keep their behavior."""
+    ensure_demo_root(root)
+    resolved_root = root.resolve()
+    target = root.joinpath(*parts).resolve()
+    if target != resolved_root and resolved_root not in target.parents:
+        raise SystemExit(f"refusing demo write outside {resolved_root}: {target}")
+    return target
+
+
+def prepare_workflow_demo(root: Path) -> list[Path]:
+    """Add the minimum typed demo artifacts needed to route to ``renders``.
+
+    This is an M1-b-only, idempotent branch.  It never overwrites an existing
+    file and it cannot write outside a marked demo workspace.
+    """
+    ensure_demo_root(root)
+    entries = [
+        ("artifacts/identity/product_identity_archive.json", {"artifact_type": "product_identity_archive", "product_id": PRODUCT_ID, "demo": True}),
+        ("artifacts/style_master/style_master.json", {"artifact_type": "style_master", "product_id": PRODUCT_ID, "demo": True}),
+        ("artifacts/angle_inventory/angle_inventory.json", {"artifact_type": "angle_inventory", "product_id": PRODUCT_ID, "demo": True}),
+        ("artifacts/variable_configs/main_variable_config.json", {"artifact_type": "main_variable_config", "product_id": PRODUCT_ID, "demo": True}),
+        ("artifacts/variable_configs/detail_variable_config.json", {"artifact_type": "detail_variable_config", "product_id": PRODUCT_ID, "demo": True}),
+        ("artifacts/final_prompts/final_prompt_main_01.json", {"artifact_type": "final_prompt", "product_id": PRODUCT_ID, "demo": True}),
+        (
+            "artifacts/qc_reports/final_prompt_integrity_report.json",
+            {"artifact_type": "final_prompt_integrity_report", "product_id": PRODUCT_ID, "status": "pass", "render_blocked": False, "demo": True},
+        ),
+    ]
+    created: list[Path] = []
+    for relative, payload in entries:
+        target = _new_demo_write_path(root, *relative.split("/"))
+        if target.exists():
+            continue
+        _new_demo_write_path(root, *relative.split("/")[:-1]).mkdir(parents=True, exist_ok=True)
+        write_json(target, payload)
+        created.append(target)
+    _new_demo_write_path(root, "outputs", "renders").mkdir(parents=True, exist_ok=True)
+    return created
+
+
+def cmd_prepare_workflow_demo(root: Path) -> None:
+    created = prepare_workflow_demo(root)
+    print(json.dumps({"workflow_demo_prepared": str(root), "created": [str(path) for path in created]}, ensure_ascii=False))
+
+
 def cmd_add_inputs(root: Path) -> None:
     ensure_demo_root(root)
     files = [
@@ -175,6 +221,7 @@ def main() -> int:
     parser.add_argument("--add-inputs", action="store_true")
     parser.add_argument("--advance", choices=STEPS)
     parser.add_argument("--reset", action="store_true")
+    parser.add_argument("--prepare-workflow-demo", action="store_true", help="M1-b：补齐零成本 renders 路由占位档案")
     args = parser.parse_args()
 
     ran = False
@@ -189,6 +236,9 @@ def main() -> int:
         ran = True
     if args.reset:
         cmd_reset(args.root)
+        ran = True
+    if args.prepare_workflow_demo:
+        cmd_prepare_workflow_demo(args.root)
         ran = True
     if not ran:
         parser.print_help()
