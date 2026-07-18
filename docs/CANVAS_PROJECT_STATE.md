@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-17（`shuiping_20260712` 已于 2026-07-17 14:25:49 +08:00 完成用户人工终审：用户原话“19 条全部裁定为人工复核后可接受，批次终审通过，正式关账。”QC 报告的 19 个 issues 已全部裁定为人工复核后可接受，其中唯一 `fail` 检查 `main_03.png` 清水液面真实感及其对应 minor 问题均由用户人工接受；其余 1 个 minor 与 17 个 needs_review 同样接受。批次最终交付物为 14 张正式 PNG 与唯一 `qc_report.json`（SHA-256 `54ADB10B8D573E266EC24E65FC45A2E62DD50F05AF7547FD5B79BC06F5D6ED0D`），真实路由为 `ready`，本批次不返修并正式关账。QC 报告原样保留作为审计记录；任何将来的图片追加、覆盖或重生成均须重新单独批准）。
+> 最后更新：2026-07-18（《产品形态蓝图 v1.0》定稿并完成 M0“清桌子”：旧九工序监控投影从用户画布退役，日常启动器恢复为只启动 canvas-agent、网页和 Chrome 直达；`shuiping_20260712` 的关账状态、14 张正式 PNG、唯一 QC 报告及长期重生成冻结均保持不变）。
 
 ## 1. 定位与目标
 
@@ -38,6 +38,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | ⑤ | 执行层采用可替换执行器边界；Codex 只作为开发工具或可选适配器，正式方向为中央后台直接调用模型 API，不把业务逻辑绑定到 Codex、模型名或供应商 | 2026-07-12 更新 |
 | ⑥ | 布局文件（canvas_layout）进 Git | 同上 |
 | ⑦ | 阶段 5 采用 UI-first：先用 demo 沙盒验证非技术用户的完整操作体验，再接后台。四项护栏固定为仓库事实来源不变、真实执行继续受既有门禁保护、交互原型可丢弃且未经 TDD 不得直接上线、所有界面动作必须经契约清单对账。唯一验收剧本是用户只用界面走完一个 demo 批次的建批、确认、执行状态、QC 人工终审与关账；本阶段不扩展协作、权限、通知或报表。2026-07-17 修订：界面承载方式改为 Infinite Canvas 画布原生节点卡片；独立轻量操作面板方案已被用户否决，旧线性页面仅作信息架构与文案参考 | 2026-07-17 |
+| ⑧ | 《产品形态蓝图 v1.0》定稿：产品采用桌上六物、四条机器礼仪、两条边界原则和 M0–M3 分期；旧九工序监控投影从用户画布退役。撤掉运行台后暂时没有生产命令入口，不造成运营损失：首批已关账、重生成长期冻结；命令通道由 M1 工作流节点按钮承接，并保持原门禁语义 | 2026-07-18 |
 
 ## 4. 阶段进度台账
 
@@ -50,7 +51,8 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | 4 | 执行接入（wfrun 运行台 + 事件日志 + --serve 常驻） | ✅ | 6f4e361 | 2026-07-11 深夜现场：9 步全链路画布触发跑通、门禁拒绝、retry；66/66 测试绿 |
 | 4b | 生产图片执行链（prompts-only 门禁 + 索引组装 + image-production） | ✅ 真实出图完成，QC 已验收 | 5f98b35、6f9ffcb | 238/238 测试；真实门禁 pass；14 张正式图完整，QC 后字节数复核不变 |
 | 4c | `codex-dev / qc`（7 个两图批次 + 全批总结） | ✅ 离线 TDD 与真实 QC 均完成；人工终审通过，批次关账 | 634c58f | 260/260 测试；真实报告 175 条、19 issues、19 repair_targets；事件 72 行，路由 `ready` |
-| 5 | 操作界面层（UI-first） | 5A-R 画布原生交互设计稿完成；5B demo 接入待单独批准 | 本次提交 | `design/stage5_canvas_native/`：6 幕画布旅程、9 类节点卡片、49 项既有动作契约差异表与 6 项画布局部行为；全程仅演示数据、零后台连接、零真实调用 |
+| 5 | 操作界面层（UI-first） | 5A 线性页面与 5A-R 卡片上画布形态已被 2026-07-18《产品形态蓝图 v1.0》取代；全部设计资产保留作契约、缺口、实现路径与人话文案参考 | 78ff735 | `design/stage5_ui_prototype/`、`design/stage5_canvas_native/` |
+| 6 | 创作工作台 | ✅ M0 清桌子完成；用户画布恢复原生创作台，监控投影退出日常启动，蓝图入账；M1 工作流节点 MVP 待后续单独批准 | 本次提交 | 删除前后画布节点核对、C 类保护、全仓测试与启动器目验 |
 
 qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
@@ -138,6 +140,8 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 同日按获批方案完成“管线品类泛化 + 用户确认信息结构化”的纯离线 TDD。新批次 manifest 顶层新增固定七字段 `user_confirmed_facts`：任意非空商品品类、正整数高度、固定主图/详情手持数量 2+1，以及“允许清水”“禁止倾倒与加热”“D 缺失不补拍”三个真实行为开关；缺字段、多字段、类型错误或错误手持数量均在执行前脱敏拒绝。结构化对象优先，历史 manifest 仅在该对象完全不存在时继续使用严格 notes 兼容路径；`shuiping_20260712` 的旧字段解析结果及 main/detail/final 提示词 UTF-8 字节指纹保持不变。清水关闭会在 main/detail/final 三阶段拒绝正向清水描述但允许明确否定语句；动作禁令关闭时不再注入该禁令，也不会把它解释成主动授权；D 缺失而未确认不补拍时在首个传输前阻断，确认不补拍后仍只使用 A/B/C。建批脚本只有收齐七项确认才可创建，`--dry-run` 与非法输入均为零写入，仓库 manifest 继续作为事实入口，外部工作区副本仍只作初始副本。全仓由 260 项增至 274 项并全部离线通过；未新增依赖，未修改 QC、executor 调度、run controller、三段门禁、Schema、Skill、fork、真实 manifest/产物/事件或外部工作区，未启动服务、画布命令、网络、密钥或真实模型调用，也未创建第二批次。第二批次仍等待用户提供实际数据并确认商品品类与七项事实。
 
+2026-07-18 用户定稿《产品形态蓝图 v1.0》并批准执行 M0“清桌子”。执行前主仓库为 `78ff735`，仅有意未跟踪的 `启动画布.bat`；274 项测试通过、事件账本 72 行、fork 为 `91e40d04` 且干净。目标画布“无限画布 1”连续读取为 29 个 `shuiping_20260712` 在册投影节点、0 个 `demo_live` 残留、0 个用户自建或未知节点，共 35 条连接；不存在 `--watch` 或 `--serve` 进程。新增 `--clear-projection <manifest>` 前先以假客户端锁定“只删当前活跃且在册节点、未知同前缀与其他节点零触碰”，全仓增至 276 项测试。获批清单逐项复核一致后只提交一次精确删除，等待缓存刷新后画布为 0 节点、0 连接，C 类保持 0→0，视口数值不变。未跟踪启动器随后移除第三服务及其重试分支，保留 agent、web 与 Chrome 直达且继续保持纯 CRLF；蓝图正文写入 `docs/PRODUCT_BLUEPRINT.md`，5A/5A-R 资产保留参考。全过程零真实模型调用、零外网、零密钥、零费用；manifest、schema、scripts、Skill、fork、真实工作区、事件账本、六份上游正式产物、14 张成图与 QC 报告均未修改。撤掉运行台节点后暂时没有生产命令入口；首批已关账且重生成长期冻结，M1 将由工作流节点按钮承接相同门禁语义。
+
 ## 5. 代码地图
 
 **主仓库（本仓库）**：
@@ -160,19 +164,20 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 ## 6. 运行时手册
 
-**日常服务 3 个；按需服务 2 个**：
+**日常服务 2 个；按需工具 3 个**：
 
 | 服务 | 端口/形态 | 启动方式 |
 |---|---|---|
 | canvas-agent | :17371 | `bun run --cwd D:/dev/infinite-canvas/canvas-agent dev` |
 | 画布网页 | :3000 | `bun run --cwd D:/dev/infinite-canvas/web dev` |
-| 真实批次只读投影 | 常驻 cmd 窗口（标题"真实批次只读投影服务*"） | `启动画布.bat` 专用分支固定运行 `python canvas-bridge/spike_canvas_push.py --watch manifests/shuiping_20260712.batch_manifest.json --layout-path manifests/shuiping_20260712.canvas_layout.json --interval 2` |
+| 后台只读投影（按需） | 手工临时工具，不随日常启动 | `python canvas-bridge/spike_canvas_push.py --watch <approved-manifest> --layout-path <approved-layout> --interval 2` |
 | 批次运行台（按批准临时启动） | 临时 cmd 窗口 | `python canvas-bridge/spike_canvas_push.py --serve <approved-manifest> --layout-path <approved-layout> --executor <approved-executor> --interval 2` |
 | 静态图片（按需） | :8801（仅图片演示需要） | `python -m http.server`（临时目录） |
 
-- **日常入口：仓库根目录 `启动画布.bat`**。双击后先确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s`（“无限画布 1”项目直达；若更换工作画布，必须同步修改本行与启动器地址），最后按窗口标题防重复启动真实批次只读投影。投影专用分支先等待页面 3 秒；若画布尚未连接或运行中断导致 `--watch` 非正常退出，则每 5 秒重试同一个固定命令，正常停止不重试。其中 `--watch` 对批次事实只读，只向画布同步投影；画布仍会显示运行台节点，但其中的 `run:` / `retry:` 命令不会被读取或执行。真正的 `--serve` 批次运行台不再随日常入口启动，只能在用户再次明确批准后按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
+- **日常入口：仓库根目录 `启动画布.bat`**。双击后只确认或启动 agent + web；若有新服务则等待约 10 秒，随后打开 Chrome 到 `http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s`（“无限画布 1”项目直达；若更换工作画布，必须同步修改本行与启动器地址）。启动器不再启动真实批次 `--watch`，因此旧九工序节点不会随日常启动重新投影。`--watch` 机制继续保留为经批准的后台只读工具，`--serve` 继续只允许按批准的 manifest、布局和执行器临时启动。该文件**有意不入 Git**（含本机绝对路径）；迁移机器时需重建。
 - 连接凭据：`%USERPROFILE%\.infinite-canvas\canvas-agent.json`（url + token）。**token 不随 agent 重启轮换**（文件存在即沿用）。
 - 用户（非程序员）的工作画布：Chrome 里"无限画布 1"（id hPbkNXg3WA0p2i46VOh3s，localhost:3000）；其浏览器 localStorage 已存 token，刷新自动重连。
+- M0 完成后该画布是原生创作台，不再显示旧运行台或九工序监控节点，暂时也没有生产命令入口。首批已关账且重生成长期冻结，因此没有运营损失；M1 将由“制图机器”工作流节点按钮承接相同门禁语义。
 
 **连接机制要点（2026-07-11 实证）**：
 
@@ -193,12 +198,19 @@ qc 路由缺陷修复（门禁报告不再算质检完成）、孤儿修复（�
 
 ## 7. 阶段 4 使用说明（当前功能面）
 
-- 画布上"▶ 批次运行台"节点写一行命令：`run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
+- 阶段 4 的后台接口继续保留：只有经批准使用 `--serve` 重新投影运行台时，才可在"▶ 批次运行台"节点写 `run: next`（执行下一步）/ `run: <步骤>` / `retry: <已完成步骤>`；步骤词汇 = `identity, style_master, angle_inventory, main_vc, detail_vc, final_prompts, integrity, renders, qc`。
 - 命令过三段门禁：动词白名单解析 → 按真实 `route_batch()` 判定可运行/可重试（含脱梯段逻辑：integrity 门禁通过才放行 renders）→ 注册执行器子进程执行。
 - 执行历史事实来源：`<manifest 目录>/<pid>.events.jsonl` 追加式日志；画布"📜 执行日志"节点只是其投影。
-- 日常启动器现只运行真实批次 `--watch`，不创建执行器，也不开放任何画布运行命令。阶段 4 的 `--serve` 接口仍可按批准临时使用；若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层使用 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已完成 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 与 `qc` 的 `shuiping_20260712` 真实验收。`image-production` 已完成 prompts-only 门禁、14 项任务组装与真实断点续跑；正式目录现有六张正方形主图和八张精确 3:4 详情图，唯一 `qc_report.json` 已生成，事件 72 行，真实路由为 `ready`。任何 QC 重做、ComfyUI、repaired 或图片追加/覆盖仍必须单独批准；默认 ComfyUI 模式、默认 demo 执行器和现有 `openai-image` 适配器行为不变。
+- 日常启动器不再运行 `--watch`，当前用户画布没有运行命令入口。`--watch` 只保留为后台只读工具；阶段 4 的 `--serve` 接口仍可按批准临时使用。若手工启动时省略 `--executor`，CLI 默认仍为 **demo 执行器**（驱动演示工作区 `--advance`，有安全标记保护），因此真实执行前必须显式核准 manifest、布局和执行器。执行层使用 `executor_contract.py` + `executor_registry.py` + `executor_factory.py` 的可替换边界；`codex-dev` 已完成 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts` 与 `qc` 的 `shuiping_20260712` 真实验收。`image-production` 已完成 prompts-only 门禁、14 项任务组装与真实断点续跑；正式目录现有六张正方形主图和八张精确 3:4 详情图，唯一 `qc_report.json` 已生成，事件 72 行，真实路由为 `ready`。任何 QC 重做、ComfyUI、repaired 或图片追加/覆盖仍必须单独批准；默认 ComfyUI 模式、默认 demo 执行器和现有 `openai-image` 适配器行为不变。
 
-## 8. 后续路线图（候选，未排期）
+## 8. 产品路线图
+
+1. **M0 清桌子（已完成）**：撤掉旧九工序监控投影，恢复原生创作台；日常启动器不再投影真实批次；《产品形态蓝图 v1.0》入账。
+2. **M1 工作流节点 MVP**：以 demo、零成本方式把“制图机器”节点摆上画布，验证素材、信息卡、节点连线与流式成图交互。
+3. **M2 通真电**：接入真实图片流式输出、费用确认卡、QC 角标、收货框关账和单图重做链路。
+4. **M3 AI 助手到岗**：支持自然语言指令、异常翻译和受控查看机器内部状态。
+
+### 既有批次闭环与工程待办（不属于 M0–M3 产品形态路线）
 
 1. **②b 14 张正式成图与真实 QC 已经完成**：`main_01` 至 `main_06` 六张主图均为有效 `1254x1254` PNG；`detail_01` 至 `detail_08` 八张详情图均为有效且精确 3:4 的 PNG。真实 QC 后事件为 72 行，正式目录仍恰好 14 个文件且字节数不变，唯一 `qc_report.json` 已通过 175 条覆盖与 schema 校验，真实路由为 `ready`。人工终审已于 2026-07-17 通过，批次关账。
 2. **②b 详情图比例决策已经闭环**：继续保留现有 `1024x1536` 请求映射，不裁剪、不缩放、不拉伸主体。供应端原图已是 3:4 时保持原文件；返回其他竖版比例时先保存供应端原图，再只扩展不足方向的柔和虚化背景。当前实际扩展的是 `detail_02` 与 `detail_05`，两张原图均保存在外部工作区 `artifacts/audit/render_originals`，中央原图区域逐像素一致。
