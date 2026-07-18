@@ -8,6 +8,7 @@ Usage examples (run from repository root):
     python canvas-bridge/spike_canvas_push.py --status-demo
     python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
     python canvas-bridge/spike_canvas_push.py --get-state --save-layout out.json
+    python canvas-bridge/spike_canvas_push.py --clear-projection manifests/example.batch_manifest.json
     python canvas-bridge/spike_canvas_push.py --clear-mine
 """
 
@@ -516,6 +517,39 @@ def cmd_get_state(save_layout: Path | None) -> None:
         print(f"layout saved: {save_layout} ({len(layout['nodes'])} nodes)")
 
 
+def clear_projection_node_ids(graph: dict, batch: dict, canvas_nodes: list[dict]) -> list[str]:
+    """Return live node ids owned by this batch's active projection only."""
+    product_id = str(batch.get("product_id") or "unknown")
+    active_nodes, _edges = projector.active_subgraph(graph, batch)
+    expected = {projector.canvas_node_id(product_id, node_id) for node_id in active_nodes}
+    expected.update(
+        {
+            batch_editor.editor_node_id(product_id),
+            run_controller.run_node_id(product_id),
+            run_controller.log_node_id(product_id),
+        }
+    )
+    result: list[str] = []
+    seen: set[str] = set()
+    for node in canvas_nodes:
+        node_id = str(node.get("id") or "")
+        if node_id in expected and node_id not in seen:
+            result.append(node_id)
+            seen.add(node_id)
+    return result
+
+
+def cmd_clear_projection(manifest_path: Path) -> None:
+    """Delete only the live, active projection nodes for one manifest."""
+    graph = projector.load_graph()
+    batch = projector.load_batch_manifest(manifest_path)
+    state = ic_client.call_tool("canvas_get_state")
+    ids = clear_projection_node_ids(graph, batch, state.get("nodes") or [])
+    if ids:
+        ic_client.apply_ops([{"type": "delete_node", "ids": ids}])
+    print(json.dumps({"deleted": len(ids), "ids": ids}, ensure_ascii=False))
+
+
 def cmd_clear_mine() -> None:
     state = ic_client.call_tool("canvas_get_state")
     ids = [str(node.get("id")) for node in state.get("nodes") or [] if str(node.get("id", "")).startswith(MINE_PREFIXES)]
@@ -545,6 +579,12 @@ def main() -> int:
     parser.add_argument("--image-title", default="外部引用图片（本地HTTP）")
     parser.add_argument("--get-state", action="store_true")
     parser.add_argument("--save-layout", type=Path)
+    parser.add_argument(
+        "--clear-projection",
+        type=Path,
+        metavar="MANIFEST",
+        help="只删除指定批次当前活跃且在册的投影节点，不触碰其他画布节点",
+    )
     parser.add_argument("--clear-mine", action="store_true")
     args = parser.parse_args()
 
@@ -581,6 +621,9 @@ def main() -> int:
         ran = True
     if args.get_state:
         cmd_get_state(args.save_layout)
+        ran = True
+    if args.clear_projection:
+        cmd_clear_projection(args.clear_projection)
         ran = True
     if args.clear_mine:
         cmd_clear_mine()

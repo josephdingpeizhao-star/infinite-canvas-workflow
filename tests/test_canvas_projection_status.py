@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -152,6 +154,63 @@ class ServeProjectionFallbackTest(unittest.TestCase):
             ],
             [op for batch in batches for op in batch],
         )
+
+
+class ClearProjectionTest(unittest.TestCase):
+    manifest_path = ROOT / "manifests" / "shuiping_20260712.batch_manifest.json"
+
+    @mock.patch.object(spike_canvas_push.ic_client, "apply_ops")
+    @mock.patch.object(spike_canvas_push.ic_client, "call_tool")
+    def test_deletes_only_live_active_projection_nodes(self, call_tool, apply_ops) -> None:
+        call_tool.return_value = {
+            "nodes": [
+                {"id": "user-note", "title": "用户便签"},
+                {"id": "wf:shuiping_20260712:in_white_bg", "title": "白底图"},
+                {"id": "wf:shuiping_20260712:stage_set_product_identity", "title": "当前单品批次未启用"},
+                {"id": "wf:shuiping_20260712:unknown", "title": "未知同前缀节点"},
+                {"id": "wf:another_batch:in_white_bg", "title": "其他批次"},
+                {"id": "wf:demo_live:stage_product_identity", "title": "演示残留"},
+                {"id": "wfedit:shuiping_20260712:batch", "title": "批次配置"},
+                {"id": "wflog:shuiping_20260712:events", "title": "执行日志"},
+            ]
+        }
+
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            spike_canvas_push.cmd_clear_projection(self.manifest_path)
+
+        apply_ops.assert_called_once_with(
+            [
+                {
+                    "type": "delete_node",
+                    "ids": [
+                        "wf:shuiping_20260712:in_white_bg",
+                        "wfedit:shuiping_20260712:batch",
+                        "wflog:shuiping_20260712:events",
+                    ],
+                }
+            ]
+        )
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(3, result["deleted"])
+        self.assertEqual(3, len(result["ids"]))
+
+    @mock.patch.object(spike_canvas_push.ic_client, "apply_ops")
+    @mock.patch.object(spike_canvas_push.ic_client, "call_tool")
+    def test_only_protected_nodes_is_zero_write(self, call_tool, apply_ops) -> None:
+        call_tool.return_value = {
+            "nodes": [
+                {"id": "user-note", "title": "用户便签"},
+                {"id": "wf:shuiping_20260712:unknown", "title": "未知同前缀节点"},
+                {"id": "wf:another_batch:in_white_bg", "title": "其他批次"},
+            ]
+        }
+
+        with mock.patch("sys.stdout", new_callable=io.StringIO) as stdout:
+            spike_canvas_push.cmd_clear_projection(self.manifest_path)
+
+        apply_ops.assert_not_called()
+        result = json.loads(stdout.getvalue())
+        self.assertEqual({"deleted": 0, "ids": []}, result)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@
 - `codex_dev_qc.py`：`codex-dev / qc` 的纯标准库业务模块。它在首个传输前一次性核对 manifest 路径边界、14 张 PNG 名称与 1:1/3:4 比例、14 份最终提示词绑定、3 张正式手持声明、白底参考图格式、QC Skill + 运行规则 + 三份完整参考正文、`qc_report.schema.json` 合同以及 20/28 MiB 请求上限；随后固定为 7 个两图批次加 1 个不带附件的全批总结，全部在同一 thread 内完成。只有 U+FFFD 或明确 JSON 截断可同线程重发，全局最多 2 次；合法 JSON 业务错误不重试。八批全部通过后才以排他原子方式只写 `qc_report.json`，永不覆盖既有报告，也不改动同目录完整性报告；`adds_new_generation_direction` 由本地固定为 `false`。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
 - `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）。
-- `spike_canvas_push.py`：驱动脚本，见 `--help`。`--serve` 正常仍一次提交完整初始投影；若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。
+- `spike_canvas_push.py`：驱动脚本，见 `--help`。`--clear-projection <manifest>` 只删除指定批次当前活跃且在册的投影节点，并保护其他批次、未知同前缀节点和用户自建节点；`--serve` 正常仍一次提交完整初始投影，若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。
 
 ## 前置条件
 
@@ -46,6 +46,7 @@ python canvas-bridge/spike_canvas_push.py --serve <批次manifest> [--layout-pat
 python canvas-bridge/spike_canvas_push.py --layout-save <批次manifest> [--layout-path P]
 python canvas-bridge/spike_canvas_push.py --status-demo
 python canvas-bridge/spike_canvas_push.py --image-url http://127.0.0.1:8801/spike.svg
+python canvas-bridge/spike_canvas_push.py --clear-projection <批次manifest>
 python canvas-bridge/spike_canvas_push.py --clear-mine
 
 # 演示工作区（逐阶段点亮）
