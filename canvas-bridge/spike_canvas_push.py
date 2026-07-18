@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import batch_editor
+import canvas_workbench_service
 import executor_factory
 import ic_client
 import layout_store
@@ -594,6 +595,17 @@ def main() -> int:
         help="M1-b：只消费工作流机器命令并流式投影真实演示 PNG；不投影九工序/运行台/日志",
     )
     parser.add_argument(
+        "--serve-canvas-workbench",
+        type=Path,
+        metavar="DEMO_MANIFEST",
+        help="M2-a：同一进程隔离承载既有零成本演示与本机批次登记服务",
+    )
+    parser.add_argument(
+        "--batch-intake-test-root",
+        type=Path,
+        help="M2-a 隔离验收专用工作区；必须带测试根标记",
+    )
+    parser.add_argument(
         "--clear-workflow-demo",
         metavar="MACHINE_ID",
         help="M1-b 手工验收清理：只删除指定机器的 wfdemo-output: 结果节点",
@@ -642,6 +654,13 @@ def main() -> int:
         ran = True
     if args.serve_workflow_demo:
         workflow_demo_service.cmd_serve_workflow_demo(args.serve_workflow_demo, args.interval)
+        ran = True
+    if args.serve_canvas_workbench:
+        canvas_workbench_service.cmd_serve_canvas_workbench(
+            args.serve_canvas_workbench,
+            args.interval,
+            test_workspace_root=args.batch_intake_test_root,
+        )
         ran = True
     if args.clear_workflow_demo:
         workflow_demo_service.cmd_clear_workflow_demo(args.clear_workflow_demo)
