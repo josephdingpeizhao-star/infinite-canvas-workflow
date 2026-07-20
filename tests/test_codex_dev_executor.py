@@ -2764,6 +2764,23 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertEqual([], transport.calls)
             self.assertFalse((output_dir / "product_identity_archive.json").exists())
 
+    def test_empty_transport_response_is_typed_and_writes_no_formal_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_dir = self.make_fixture(root)
+            transport = FakeTransport(error=CanvasAgentTransportError("empty_response"))
+            executor = CodexDevExecutor(context, transport=transport, repository_root=root)
+
+            with self.assertRaises(ExecutorExecutionError) as caught:
+                executor.execute(ExecutionRequest(step="identity"))
+
+            self.assertEqual("empty_assistant_response", getattr(caught.exception, "code", ""))
+            self.assertEqual("codex-dev 本轮没有返回内容", str(caught.exception))
+            self.assertEqual(1, len(transport.calls))
+            self.assertFalse((output_dir / "product_identity_archive.json").exists())
+            self.assertIsNone(caught.exception.__cause__)
+            self.assertIsNone(caught.exception.__context__)
+
 
 class CanvasAgentCodexTransportTest(unittest.TestCase):
     def test_http_and_sse_are_wrapped_without_real_network(self) -> None:
@@ -2886,6 +2903,33 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         self.assertEqual("thread", caught.exception.code)
         self.assertNotIn(
             "/agent/codex/threads/thread-failed",
+            [urllib.parse.urlparse(request.full_url).path for request in requests],
+        )
+
+    def test_typed_empty_agent_done_is_classified_without_thread_result_read(self) -> None:
+        sse = b'event: agent_done\ndata: {"agent":"codex","status":"failed","failureCode":"empty_assistant_response"}\n\n'
+        responses = [
+            FakeResponse(sse),
+            FakeResponse(b'{"ok":true,"thread":{"id":"thread-empty-typed"}}'),
+            FakeResponse(b'{"ok":true,"threadId":"thread-empty-typed"}'),
+        ]
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            return responses.pop(0)
+
+        transport = CanvasAgentCodexTransport(
+            config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+            opener=opener,
+        )
+
+        with self.assertRaises(CanvasAgentTransportError) as caught:
+            transport.run_turn("offline prompt", ())
+
+        self.assertEqual("empty_response", caught.exception.code)
+        self.assertNotIn(
+            "/agent/codex/threads/thread-empty-typed",
             [urllib.parse.urlparse(request.full_url).path for request in requests],
         )
 
@@ -3047,7 +3091,7 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         with self.assertRaises(CanvasAgentTransportError) as caught:
             transport.run_turn("IDENTITY_RULES", attachments)
 
-        self.assertEqual("response", caught.exception.code)
+        self.assertEqual("empty_response", caught.exception.code)
 
     def test_non_loopback_canvas_agent_url_is_refused_before_network(self) -> None:
         calls = []
@@ -3100,7 +3144,7 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
 
-    def test_completed_own_turn_without_assistant_is_response_error(self) -> None:
+    def test_completed_own_turn_without_assistant_is_empty_response_error(self) -> None:
         responses = [
             FakeResponse(b'event: agent_done\ndata: {"agent":"codex"}\n\n'),
             FakeResponse(b'{"ok":true,"thread":{"id":"thread-empty"}}'),
@@ -3119,7 +3163,7 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         with self.assertRaises(CanvasAgentTransportError) as caught:
             transport.run_turn("offline prompt", ())
 
-        self.assertEqual("response", caught.exception.code)
+        self.assertEqual("empty_response", caught.exception.code)
 
 
 class UnsupportedClaimsRegressionTest(CodexDevFixture):

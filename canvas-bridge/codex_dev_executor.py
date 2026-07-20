@@ -221,12 +221,21 @@ class CanvasAgentTransportError(RuntimeError):
         "connection": "canvas-agent 连接失败",
         "thread": "Codex 线程失败",
         "response": "canvas-agent 返回异常",
+        "empty_response": "Codex 本轮没有返回内容",
         "timeout": "Codex 线程等待超时",
     }
 
     def __init__(self, code: str, _private_detail: str = ""):
         self.code = code
         super().__init__(self._MESSAGES.get(code, "canvas-agent 执行失败"))
+
+
+class CodexDevExecutionError(ExecutorExecutionError):
+    """Sanitized adapter failure with a stable diagnostic code."""
+
+    def __init__(self, message: str, code: str):
+        self.code = code
+        super().__init__(message)
 
 
 class CanvasAgentCodexTransport:
@@ -538,12 +547,14 @@ class CanvasAgentCodexTransport:
             if event_name == "agent_done" and payload.get("agent") == "codex":
                 status = str(payload.get("status") or "")
                 if status and status != "completed":
+                    if payload.get("failureCode") == "empty_assistant_response":
+                        raise CanvasAgentTransportError("empty_response")
                     raise CanvasAgentTransportError("thread")
                 messages, user_count = self._thread_message_summary(base_url, token, thread_id)
                 if len(messages) > previous_assistant_count:
                     return messages[-1], len(messages), user_count
                 if user_count > previous_user_count:
-                    raise CanvasAgentTransportError("response")
+                    raise CanvasAgentTransportError("empty_response")
 
             event_name = ""
             data_lines = []
@@ -609,12 +620,18 @@ class CodexDevExecutor:
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         safe_message = ""
+        safe_code = ""
         try:
             return self._execute(request)
+        except CodexDevExecutionError as exc:
+            safe_message = str(exc)
+            safe_code = exc.code
         except ExecutorExecutionError as exc:
             safe_message = str(exc)
         except Exception:
             safe_message = "codex-dev 执行失败"
+        if safe_code:
+            raise CodexDevExecutionError(safe_message, safe_code)
         raise ExecutorExecutionError(safe_message or "codex-dev 执行失败")
 
     def _execute(self, request: ExecutionRequest) -> ExecutionResult:
@@ -1156,6 +1173,11 @@ class CodexDevExecutor:
         try:
             return self.transport.run_turn(prompt, attachments)
         except CanvasAgentTransportError as exc:
+            if exc.code == "empty_response":
+                raise CodexDevExecutionError(
+                    "codex-dev 本轮没有返回内容",
+                    "empty_assistant_response",
+                ) from None
             messages = {
                 "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
                 "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
@@ -1177,6 +1199,11 @@ class CodexDevExecutor:
         try:
             return self.transport.continue_turn(thread_id, prompt, attachments)
         except CanvasAgentTransportError as exc:
+            if exc.code == "empty_response":
+                raise CodexDevExecutionError(
+                    "codex-dev 本轮没有返回内容",
+                    "empty_assistant_response",
+                ) from None
             messages = {
                 "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
                 "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",

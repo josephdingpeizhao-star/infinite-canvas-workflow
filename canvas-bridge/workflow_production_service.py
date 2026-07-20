@@ -94,6 +94,7 @@ class WorkflowProductionService:
         production_base_url: str = "http://127.0.0.1:17373",
         persistence_timeout_ms: int = 12_000,
         environment: Mapping[str, str] | None = None,
+        diagnostic_recorder: Callable[[str, str], None] | None = None,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.client = client
@@ -107,6 +108,7 @@ class WorkflowProductionService:
         self.production_base_url = production_base_url.rstrip("/")
         self.persistence_timeout_ms = max(0, int(persistence_timeout_ms))
         self.environment = environment if environment is not None else os.environ
+        self.diagnostic_recorder = diagnostic_recorder
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
 
@@ -302,6 +304,8 @@ class WorkflowProductionService:
             return "详情图返回 2:3，原图已保留。机器已停下，等待人工尺寸处理批准。"
         if isinstance(exc, ExecutorExecutionError) and "OPENAI_API_KEY" in str(exc):
             return "前面的成果已保留。本机还没有准备图片服务凭据，当前未出图、未产生新的图片费用。"
+        if isinstance(exc, ExecutorExecutionError) and getattr(exc, "code", "") == "empty_assistant_response":
+            return "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。"
         return "这一步没做好，机器已停下。已经完成的成果都保留了。"
 
     def _reject(self, node: Mapping[str, Any], request_id: str, message: str) -> None:
@@ -438,7 +442,13 @@ class WorkflowProductionService:
                 )
 
             executor = self.executor_builder(step, manifest, manifest_path, on_output)
-            result = run_controller.execute_step(executor, step)
+            try:
+                result = run_controller.execute_step(executor, step)
+            except ExecutorExecutionError as exc:
+                code = str(getattr(exc, "code", ""))
+                if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
+                    self.diagnostic_recorder(step, code)
+                raise
             run_controller.append_event(journal, "step_succeeded", request_id=request_id, step=step, detail=result.detail[:160])
             if step == "renders":
                 produced_count = len(self.artifact_reader(manifest))

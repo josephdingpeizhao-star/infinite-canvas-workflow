@@ -302,6 +302,22 @@ class CanvasWorkbenchServiceTests(unittest.TestCase):
                     {"event", "worker", "status", "recorded_at"},
                     set(entry),
                 )
+            ledger.record_execution_failure("workflow_production", "identity", "empty_assistant_response")
+            failure = json.loads(event_path.read_text(encoding="utf-8").splitlines()[-1])
+            self.assertEqual(
+                {
+                    "event": "execution_failure",
+                    "worker": "workflow_production",
+                    "step": "identity",
+                    "code": "empty_assistant_response",
+                    "recorded_at": 2_000,
+                },
+                failure,
+            )
+            rejected_before = event_path.read_bytes()
+            with self.assertRaises(ValueError):
+                ledger.record_execution_failure("workflow_production", "identity", "PRIVATE_PATH_TOKEN")
+            self.assertEqual(rejected_before, event_path.read_bytes())
             before = event_path.read_bytes()
             marker.write_text("wrong\n", encoding="utf-8")
             with self.assertRaises(Exception):

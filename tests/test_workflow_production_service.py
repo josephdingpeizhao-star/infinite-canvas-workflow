@@ -109,6 +109,19 @@ class FakeExecutor:
         return ExecutionResult(detail="ok", provider=self.name)
 
 
+class EmptyResponseExecutor:
+    name = "fake-empty-response"
+
+    def __init__(self, executed: list[str]):
+        self.executed = executed
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        failure = ExecutorExecutionError("codex-dev 本轮没有返回内容")
+        failure.code = "empty_assistant_response"
+        raise failure
+
+
 class ProductionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -197,6 +210,35 @@ class ProductionServiceTest(unittest.TestCase):
         machine = client.state["nodes"][0]
         self.assertEqual("failed", machine["metadata"]["workflowProduction"]["status"])
         self.assertNotIn("secret", machine["metadata"]["workflowProduction"]["errorMessage"])
+
+    def test_empty_codex_response_stops_once_with_human_message_and_safe_diagnostic(self) -> None:
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        diagnostics: list[tuple[str, str]] = []
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: EmptyResponseExecutor(executed),
+            route_reader=self._route_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+            diagnostic_recorder=lambda step, code: diagnostics.append((step, code)),
+        )
+
+        service.poll_once()
+
+        self.assertEqual(["identity"], executed)
+        self.assertEqual([("identity", "empty_assistant_response")], diagnostics)
+        machine = client.state["nodes"][0]
+        self.assertEqual(
+            "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。",
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+        events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, len([event for event in events if event["event"] == "step_failed"]))
+        self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
+        artifact_root = self.workspace / "artifacts"
+        self.assertEqual([], list(artifact_root.rglob("*")) if artifact_root.exists() else [])
 
     def test_full_fake_pipeline_streams_one_persisted_render_then_pauses_without_qc(self) -> None:
         image = self.workspace / "outputs" / "renders" / "main_01.png"

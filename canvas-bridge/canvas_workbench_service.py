@@ -25,6 +25,8 @@ WORKBENCH_EVENT_NAME = "canvas_workbench.events.jsonl"
 CRITICAL_COMPONENTS = frozenset({"batch_intake", "workflow_production", "style_reference_intake"})
 ISOLATED_COMPONENTS = frozenset({"workflow_demo"})
 WORKER_STATUSES = frozenset({"not_started", "running", "waiting_canvas", "stopped"})
+PRODUCTION_DIAGNOSTIC_STEPS = frozenset({"identity", "style_master", "angle_inventory", "main_vc", "detail_vc", "final_prompts"})
+PRODUCTION_DIAGNOSTIC_CODES = frozenset({"empty_assistant_response"})
 
 
 class CriticalWorkerStopped(RuntimeError):
@@ -52,6 +54,29 @@ class WorkbenchEventLedger:
     def record(self, worker: str, status: str) -> None:
         if worker not in CRITICAL_COMPONENTS | ISOLATED_COMPONENTS or status not in WORKER_STATUSES:
             raise ValueError("工作台状态事件不在允许范围内")
+        self._append(
+            {
+                "event": "worker_status",
+                "worker": worker,
+                "status": status,
+                "recorded_at": self.clock_ms(),
+            }
+        )
+
+    def record_execution_failure(self, worker: str, step: str, code: str) -> None:
+        if worker != "workflow_production" or step not in PRODUCTION_DIAGNOSTIC_STEPS or code not in PRODUCTION_DIAGNOSTIC_CODES:
+            raise ValueError("工作台执行失败事件不在允许范围内")
+        self._append(
+            {
+                "event": "execution_failure",
+                "worker": worker,
+                "step": step,
+                "code": code,
+                "recorded_at": self.clock_ms(),
+            }
+        )
+
+    def _append(self, entry: dict[str, int | str]) -> None:
         state_root = batch_creator.require_state_root(self.state_root)
         try:
             unsafe = self.path.is_symlink()
@@ -63,12 +88,6 @@ class WorkbenchEventLedger:
                 raise OSError
         except (OSError, RuntimeError):
             raise RuntimeError("工作台事件账本路径不安全，服务已停止。") from None
-        entry = {
-            "event": "worker_status",
-            "worker": worker,
-            "status": status,
-            "recorded_at": self.clock_ms(),
-        }
         line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
         with self._write_lock:
             try:
@@ -285,9 +304,13 @@ def cmd_serve_canvas_workbench(
             host=workflow_batch_intake_service.DEFAULT_UPLOAD_HOST,
             port=workflow_batch_intake_service.DEFAULT_UPLOAD_PORT,
         )
+        event_ledger = WorkbenchEventLedger(state_root)
         production_service = workflow_production_service.WorkflowProductionService(
             REPO_ROOT,
             interval=interval,
+            diagnostic_recorder=lambda step, code: event_ledger.record_execution_failure(
+                "workflow_production", step, code
+            ),
         )
         style_service = workflow_style_reference_intake.WorkflowStyleReferenceService(
             REPO_ROOT,
@@ -309,7 +332,7 @@ def cmd_serve_canvas_workbench(
             production_service=production_service,
             style_service=style_service,
             production_http_server=production_http,
-            event_ledger=WorkbenchEventLedger(state_root),
+            event_ledger=event_ledger,
         )
         print(
             json.dumps(
