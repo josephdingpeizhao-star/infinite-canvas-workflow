@@ -14,6 +14,7 @@ if str(BRIDGE) not in sys.path:
     sys.path.insert(0, str(BRIDGE))
 
 import workflow_style_reference_intake as style_intake  # noqa: E402
+import ic_client  # noqa: E402
 
 
 class StyleReferencePublishTest(unittest.TestCase):
@@ -247,6 +248,31 @@ class StyleReferenceServiceTest(unittest.TestCase):
         intake = client.state["nodes"][0]["metadata"]["styleReferenceIntake"]
         self.assertEqual("failed", intake["status"])
         self.assertEqual({}, service.sessions)
+
+    def test_canvas_disconnect_keeps_worker_alive_and_reports_reconnecting_then_running(self) -> None:
+        class ReconnectingClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def call_tool(self, name: str):
+                self.calls += 1
+                if self.calls == 1:
+                    raise ic_client.CanvasAgentError("secret disconnect detail")
+                return {"nodes": [], "connections": []}
+
+        client = ReconnectingClient()
+        statuses: list[str] = []
+        service = style_intake.WorkflowStyleReferenceService(
+            self.repo,
+            client=client,
+            sleep=lambda _seconds: setattr(service, "stopping", client.calls >= 2),
+        )
+        service.set_status_callback(statuses.append)
+
+        service.serve_forever()
+
+        self.assertEqual(["waiting_canvas", "running"], statuses)
+        self.assertEqual(2, client.calls)
 
 
 if __name__ == "__main__":

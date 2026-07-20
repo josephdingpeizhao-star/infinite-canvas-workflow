@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import urllib.parse
@@ -20,6 +21,65 @@ import workflow_style_reference_intake
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE_ROOT = Path.home() / ".infinite-canvas" / "batch-intake"
+WORKBENCH_EVENT_NAME = "canvas_workbench.events.jsonl"
+CRITICAL_COMPONENTS = frozenset({"batch_intake", "workflow_production", "style_reference_intake"})
+ISOLATED_COMPONENTS = frozenset({"workflow_demo"})
+WORKER_STATUSES = frozenset({"not_started", "running", "waiting_canvas", "stopped"})
+
+
+class CriticalWorkerStopped(RuntimeError):
+    """A critical worker ended unexpectedly, so the workbench must exit nonzero."""
+
+    def __init__(self, component: str):
+        self.component = component
+        super().__init__(f"critical canvas workbench worker stopped: {component}")
+
+
+class WorkbenchEventLedger:
+    """Sanitized append-only worker status evidence under the protected state root."""
+
+    def __init__(
+        self,
+        state_root: Path,
+        *,
+        clock_ms: Callable[[], int] | None = None,
+    ) -> None:
+        self.state_root = batch_creator.require_state_root(state_root)
+        self.path = self.state_root / WORKBENCH_EVENT_NAME
+        self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self._write_lock = threading.Lock()
+
+    def record(self, worker: str, status: str) -> None:
+        if worker not in CRITICAL_COMPONENTS | ISOLATED_COMPONENTS or status not in WORKER_STATUSES:
+            raise ValueError("工作台状态事件不在允许范围内")
+        state_root = batch_creator.require_state_root(self.state_root)
+        try:
+            unsafe = self.path.is_symlink()
+            is_junction = getattr(self.path, "is_junction", None)
+            unsafe = unsafe or bool(is_junction and is_junction())
+            if self.path.parent.resolve(strict=True) != state_root or unsafe:
+                raise OSError
+            if self.path.exists() and not self.path.is_file():
+                raise OSError
+        except (OSError, RuntimeError):
+            raise RuntimeError("工作台事件账本路径不安全，服务已停止。") from None
+        entry = {
+            "event": "worker_status",
+            "worker": worker,
+            "status": status,
+            "recorded_at": self.clock_ms(),
+        }
+        line = json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with self._write_lock:
+            try:
+                flags = os.O_APPEND | os.O_CREAT | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(self.path, flags, 0o600)
+                with os.fdopen(descriptor, "a", encoding="utf-8", newline="\n") as handle:
+                    handle.write(line)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            except OSError:
+                raise RuntimeError("工作台事件账本无法安全写入，服务已停止。") from None
 
 
 class CanvasWorkbenchService:
@@ -35,6 +95,8 @@ class CanvasWorkbenchService:
         style_service: Any | None = None,
         production_http_server: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        clock_ms: Callable[[], int] | None = None,
+        event_ledger: WorkbenchEventLedger | None = None,
     ) -> None:
         self.demo_service = demo_service
         self.intake_service = intake_service
@@ -43,6 +105,8 @@ class CanvasWorkbenchService:
         self.style_service = style_service
         self.production_http_server = production_http_server
         self.sleep = sleep
+        self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
+        self.event_ledger = event_ledger
         self.stopping = False
         self.component_status = {
             "workflow_demo": "not_started",
@@ -52,8 +116,51 @@ class CanvasWorkbenchService:
             self.component_status["workflow_production"] = "not_started"
         if style_service is not None:
             self.component_status["style_reference_intake"] = "not_started"
+        initialized_at = self.clock_ms()
+        self.component_status_at = {
+            name: initialized_at for name in self.component_status
+        }
         self._threads: dict[str, threading.Thread] = {}
         self._status_lock = threading.Lock()
+        self._stop_lock = threading.Lock()
+        self._stop_started = False
+        self._fatal_component: str | None = None
+        if self.style_service is not None and hasattr(self.style_service, "set_status_callback"):
+            self.style_service.set_status_callback(
+                lambda status: self._set_component_status("style_reference_intake", status)
+            )
+        if self.production_http_server is not None and hasattr(
+            self.production_http_server, "set_health_provider"
+        ):
+            self.production_http_server.set_health_provider(self.health_snapshot)
+
+    def _set_component_status(self, name: str, status: str) -> None:
+        if status not in WORKER_STATUSES:
+            raise ValueError("工作台工人状态无效")
+        changed = False
+        with self._status_lock:
+            if self.component_status[name] != status:
+                self.component_status[name] = status
+                self.component_status_at[name] = self.clock_ms()
+                changed = True
+        if changed and self.event_ledger is not None:
+            self.event_ledger.record(name, status)
+
+    def health_snapshot(self) -> tuple[bool, dict[str, dict[str, int | str]]]:
+        with self._status_lock:
+            fatal_component = self._fatal_component
+            workers = {
+                name: {
+                    "status": status,
+                    "lastStatusAt": self.component_status_at[name],
+                }
+                for name, status in self.component_status.items()
+            }
+        active_critical = CRITICAL_COMPONENTS & workers.keys()
+        healthy = fatal_component is None and bool(active_critical) and all(
+            workers[name]["status"] == "running" for name in active_critical
+        )
+        return healthy, workers
 
     def _run_component(self, name: str, service: Any) -> None:
         try:
@@ -61,10 +168,12 @@ class CanvasWorkbenchService:
         except Exception:
             print(json.dumps({"canvas_workbench": "component_stopped", "component": name}, ensure_ascii=False), flush=True)
         finally:
-            with self._status_lock:
-                self.component_status[name] = "stopped"
-            if name == "batch_intake" and not self.stopping:
-                self.upload_server.stop()
+            unexpected = not self.stopping
+            if unexpected and name in CRITICAL_COMPONENTS:
+                with self._status_lock:
+                    if self._fatal_component is None:
+                        self._fatal_component = name
+            self._set_component_status(name, "stopped")
 
     def start(self) -> None:
         if self._threads:
@@ -81,8 +190,7 @@ class CanvasWorkbenchService:
         if self.style_service is not None:
             components.append(("style_reference_intake", self.style_service))
         for name, service in components:
-            with self._status_lock:
-                self.component_status[name] = "running"
+            self._set_component_status(name, "running")
             thread = threading.Thread(
                 target=self._run_component,
                 args=(name, service),
@@ -93,9 +201,11 @@ class CanvasWorkbenchService:
             thread.start()
 
     def stop(self) -> None:
-        if self.stopping:
-            return
-        self.stopping = True
+        with self._stop_lock:
+            if self._stop_started:
+                return
+            self._stop_started = True
+            self.stopping = True
         self.demo_service.stopping = True
         self.intake_service.stopping = True
         if self.production_service is not None:
@@ -110,11 +220,18 @@ class CanvasWorkbenchService:
 
     def serve_forever(self) -> None:
         self.start()
+        fatal_component: str | None = None
         try:
             while not self.stopping:
                 self.sleep(0.25)
+                with self._status_lock:
+                    fatal_component = self._fatal_component
+                if fatal_component is not None:
+                    break
         finally:
             self.stop()
+        if fatal_component is not None:
+            raise CriticalWorkerStopped(fatal_component)
 
 
 def _load_existing_local_agent_token() -> str:
@@ -192,6 +309,7 @@ def cmd_serve_canvas_workbench(
             production_service=production_service,
             style_service=style_service,
             production_http_server=production_http,
+            event_ledger=WorkbenchEventLedger(state_root),
         )
         print(
             json.dumps(

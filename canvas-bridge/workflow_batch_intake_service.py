@@ -34,6 +34,7 @@ MAX_BATCH_BYTES = 512 * 1024 * 1024
 MAX_SOURCE_FILES = 100
 SERVICE_EVENT_NAME = "batch_intake_service.events.jsonl"
 SERVICE_LOCK_NAME = ".batch_intake_service.lock"
+SERVICE_OWNER_NAME = ".batch_intake_service.owner.json"
 SPOOL_MARKER_NAME = ".canvas_batch_intake_request"
 
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$")
@@ -825,7 +826,45 @@ class BatchIntakeServiceLock:
     def __init__(self, state_root: Path):
         self.state_root = batch_creator.require_state_root(state_root)
         self.path = self.state_root / SERVICE_LOCK_NAME
+        self.owner_path = self.state_root / SERVICE_OWNER_NAME
         self.handle = None
+
+    def _write_owner(self) -> None:
+        state_root = batch_creator.require_state_root(self.state_root)
+        try:
+            unsafe = self.owner_path.is_symlink()
+            is_junction = getattr(self.owner_path, "is_junction", None)
+            unsafe = unsafe or bool(is_junction and is_junction())
+            if self.owner_path.parent.resolve(strict=True) != state_root or unsafe:
+                raise OSError
+            if self.owner_path.exists() and not self.owner_path.is_file():
+                raise OSError
+            flags = os.O_CREAT | os.O_TRUNC | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.owner_path, flags, 0o600)
+            payload = json.dumps(
+                {"pid": os.getpid(), "acquired_at": int(time.time() * 1000)},
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
+            with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as owner:
+                owner.write(payload)
+                owner.flush()
+                os.fsync(owner.fileno())
+        except OSError:
+            raise RuntimeError("建批服务持有者说明无法安全写入") from None
+
+    def _unlock(self) -> None:
+        if self.handle is None:
+            return
+        self.handle.seek(0)
+        try:
+            import msvcrt
+
+            msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
+        except ImportError:
+            import fcntl
+
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
 
     def __enter__(self):
         batch_creator.require_state_root(self.state_root)
@@ -847,21 +886,32 @@ class BatchIntakeServiceLock:
             self.handle.close()
             self.handle = None
             raise RuntimeError("建批服务已在运行") from exc
+        try:
+            self._write_owner()
+        except Exception:
+            try:
+                self._unlock()
+            finally:
+                self.handle.close()
+                self.handle = None
+            raise
         return self
 
     def __exit__(self, _exc_type, _exc, _tb):
         if self.handle is None:
             return
         try:
-            self.handle.seek(0)
             try:
-                import msvcrt
-
-                msvcrt.locking(self.handle.fileno(), msvcrt.LK_UNLCK, 1)
-            except ImportError:
-                import fcntl
-
-                fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+                state_root = batch_creator.require_state_root(self.state_root)
+                if (
+                    self.owner_path.parent.resolve(strict=True) == state_root
+                    and self.owner_path.is_file()
+                    and not self.owner_path.is_symlink()
+                ):
+                    self.owner_path.unlink()
+            except (OSError, RuntimeError):
+                pass
+            self._unlock()
         finally:
             self.handle.close()
             self.handle = None

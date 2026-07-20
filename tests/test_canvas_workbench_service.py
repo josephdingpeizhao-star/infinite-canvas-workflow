@@ -17,7 +17,14 @@ if str(BRIDGE) not in sys.path:
     sys.path.insert(0, str(BRIDGE))
 
 import spike_canvas_push  # noqa: E402
-from canvas_workbench_service import CanvasWorkbenchService  # noqa: E402
+from canvas_workbench_service import (  # noqa: E402
+    CRITICAL_COMPONENTS,
+    ISOLATED_COMPONENTS,
+    WORKBENCH_EVENT_NAME,
+    CanvasWorkbenchService,
+    CriticalWorkerStopped,
+    WorkbenchEventLedger,
+)
 from executor_contract import ExecutionResult  # noqa: E402
 from make_demo_workspace import build_manifest, prepare_workflow_demo  # noqa: E402
 from workflow_demo_service import WorkflowDemoService  # noqa: E402
@@ -55,6 +62,9 @@ class FakeUploadServer:
 
 class FakeProductionHttpServer(FakeUploadServer):
     bound_port = 17373
+
+    def set_health_provider(self, provider):
+        self.health_provider = provider
 
 
 class DemoClient:
@@ -113,6 +123,14 @@ class DemoExecutor:
 
 
 class CanvasWorkbenchServiceTests(unittest.TestCase):
+    def test_worker_classification_names_three_critical_workers_and_keeps_demo_isolated(self) -> None:
+        self.assertEqual(
+            {"batch_intake", "workflow_production", "style_reference_intake"},
+            CRITICAL_COMPONENTS,
+        )
+        self.assertEqual({"workflow_demo"}, ISOLATED_COMPONENTS)
+        self.assertFalse(CRITICAL_COMPONENTS & ISOLATED_COMPONENTS)
+
     def test_m2b_services_and_17373_listener_share_workbench_lifecycle(self) -> None:
         demo = LoopingService()
         intake = LoopingService()
@@ -213,20 +231,82 @@ class CanvasWorkbenchServiceTests(unittest.TestCase):
         self.assertTrue(demo.stopping)
         self.assertTrue(intake.stopping)
 
-    def test_intake_failure_does_not_stop_existing_m1_demo(self) -> None:
+    def test_critical_intake_failure_stops_the_whole_workbench_and_exits_nonzero(self) -> None:
         demo = LoopingService()
         intake = LoopingService(fail=RuntimeError("intake failed"))
         upload = FakeUploadServer()
-        workbench = CanvasWorkbenchService(demo_service=demo, intake_service=intake, upload_server=upload)
-        workbench.start()
+        workbench = CanvasWorkbenchService(
+            demo_service=demo,
+            intake_service=intake,
+            upload_server=upload,
+            sleep=lambda _seconds: time.sleep(0.005),
+        )
+        failures: list[BaseException] = []
+
+        def run() -> None:
+            try:
+                workbench.serve_forever()
+            except BaseException as exc:
+                failures.append(exc)
+
+        supervisor = threading.Thread(target=run)
+        supervisor.start()
         self.assertTrue(demo.started.wait(1))
         self.assertTrue(intake.started.wait(1))
-        time.sleep(0.03)
+        supervisor.join(timeout=1)
 
         self.assertGreater(demo.ticks, 0)
-        self.assertEqual("running", workbench.component_status["workflow_demo"])
+        self.assertFalse(supervisor.is_alive())
+        self.assertEqual(1, len(failures))
+        self.assertIsInstance(failures[0], CriticalWorkerStopped)
+        self.assertTrue(workbench.stopping)
+        self.assertTrue(upload.stopped)
+        self.assertTrue(demo.stopping)
+        self.assertEqual("stopped", workbench.component_status["workflow_demo"])
         self.assertEqual("stopped", workbench.component_status["batch_intake"])
-        workbench.stop()
+
+    def test_health_snapshot_and_append_only_event_ledger_expose_only_status_and_time(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_root = Path(tmp)
+            marker = state_root / ".canvas_batch_intake_state"
+            marker.write_text("canvas-batch-intake-state-v1\n", encoding="utf-8")
+            ledger = WorkbenchEventLedger(state_root, clock_ms=lambda: 2_000)
+            workbench = CanvasWorkbenchService(
+                demo_service=LoopingService(),
+                intake_service=LoopingService(),
+                upload_server=FakeUploadServer(),
+                production_service=LoopingService(),
+                style_service=LoopingService(),
+                production_http_server=FakeProductionHttpServer(),
+                clock_ms=lambda: 1_000,
+                event_ledger=ledger,
+            )
+            workbench.start()
+            try:
+                healthy, workers = workbench.health_snapshot()
+                self.assertTrue(healthy)
+                self.assertEqual(
+                    {"status", "lastStatusAt"},
+                    set(workers["style_reference_intake"]),
+                )
+                self.assertEqual("running", workers["style_reference_intake"]["status"])
+                self.assertEqual(1_000, workers["style_reference_intake"]["lastStatusAt"])
+            finally:
+                workbench.stop()
+
+            event_path = state_root / WORKBENCH_EVENT_NAME
+            entries = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
+            self.assertGreaterEqual(len(entries), 8)
+            for entry in entries:
+                self.assertEqual(
+                    {"event", "worker", "status", "recorded_at"},
+                    set(entry),
+                )
+            before = event_path.read_bytes()
+            marker.write_text("wrong\n", encoding="utf-8")
+            with self.assertRaises(Exception):
+                ledger.record("batch_intake", "running")
+            self.assertEqual(before, event_path.read_bytes())
 
     def test_old_demo_cli_dispatch_stays_on_exact_existing_entry(self) -> None:
         manifest = Path("D:/dev/canvas-demo-workspace/manifests/batch_manifest.json")

@@ -24,13 +24,13 @@
 - `workflow_demo_service.py`：M1-b 常驻桥接服务。只消费 `workflow` 节点中处于 `queued` 的命令，不投影九工序、运行台或日志；命令复用动词白名单、批次路由与注册执行器三段门禁，按文件落盘顺序流式上桌，并用 demo 工作区内事件账本与单实例锁防止重复执行。服务离线、陈旧或非法命令都转成人话状态。
 - `batch_intake_controller.py`：M2-a 信息卡门禁。只认 `batch-info` 节点的 `build: batch` 动作，按顺序核对请求编号与时间、七字段、信息卡和工作流的唯一连线、以及直接连给同一工作流的原始素材；派生图、缺少原始文件声明或连线不明确时都以人话拒绝。
 - `batch_creator.py`：M2-a 建批事务。根据商品品类和本机日期生成中文批次号（如 `餐具_20260718`），用户不填写路径；先调用既有建批脚本做零写入预检，再在安全标记保护的临时目录中写入原图与回执，最终逐文件重算哈希，仓库 manifest 最后发布。同名批次、重复请求、越界路径和竞态写入都拒绝覆盖。
-- `workflow_batch_intake_service.py`：M2-a 常驻服务与原图上传通道。控制消息仍从画布读取，原图字节单独经 `127.0.0.1:17372` 上传；必须复用现有 canvas-agent 令牌，只接受本机画布来源，按文件类型、文件头、大小和 SHA-256 校验。服务日志不记录令牌或图片内容，任何完整性不一致都进入不可重试的硬停止状态。
+- `workflow_batch_intake_service.py`：M2-a 常驻服务与原图上传通道。控制消息仍从画布读取，原图字节单独经 `127.0.0.1:17372` 上传；必须复用现有 canvas-agent 令牌，只接受本机画布来源，按文件类型、文件头、大小和 SHA-256 校验。服务日志不记录令牌或图片内容，任何完整性不一致都进入不可重试的硬停止状态。单实例仍由不删除载体的一字节系统锁保证；持有者说明只有在取得系统锁后才覆盖，异常退出后下一实例可重新持锁并刷新说明。
 - `workflow_production_controller.py`：M2-b 真实模式选择与门禁衔接。已登记信息卡和至少一张批次素材必须同时连到同一台机器；确认费用后才通过既有编辑门禁声明四项规范输出。每一步仍只由 `run_controller` 的命令解析、真实路由判定和统一执行三段门禁放行；本模块不另建生产续跑分支。
 - `workflow_production_service.py`：M2-b 后台编排。顺序复用现役 `codex-dev` 六工序、`image-production / integrity` 和 `image-production / renders`，机器只显示人话进度，不投影九工序、运行台或日志。任一步失败即停且不自动重试；部分图片只能用既有 `retry: renders` 重新进三段门禁，14 张完成后停在 QC 前。
 - `workflow_production_projection.py` / `workflow_production_render_observer.py`：正式 PNG 落盘后逐张上桌并连回机器；固定 `wfprod-output:<batch>:<config>` 节点保留旧成果并避让。主图只收正方形，详情只收精确 3:4；2:3 返回先原样保存到审计目录后停机，M2-b 不引入 Pillow、不自动扩边。
-- `workflow_production_http_server.py`：固定 `127.0.0.1:17373` 的只读费用/正式 PNG 端点和风格补登上传入口。复用 canvas-agent 令牌，仅接受本机画布来源；正式图片返回 SHA-256，浏览器再次核验后转存 localforage，节点不依赖服务长期在线，也不使用 data URI。
+- `workflow_production_http_server.py`：固定 `127.0.0.1:17373` 的只读费用/正式 PNG 端点和风格补登上传入口。复用 canvas-agent 令牌，仅接受本机画布来源；正式图片返回 SHA-256，浏览器再次核验后转存 localforage，节点不依赖服务长期在线，也不使用 data URI。`GET /workbench-health` 只返回四名工人的状态与最后状态时间，健康为 200，关键工人停止或画布重连中为 503，不返回令牌、路径或异常原文。
 - `workflow_style_reference_intake.py`：M2-b “画布补登 A”通道。用户把磁盘风格图直接连到已登记信息卡；全部浏览器声明、节点凭证、字节数、类型和 SHA-256 一致后，才把原字节写入批准的 `inputs/style_refs` 并新建独立回执。白底原图、资产清单和建批回执不改写；不一致时整次硬停止且不自动重试。
-- `canvas_workbench_service.py`：日常“画布工作台”承载入口。在同一进程中隔离运行 M1 demo、M2-a 建批、M2-b 真实制作和风格补登，并统一管理 17372/17373 两个回环监听。M1 的 0 元演示行为保持不变；旧 demo 单服务入口继续保留作对照。
+- `canvas_workbench_service.py`：日常“画布工作台”承载入口。在同一进程中运行 M1 demo、M2-a 建批、M2-b 真实制作和风格补登，并统一管理 17372/17373 两个回环监听。建批、真实制作、风格补登是关键工人，任一意外停止都会让整机停止并非零退出；demo 仍按既有隔离策略处理。脱敏状态只追加到受标记保护的 `canvas_workbench.events.jsonl`。M1 的 0 元演示行为保持不变；旧 demo 单服务入口继续保留作对照。
 - `openai_image_executor.py`：GPT Image 2 适配器（默认模型 `gpt-image-2`），纯标准库 HTTP；无参考图走 `/v1/images/generations`，有参考图走 `/v1/images/edits`。HTTP 传输可注入，自动测试不访问真实网络。
 - `render_task_assembler.py`：从 `final_prompt_index.json` 按原顺序组装供应商无关的图片任务。整批先核对提示词、唯一白底参考图和输出边界；主图映射 `1024x1024`，详情图暂映射 `1024x1536`；已有同名 PNG 自动跳过，便于安全续跑。
 - `image_production_executor.py`：生产图片组合执行器 `image-production`，只接受 `integrity` 与 `renders`。前者运行 prompts-only 确定性门禁，后者在双开关通过后复用既有 `openai-image` 逐张执行；任一张失败即停止，已成功图片保留，错误不回显密钥或提示词正文。
@@ -102,6 +102,7 @@ python scripts/build_batch_manifest.py --product-id <批次编号> --product-typ
 - 单文件最多 64 MiB，单批最多 512 MiB、最多 100 张；PNG、JPEG、WebP、GIF、BMP 还要同时通过文件类型与文件头核对。
 - 建批成功后，画布回执只显示批次号、图片张数和七字段，并提示“批次已登记，真图制作将在下一里程碑开通”；不显示本机路径或哈希。外部工作区的 `manifests/batch_intake_receipt.json` 保存每张图的浏览器声明哈希、上传文件哈希和最终目标哈希，供审计核对。
 - 服务状态与防重账本位于 `%USERPROFILE%\.infinite-canvas\batch-intake`，带专用安全标记。隔离验收的 `--batch-intake-test-root` 只接受已经存在且带精确 `.canvas_intake_test_root` 标记的独立目录；它不能指向真实批次父目录。
+- 工作台工人状态账本为同目录的 `canvas_workbench.events.jsonl`，只追加工人名、状态和记录时间。`.batch_intake_service.lock` 是永久保留的一字节锁载体，不以文件创建时间判断实例是否存活；`.batch_intake_service.owner.json` 只是当前持有者说明。启动器遇到已有实例时会安全拒绝新工作台，第三服务窗口显示“建批服务已在运行”后退出，既有实例继续工作，不能删除锁载体强行启动。
 - 收尾时必须把 `17372` 纳入残留检查。先运行 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17372 -State Listen -ErrorAction SilentlyContinue`；若仍有监听，只能在核对完整命令行为本轮 `--serve-canvas-workbench` 后精确停止，不能按进程名批量结束。
 
 M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调用模型、不产生费用，也不设置任何真实执行开关。2026-07-19 阶段 D 已完成：主仓 360/360 项通过；fork 36 项测试（272 个断言）、TypeScript 和生产构建通过；隔离批次 `验收餐具_20260719` 的两张浏览器原图、上传文件和最终文件 SHA-256 逐项一致，中文 manifest 文件名、工作区目录和路由读取往返无损；重复建批未上传、未覆盖。M1 演示分别在工作台入口和旧 `--serve-workflow-demo` 入口各完成 6+8 张，两边对应 14 个文件哈希全部一致。测试批次、隔离画布配置和临时服务均已清理，本段随本轮两仓独立提交收账，不 push；真实第二批次仍由用户本人操作。
@@ -114,9 +115,11 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 4. 风格补登只接受直接连到已登记信息卡的磁盘图片。所有图片先完成浏览器预检再发第一份 POST；服务端在全部文件通过后才发布正式文件和新的 `style_reference_intake_receipt.<request>.json`。既有白底原图、资产清单与建批回执只读。
 5. 阶段 C/D 只允许假执行器、临时工作区、回环 HTTP 和离线测试；不得设置真实执行开关、读取或索要密钥、调用模型或产生费用。阶段 E 的每个闸门仍须单独批准。
 
+风格补登按钮会先只读访问 `http://127.0.0.1:17373/workbench-health`。服务未启动、风格工人已停止、画布正在重连、服务健康但 8 秒未确认分别显示四种人话提示；前三种不生成请求编号、不启动确认计时，四种情况都不自动重试。恢复后必须由用户亲手重新点击。若第三服务窗口消失，表示工作台已经停机，重新双击 `启动画布.bat` 即可；不要在旧页面上反复点击。
+
 ### 阶段 E 每闸门预检与收尾（每次都完整执行）
 
-- 闸门①上游六工序、闸门②完整性加首张、闸门③剩余十三张在开始前都必须逐项复核：两仓为已提交干净状态；全量测试、TypeScript 与构建通过；首批账本仍为 72 行且指纹不变；第二批次事件行数和已有产物先登记；进程、用户、机器三个作用域的 `CODEX_DEV_ALLOW_REAL_EXECUTION`、`RENDER_ALLOW_REAL_EXECUTION`、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 均为空；不存在并行 `--watch`、旧 `--serve`、另一个画布工作台或其他真实执行进程；`127.0.0.1:17373` 在本闸门工作台启动前必须**无监听**；本闸门只准备一次画布命令。闸门①进程只临时打开上游执行开关，图片执行开关保持关闭；后台仍先让 `run_controller` 判定下一步，但在完整性第三段执行门禁之前正常暂停。这项保护只能阻止越过闸门，不能放行任何步骤。
+- 闸门①上游六工序、闸门②完整性加首张、闸门③剩余十三张在开始前都必须逐项复核：两仓为已提交干净状态；全量测试、TypeScript 与构建通过；首批账本仍为 72 行且指纹不变；第二批次事件行数和已有产物先登记；进程、用户、机器三个作用域的 `CODEX_DEV_ALLOW_REAL_EXECUTION`、`RENDER_ALLOW_REAL_EXECUTION`、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 均为空；不存在并行 `--watch`、旧 `--serve`、另一个画布工作台或其他真实执行进程；`127.0.0.1:17373` 在本闸门工作台启动前必须**无监听**；启动后只读访问 `/workbench-health` 必须为 200，且建批、真实制作、风格补登三名关键工人均为 `running`；本闸门只准备一次画布命令。闸门①进程只临时打开上游执行开关，图片执行开关保持关闭；后台仍先让 `run_controller` 判定下一步，但在完整性第三段执行门禁之前正常暂停。这项保护只能阻止越过闸门，不能放行任何步骤。
 - 闸门执行中只接受用户画布发出的唯一命令；任何失败立即停，不现场改码、不自动重试、不追加第二条命令。闸门②固定 `RENDER_MAX_IMAGES=1`；闸门③只在另获批准后处理剩余缺口。
 - 每闸门结束都要停止临时服务，清空本次进程内开关和凭据，再核对三个作用域均为空；同时检查 `127.0.0.1:17372` 与 `127.0.0.1:17373` 均无监听。17373 检查命令：`Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17373 -State Listen -ErrorAction SilentlyContinue`。若仍有监听，只能先查看 owner 的完整命令行，确认是本闸门工作台后精确停止；不得按 Python/bun 进程名批量结束。
 

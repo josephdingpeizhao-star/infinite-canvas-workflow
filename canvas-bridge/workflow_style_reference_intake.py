@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import ic_client
+
 
 SUPPORTED_SUFFIXES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
@@ -251,6 +253,18 @@ class WorkflowStyleReferenceService:
         self.consumed_request_ids: set[str] = set()
         self.stopping = False
         self._lock = threading.RLock()
+        self._status_callback: Callable[[str], None] | None = None
+        self._last_worker_status: str | None = None
+
+    def set_status_callback(self, callback: Callable[[str], None]) -> None:
+        self._status_callback = callback
+
+    def _report_worker_status(self, status: str) -> None:
+        if status == self._last_worker_status:
+            return
+        self._last_worker_status = status
+        if self._status_callback is not None:
+            self._status_callback(status)
 
     def set_upload_endpoint(self, host: str, port: int) -> None:
         if host != DEFAULT_STYLE_UPLOAD_HOST or type(port) is not int or not 1 <= port <= 65_535:
@@ -481,5 +495,11 @@ class WorkflowStyleReferenceService:
 
     def serve_forever(self) -> None:
         while not self.stopping:
-            self.poll_once()
+            try:
+                self.poll_once()
+            except ic_client.CanvasAgentError:
+                self._report_worker_status("waiting_canvas")
+                print(json.dumps({"style_reference_intake": "waiting_canvas"}, ensure_ascii=False), flush=True)
+            else:
+                self._report_worker_status("running")
             self.sleep(self.interval)

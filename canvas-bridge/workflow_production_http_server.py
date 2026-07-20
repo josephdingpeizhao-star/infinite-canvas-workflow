@@ -9,7 +9,7 @@ import json
 import threading
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Mapping
 
 from workflow_production_projection import artifact_from_path
 from workflow_style_reference_intake import MAX_STYLE_UPLOAD_BYTES, StyleReferenceUploadRejected
@@ -21,6 +21,14 @@ UNIT_PRICE_USD = 0.06
 TOTAL_IMAGES = 14
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
+WORKBENCH_WORKERS = (
+    "workflow_demo",
+    "batch_intake",
+    "workflow_production",
+    "style_reference_intake",
+)
+WORKBENCH_CRITICAL_WORKERS = frozenset({"batch_intake", "workflow_production", "style_reference_intake"})
+WORKBENCH_STATUSES = frozenset({"not_started", "running", "waiting_canvas", "stopped"})
 
 
 class ProductionHttpError(ValueError):
@@ -43,16 +51,51 @@ def _first_paths(value: Any) -> tuple[Path, ...]:
 
 
 class WorkflowProductionHttpApplication:
-    def __init__(self, repository_root: Path, token: str, *, style_acceptor: Any | None = None):
+    def __init__(
+        self,
+        repository_root: Path,
+        token: str,
+        *,
+        style_acceptor: Any | None = None,
+        health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
+    ):
         self.repository_root = repository_root.resolve()
         self.token = token
         self.style_acceptor = style_acceptor
+        self.health_provider = health_provider
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
 
     def authorize(self, provided: str) -> None:
         if not hmac.compare_digest(self.token.encode("utf-8"), provided.encode("utf-8")):
             raise ProductionHttpError(401, "unauthorized")
+
+    def set_health_provider(
+        self,
+        provider: Callable[[], tuple[bool, Mapping[str, Any]]],
+    ) -> None:
+        self.health_provider = provider
+
+    def health(self) -> tuple[bool, dict[str, Any]]:
+        try:
+            healthy, raw_workers = self.health_provider() if self.health_provider else (False, {})
+        except Exception:
+            healthy, raw_workers = False, {}
+        workers: dict[str, dict[str, int | str]] = {}
+        for name in WORKBENCH_WORKERS:
+            raw = raw_workers.get(name) if isinstance(raw_workers, Mapping) else None
+            if not isinstance(raw, Mapping):
+                continue
+            status = raw.get("status")
+            last_status_at = raw.get("lastStatusAt")
+            if status not in WORKBENCH_STATUSES or type(last_status_at) is not int:
+                continue
+            workers[name] = {"status": status, "lastStatusAt": last_status_at}
+        critical_running = all(
+            workers.get(name, {}).get("status") == "running"
+            for name in WORKBENCH_CRITICAL_WORKERS
+        )
+        return bool(healthy) and critical_running, {"workers": workers}
 
     def _manifest(self, batch_id: str) -> tuple[dict[str, Any], Path, Path]:
         if not batch_id or Path(batch_id).name != batch_id or any(char in batch_id for char in ("/", "\\", "\0")):
@@ -159,13 +202,17 @@ class WorkflowProductionHttpServer:
         host: str = DEFAULT_PRODUCTION_HOST,
         port: int = DEFAULT_PRODUCTION_PORT,
         style_acceptor: Any | None = None,
+        health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
         if not isinstance(port, int) or not 0 <= port <= 65535:
             raise ValueError("真实图片端口无效")
         self.application = WorkflowProductionHttpApplication(
-            repository_root, token, style_acceptor=style_acceptor
+            repository_root,
+            token,
+            style_acceptor=style_acceptor,
+            health_provider=health_provider,
         )
         self.host = host
         self.port = port
@@ -214,9 +261,20 @@ class WorkflowProductionHttpServer:
                 origin: str | None = None
                 try:
                     origin = self._origin()
-                    application.authorize(self.headers.get("x-canvas-agent-token") or "")
                     path = urllib.parse.urlsplit(self.path)
                     segments = [urllib.parse.unquote(item) for item in path.path.split("/") if item]
+                    if segments == ["workbench-health"]:
+                        healthy, body = application.health()
+                        payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
+                        self.send_response(200 if healthy else 503)
+                        self.send_header("content-type", "application/json; charset=utf-8")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", str(len(payload)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
+                    application.authorize(self.headers.get("x-canvas-agent-token") or "")
                     if len(segments) == 3 and segments[0] == "workflow-production" and segments[2] == "quote":
                         payload = json.dumps(application.quote(segments[1]), ensure_ascii=False).encode("utf-8")
                         self.send_response(200)
@@ -305,6 +363,12 @@ class WorkflowProductionHttpServer:
                     self._error(500, origin=origin)
 
         return Handler
+
+    def set_health_provider(
+        self,
+        provider: Callable[[], tuple[bool, Mapping[str, Any]]],
+    ) -> None:
+        self.application.set_health_provider(provider)
 
     def start(self) -> None:
         if self._server is not None:

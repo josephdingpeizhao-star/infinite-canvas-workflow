@@ -6,6 +6,8 @@ import http.client
 import io
 import json
 import socket
+import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -30,6 +32,8 @@ from batch_intake_controller import (  # noqa: E402
 from batch_creator import BatchCreationError  # noqa: E402
 from workflow_batch_intake_service import (  # noqa: E402
     DEFAULT_UPLOAD_HOST,
+    SERVICE_LOCK_NAME,
+    SERVICE_OWNER_NAME,
     BatchIntakeServiceLock,
     BatchUploadServer,
     UploadRejected,
@@ -696,11 +700,65 @@ class WorkflowBatchIntakeServiceTests(unittest.TestCase):
                 "canvas-batch-intake-state-v1\n", encoding="utf-8"
             )
             with BatchIntakeServiceLock(state_root):
+                owner_before = (state_root / SERVICE_OWNER_NAME).read_bytes()
                 with self.assertRaisesRegex(RuntimeError, "建批服务已在运行"):
                     with BatchIntakeServiceLock(state_root):
                         pass
+                self.assertEqual(owner_before, (state_root / SERVICE_OWNER_NAME).read_bytes())
             with BatchIntakeServiceLock(state_root):
                 pass
+            self.assertEqual(1, (state_root / SERVICE_LOCK_NAME).stat().st_size)
+            self.assertFalse((state_root / SERVICE_OWNER_NAME).exists())
+
+    def test_abnormally_terminated_child_releases_system_lock_before_owner_is_overwritten(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_root = Path(tmp)
+            (state_root / ".canvas_batch_intake_state").write_text(
+                "canvas-batch-intake-state-v1\n", encoding="utf-8"
+            )
+            program = """
+import json
+import os
+import sys
+import time
+sys.path.insert(0, sys.argv[1])
+from workflow_batch_intake_service import BatchIntakeServiceLock
+lock = BatchIntakeServiceLock(__import__('pathlib').Path(sys.argv[2]))
+lock.__enter__()
+print(json.dumps({'pid': os.getpid()}), flush=True)
+time.sleep(60)
+"""
+            child = subprocess.Popen(
+                [sys.executable, "-c", program, str(BRIDGE), str(state_root)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+            )
+            try:
+                announced = json.loads(child.stdout.readline())
+                stale_owner = json.loads((state_root / SERVICE_OWNER_NAME).read_text(encoding="utf-8"))
+                self.assertEqual(announced["pid"], stale_owner["pid"])
+                with self.assertRaisesRegex(RuntimeError, "建批服务已在运行"):
+                    with BatchIntakeServiceLock(state_root):
+                        pass
+
+                child.terminate()
+                child.wait(timeout=5)
+                self.assertNotEqual(0, child.returncode)
+                with BatchIntakeServiceLock(state_root):
+                    new_owner = json.loads((state_root / SERVICE_OWNER_NAME).read_text(encoding="utf-8"))
+                    self.assertEqual(os.getpid(), new_owner["pid"])
+                    self.assertNotEqual(stale_owner["pid"], new_owner["pid"])
+                    self.assertEqual(1, (state_root / SERVICE_LOCK_NAME).stat().st_size)
+            finally:
+                if child.poll() is None:
+                    child.terminate()
+                    child.wait(timeout=5)
+                if child.stdout is not None:
+                    child.stdout.close()
+                if child.stderr is not None:
+                    child.stderr.close()
 
 
 if __name__ == "__main__":

@@ -55,12 +55,20 @@ class ProductionHttpServerTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.style_acceptor = FakeStyleAcceptor()
+        self.health_ok = True
+        self.health_workers = {
+            "workflow_demo": {"status": "running", "lastStatusAt": 1_000},
+            "batch_intake": {"status": "running", "lastStatusAt": 1_001},
+            "workflow_production": {"status": "running", "lastStatusAt": 1_002},
+            "style_reference_intake": {"status": "running", "lastStatusAt": 1_003},
+        }
         self.server = production_http.WorkflowProductionHttpServer(
             repository_root=self.repo,
             token="canvas-token",
             host="127.0.0.1",
             port=0,
             style_acceptor=self.style_acceptor,
+            health_provider=lambda: (self.health_ok, self.health_workers),
         )
         self.server.start()
         self.base = f"http://127.0.0.1:{self.server.bound_port}"
@@ -84,6 +92,31 @@ class ProductionHttpServerTest(unittest.TestCase):
         self.assertEqual(13, payload["remainingCount"])
         self.assertEqual(0.78, payload["estimatedTotalUsd"])
         self.assertEqual(before, self.manifest.read_bytes())
+
+    def test_health_is_read_only_sanitized_and_returns_503_for_a_dead_critical_worker(self) -> None:
+        with self._get("/workbench-health") as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(200, response.status)
+        self.assertEqual({"workers"}, set(payload))
+        self.assertEqual({"status", "lastStatusAt"}, set(payload["workers"]["batch_intake"]))
+
+        self.health_workers["style_reference_intake"] = {
+            "status": "stopped",
+            "lastStatusAt": 2_000,
+            "exception": "secret payload",
+            "path": "D:/secret/workspace",
+            "token": "secret-token",
+        }
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._get("/workbench-health")
+        self.assertEqual(503, ctx.exception.code)
+        failed = json.loads(ctx.exception.read().decode("utf-8"))
+        self.assertEqual({"workers"}, set(failed))
+        self.assertEqual(
+            {"status": "stopped", "lastStatusAt": 2_000},
+            failed["workers"]["style_reference_intake"],
+        )
+        self.assertNotIn("secret", json.dumps(failed))
 
     def test_output_requires_token_and_returns_hash_proof_without_exposing_path(self) -> None:
         with self.assertRaises(urllib.error.HTTPError) as ctx:
