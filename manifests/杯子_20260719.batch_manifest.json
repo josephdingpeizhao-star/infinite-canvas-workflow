@@ -3,7 +3,12 @@
   "product_id": "杯子_20260719",
   "batch_type": "single",
   "user_declared_set_product": false,
-  "requested_outputs": [],
+  "requested_outputs": [
+    "main",
+    "detail",
+    "final_prompts",
+    "qc_reports"
+  ],
   "current_stage": "not_started",
   "next_skill": "workflow-router",
   "user_confirmed_facts": {

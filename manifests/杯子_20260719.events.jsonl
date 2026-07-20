@@ -1,0 +1,7 @@
+{"ts": "2026-07-20T23:31:55", "event": "command_received", "request_id": "lw23q4mZDb", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
+{"ts": "2026-07-20T23:31:55", "event": "requested_outputs_declared", "request_id": "lw23q4mZDb", "requested_outputs": ["main", "detail", "final_prompts", "qc_reports"]}
+{"ts": "2026-07-20T23:31:55", "event": "step_started", "request_id": "lw23q4mZDb", "step": "identity"}
+{"ts": "2026-07-20T23:32:51", "event": "step_failed", "request_id": "lw23q4mZDb", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-20T23:33:48", "event": "command_received", "request_id": "UaFsi0eFZ3", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
+{"ts": "2026-07-20T23:33:48", "event": "step_started", "request_id": "UaFsi0eFZ3", "step": "identity"}
+{"ts": "2026-07-20T23:34:12", "event": "step_failed", "request_id": "UaFsi0eFZ3", "detail": "执行已停止，未自动重试"}
