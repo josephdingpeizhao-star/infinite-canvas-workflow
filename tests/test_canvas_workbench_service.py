@@ -53,6 +53,10 @@ class FakeUploadServer:
         self.stopped = True
 
 
+class FakeProductionHttpServer(FakeUploadServer):
+    bound_port = 17373
+
+
 class DemoClient:
     def __init__(self):
         self.state = {
@@ -109,6 +113,34 @@ class DemoExecutor:
 
 
 class CanvasWorkbenchServiceTests(unittest.TestCase):
+    def test_m2b_services_and_17373_listener_share_workbench_lifecycle(self) -> None:
+        demo = LoopingService()
+        intake = LoopingService()
+        production = LoopingService()
+        style = LoopingService()
+        upload = FakeUploadServer()
+        production_http = FakeProductionHttpServer()
+        workbench = CanvasWorkbenchService(
+            demo_service=demo,
+            intake_service=intake,
+            upload_server=upload,
+            production_service=production,
+            style_service=style,
+            production_http_server=production_http,
+        )
+        workbench.start()
+        for component in (demo, intake, production, style):
+            self.assertTrue(component.started.wait(1))
+        self.assertTrue(upload.started)
+        self.assertTrue(production_http.started)
+        self.assertEqual("running", workbench.component_status["workflow_production"])
+        self.assertEqual("running", workbench.component_status["style_reference_intake"])
+
+        workbench.stop()
+        self.assertTrue(production_http.stopped)
+        self.assertTrue(production.stopping)
+        self.assertTrue(style.stopping)
+
     def test_real_m1_demo_service_executes_inside_workbench_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "demo"

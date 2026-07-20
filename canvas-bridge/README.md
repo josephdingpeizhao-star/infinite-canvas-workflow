@@ -5,7 +5,7 @@
 ## 边界（硬性约束）
 
 - 仓库文件（manifest、schema、规则、报告）是唯一事实来源；画布只是投影目标。
-- 默认投影只读。只有用户在画布上明确触发既有受控动作时，才允许相应白名单写入：阶段 3 配置编辑、阶段 4 运行命令，以及 M2-a 的“建批”。M2-a 只在全部门禁通过后创建一个新的仓库 manifest 与外部批次工作区；既有文件一律不覆盖。
+- 默认投影只读。只有用户在画布上明确触发既有受控动作时，才允许相应白名单写入：阶段 3 配置编辑、阶段 4 运行命令、M2-a 的“建批”，以及 M2-b 在真实费用确认后的规范目标声明。M2-a 只在全部门禁通过后创建一个新的仓库 manifest 与外部批次工作区；M2-b 只允许经既有 `batch_editor` 门禁把空的 `requested_outputs` 一次性声明为 `main, detail, final_prompts, qc_reports`，既有文件与不同的非空意图一律不覆盖。
 - 不修改 infinite-canvas 源码；只通过 canvas-agent 的本地 HTTP 协议（`/api/tools`）通信。
 - 纯 Python 标准库，与 `scripts/` 保持一致，不引入第三方依赖。
 
@@ -20,12 +20,17 @@
 - `executor_factory.py`：组合入口，显式注册具体适配器；新增供应商不修改画布命令和门禁。
 - `demo_executor.py`：现有演示工作区的兼容适配器。
 - `workflow_demo_executor.py`：M1-b 独立的零成本演示执行器。只接受 `renders`，每轮在带 `.canvas_demo` 标记的工作区建立独立目录，原子写出 6 张 `720x720` 主图与 8 张 `720x960` 详情 PNG；每次建目录、临时写入和正式替换前都复核安全标记与解析后路径边界。取消发生在开始前时零目录，运行中断时保留已完成 PNG 且不留临时文件。
-- `workflow_demo_projection.py`：把已经落盘的演示 PNG 逐张投影成普通图片节点并连回工作流机器，节点 id 固定使用 `wfdemo-output:<machine>:<run>:<index>`；只替换同一轮同一张，旧轮结果保留并向右避让。画布中的 data URI 只用于本地 demo 展示，M2 的真实图片交付、存储与访问必须另行设计。
+- `workflow_demo_projection.py`：把已经落盘的演示 PNG 逐张投影成普通图片节点并连回工作流机器，节点 id 固定使用 `wfdemo-output:<machine>:<run>:<index>`；只替换同一轮同一张，旧轮结果保留并向右避让。画布中的 data URI 只用于本地 demo 展示；M2-b 正式图片使用下面独立的 17373 哈希通道。
 - `workflow_demo_service.py`：M1-b 常驻桥接服务。只消费 `workflow` 节点中处于 `queued` 的命令，不投影九工序、运行台或日志；命令复用动词白名单、批次路由与注册执行器三段门禁，按文件落盘顺序流式上桌，并用 demo 工作区内事件账本与单实例锁防止重复执行。服务离线、陈旧或非法命令都转成人话状态。
 - `batch_intake_controller.py`：M2-a 信息卡门禁。只认 `batch-info` 节点的 `build: batch` 动作，按顺序核对请求编号与时间、七字段、信息卡和工作流的唯一连线、以及直接连给同一工作流的原始素材；派生图、缺少原始文件声明或连线不明确时都以人话拒绝。
 - `batch_creator.py`：M2-a 建批事务。根据商品品类和本机日期生成中文批次号（如 `餐具_20260718`），用户不填写路径；先调用既有建批脚本做零写入预检，再在安全标记保护的临时目录中写入原图与回执，最终逐文件重算哈希，仓库 manifest 最后发布。同名批次、重复请求、越界路径和竞态写入都拒绝覆盖。
 - `workflow_batch_intake_service.py`：M2-a 常驻服务与原图上传通道。控制消息仍从画布读取，原图字节单独经 `127.0.0.1:17372` 上传；必须复用现有 canvas-agent 令牌，只接受本机画布来源，按文件类型、文件头、大小和 SHA-256 校验。服务日志不记录令牌或图片内容，任何完整性不一致都进入不可重试的硬停止状态。
-- `canvas_workbench_service.py`：新的日常“画布工作台”承载入口。它在同一进程中隔离运行既有 M1 demo 与 M2-a 建批服务；M1 的 0 元演示行为保持不变，建批成功只表示批次和原图已登记，不会启动真图制作。旧 demo 单服务入口继续保留作对照。
+- `workflow_production_controller.py`：M2-b 真实模式选择与门禁衔接。已登记信息卡和至少一张批次素材必须同时连到同一台机器；确认费用后才通过既有编辑门禁声明四项规范输出。每一步仍只由 `run_controller` 的命令解析、真实路由判定和统一执行三段门禁放行；本模块不另建生产续跑分支。
+- `workflow_production_service.py`：M2-b 后台编排。顺序复用现役 `codex-dev` 六工序、`image-production / integrity` 和 `image-production / renders`，机器只显示人话进度，不投影九工序、运行台或日志。任一步失败即停且不自动重试；部分图片只能用既有 `retry: renders` 重新进三段门禁，14 张完成后停在 QC 前。
+- `workflow_production_projection.py` / `workflow_production_render_observer.py`：正式 PNG 落盘后逐张上桌并连回机器；固定 `wfprod-output:<batch>:<config>` 节点保留旧成果并避让。主图只收正方形，详情只收精确 3:4；2:3 返回先原样保存到审计目录后停机，M2-b 不引入 Pillow、不自动扩边。
+- `workflow_production_http_server.py`：固定 `127.0.0.1:17373` 的只读费用/正式 PNG 端点和风格补登上传入口。复用 canvas-agent 令牌，仅接受本机画布来源；正式图片返回 SHA-256，浏览器再次核验后转存 localforage，节点不依赖服务长期在线，也不使用 data URI。
+- `workflow_style_reference_intake.py`：M2-b “画布补登 A”通道。用户把磁盘风格图直接连到已登记信息卡；全部浏览器声明、节点凭证、字节数、类型和 SHA-256 一致后，才把原字节写入批准的 `inputs/style_refs` 并新建独立回执。白底原图、资产清单和建批回执不改写；不一致时整次硬停止且不自动重试。
+- `canvas_workbench_service.py`：日常“画布工作台”承载入口。在同一进程中隔离运行 M1 demo、M2-a 建批、M2-b 真实制作和风格补登，并统一管理 17372/17373 两个回环监听。M1 的 0 元演示行为保持不变；旧 demo 单服务入口继续保留作对照。
 - `openai_image_executor.py`：GPT Image 2 适配器（默认模型 `gpt-image-2`），纯标准库 HTTP；无参考图走 `/v1/images/generations`，有参考图走 `/v1/images/edits`。HTTP 传输可注入，自动测试不访问真实网络。
 - `render_task_assembler.py`：从 `final_prompt_index.json` 按原顺序组装供应商无关的图片任务。整批先核对提示词、唯一白底参考图和输出边界；主图映射 `1024x1024`，详情图暂映射 `1024x1536`；已有同名 PNG 自动跳过，便于安全续跑。
 - `image_production_executor.py`：生产图片组合执行器 `image-production`，只接受 `integrity` 与 `renders`。前者运行 prompts-only 确定性门禁，后者在双开关通过后复用既有 `openai-image` 逐张执行；任一张失败即停止，已成功图片保留，错误不回显密钥或提示词正文。
@@ -101,6 +106,20 @@ python scripts/build_batch_manifest.py --product-id <批次编号> --product-typ
 
 M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调用模型、不产生费用，也不设置任何真实执行开关。2026-07-19 阶段 D 已完成：主仓 360/360 项通过；fork 36 项测试（272 个断言）、TypeScript 和生产构建通过；隔离批次 `验收餐具_20260719` 的两张浏览器原图、上传文件和最终文件 SHA-256 逐项一致，中文 manifest 文件名、工作区目录和路由读取往返无损；重复建批未上传、未覆盖。M1 演示分别在工作台入口和旧 `--serve-workflow-demo` 入口各完成 6+8 张，两边对应 14 个文件哈希全部一致。测试批次、隔离画布配置和临时服务均已清理，本段随本轮两仓独立提交收账，不 push；真实第二批次仍由用户本人操作。
 
+## M2-b 真实费用、门禁续跑与正式图片通道
+
+1. 无信息卡的工作流机器继续进入 M1 的 0 元演示；只要连有信息卡，就不得因信息卡未完成、连线不完整或多卡歧义退回演示。已登记信息卡与至少一张批次素材同时满足时，页面只读读取 17373 费用估算，显示剩余张数、约计美元金额和约计时长。取消只关闭费用卡，零命令、零 manifest 变更、零费用。
+2. 用户确认费用后，机器只写 `run: next`；已有正式图片的续跑只写 `retry: renders`。后台首先经既有 `batch_editor` 把空目标一次性声明为 `main, detail, final_prompts, qc_reports`，随后每一步都依次经过 `run_controller.parse_run_content()`、`run_controller.resolve_command()`、`run_controller.execute_step()`。完整性与渲染没有门禁外放行分支；路由到 `needs_qc_reports` 且已有 14 张后立即停机，QC 属 M2-c。
+3. 正式 PNG 先落盘，再由 17373 只读端点交给浏览器。服务端文件 SHA、响应 SHA 和浏览器 Blob SHA 三者一致后才写入 localforage，并把 `storageKey` 回写节点；刷新或停止工作台后仍可显示。任一不一致硬停止且不自动重试。
+4. 风格补登只接受直接连到已登记信息卡的磁盘图片。所有图片先完成浏览器预检再发第一份 POST；服务端在全部文件通过后才发布正式文件和新的 `style_reference_intake_receipt.<request>.json`。既有白底原图、资产清单与建批回执只读。
+5. 阶段 C/D 只允许假执行器、临时工作区、回环 HTTP 和离线测试；不得设置真实执行开关、读取或索要密钥、调用模型或产生费用。阶段 E 的每个闸门仍须单独批准。
+
+### 阶段 E 每闸门预检与收尾（每次都完整执行）
+
+- 闸门①上游六工序、闸门②完整性加首张、闸门③剩余十三张在开始前都必须逐项复核：两仓为已提交干净状态；全量测试、TypeScript 与构建通过；首批账本仍为 72 行且指纹不变；第二批次事件行数和已有产物先登记；进程、用户、机器三个作用域的 `CODEX_DEV_ALLOW_REAL_EXECUTION`、`RENDER_ALLOW_REAL_EXECUTION`、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 均为空；不存在并行 `--watch`、旧 `--serve`、另一个画布工作台或其他真实执行进程；`127.0.0.1:17373` 在本闸门工作台启动前必须**无监听**；本闸门只准备一次画布命令。
+- 闸门执行中只接受用户画布发出的唯一命令；任何失败立即停，不现场改码、不自动重试、不追加第二条命令。闸门②固定 `RENDER_MAX_IMAGES=1`；闸门③只在另获批准后处理剩余缺口。
+- 每闸门结束都要停止临时服务，清空本次进程内开关和凭据，再核对三个作用域均为空；同时检查 `127.0.0.1:17372` 与 `127.0.0.1:17373` 均无监听。17373 检查命令：`Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17373 -State Listen -ErrorAction SilentlyContinue`。若仍有监听，只能先查看 owner 的完整命令行，确认是本闸门工作台后精确停止；不得按 Python/bun 进程名批量结束。
+
 ## 可替换执行器边界
 
 - 业务路由负责判断“现在能不能运行”；适配器只负责“如何执行”，不得绕过门禁。
@@ -130,4 +149,4 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 
 阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。M1-a、M1-b 已完成，用户于 2026-07-18 亲手走完 M1-c 全剧本并确认“全部顺利，没有卡点”，M1 正式闭环。
 
-M2-a 已按用户批准完成信息卡画布直填、中文批次命名、受控建批、原图保真通道、工作台承载切换和阶段 D 隔离验收。主仓 360/360、fork 36 项（272 个断言）以及 TypeScript、生产构建均通过；测试批次与全部临时现场已清理，不混入 Git。真实第二批次仍保留给用户本人操作。首批 `shuiping_20260712` 的 identity、style master、angle inventory、`main_vc`、`detail_vc`、`final_prompts`、14 张正式成图与真实 QC 均已完成，19 条问题已由用户终审接受，批次正式关账；事件保持 72 行，路由为 `ready`，QC 报告原样保留，任何图片追加、覆盖或重生成仍须另行批准。
+M2-a 已按用户批准完成信息卡画布直填、中文批次命名、受控建批、原图保真通道、工作台承载切换和阶段 D 隔离验收。M2-b 阶段 C/D 的纯离线实现已完成：真实费用卡、三段门禁后台编排、逐张正式图片上桌并转存浏览器、信息卡风格补登 A、失败停机与既有路由续跑均有自动测试；主仓 392 项、fork 50 项（311 个断言）、TypeScript 与生产构建通过。没有触碰真实用户画布、真实模型、密钥或费用；阶段 E 尚未开始，必须逐闸门另获批准。首批 `shuiping_20260712` 仍保持关账冻结，事件 72 行、路由 `ready`，任何图片追加、覆盖或重生成仍须另行批准。

@@ -1,4 +1,4 @@
-"""Composite local service that isolates the existing M1 demo from M2 intake."""
+"""Composite local service for isolated M1, M2-a and M2-b workers."""
 
 from __future__ import annotations
 
@@ -13,6 +13,9 @@ import batch_creator
 import ic_client
 import workflow_batch_intake_service
 import workflow_demo_service
+import workflow_production_http_server
+import workflow_production_service
+import workflow_style_reference_intake
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -28,14 +31,27 @@ class CanvasWorkbenchService:
         demo_service: Any,
         intake_service: Any,
         upload_server: Any,
+        production_service: Any | None = None,
+        style_service: Any | None = None,
+        production_http_server: Any | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.demo_service = demo_service
         self.intake_service = intake_service
         self.upload_server = upload_server
+        self.production_service = production_service
+        self.style_service = style_service
+        self.production_http_server = production_http_server
         self.sleep = sleep
         self.stopping = False
-        self.component_status = {"workflow_demo": "not_started", "batch_intake": "not_started"}
+        self.component_status = {
+            "workflow_demo": "not_started",
+            "batch_intake": "not_started",
+        }
+        if production_service is not None:
+            self.component_status["workflow_production"] = "not_started"
+        if style_service is not None:
+            self.component_status["style_reference_intake"] = "not_started"
         self._threads: dict[str, threading.Thread] = {}
         self._status_lock = threading.Lock()
 
@@ -54,10 +70,17 @@ class CanvasWorkbenchService:
         if self._threads:
             return
         self.upload_server.start()
-        for name, service in (
+        if self.production_http_server is not None:
+            self.production_http_server.start()
+        components = [
             ("workflow_demo", self.demo_service),
             ("batch_intake", self.intake_service),
-        ):
+        ]
+        if self.production_service is not None:
+            components.append(("workflow_production", self.production_service))
+        if self.style_service is not None:
+            components.append(("style_reference_intake", self.style_service))
+        for name, service in components:
             with self._status_lock:
                 self.component_status[name] = "running"
             thread = threading.Thread(
@@ -75,7 +98,13 @@ class CanvasWorkbenchService:
         self.stopping = True
         self.demo_service.stopping = True
         self.intake_service.stopping = True
+        if self.production_service is not None:
+            self.production_service.stopping = True
+        if self.style_service is not None:
+            self.style_service.stopping = True
         self.upload_server.stop()
+        if self.production_http_server is not None:
+            self.production_http_server.stop()
         for thread in tuple(self._threads.values()):
             thread.join(timeout=5.0)
 
@@ -139,10 +168,30 @@ def cmd_serve_canvas_workbench(
             host=workflow_batch_intake_service.DEFAULT_UPLOAD_HOST,
             port=workflow_batch_intake_service.DEFAULT_UPLOAD_PORT,
         )
+        production_service = workflow_production_service.WorkflowProductionService(
+            REPO_ROOT,
+            interval=interval,
+        )
+        style_service = workflow_style_reference_intake.WorkflowStyleReferenceService(
+            REPO_ROOT,
+            client=ic_client,
+            interval=interval,
+            upload_port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
+        )
+        production_http = workflow_production_http_server.WorkflowProductionHttpServer(
+            repository_root=REPO_ROOT,
+            token=token,
+            host=workflow_production_http_server.DEFAULT_PRODUCTION_HOST,
+            port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
+            style_acceptor=style_service,
+        )
         workbench = CanvasWorkbenchService(
             demo_service=demo_service,
             intake_service=intake_service,
             upload_server=upload_server,
+            production_service=production_service,
+            style_service=style_service,
+            production_http_server=production_http,
         )
         print(
             json.dumps(
@@ -150,6 +199,7 @@ def cmd_serve_canvas_workbench(
                     "canvas_workbench": "started",
                     "interval": interval,
                     "upload": "http://127.0.0.1:17372",
+                    "production": "http://127.0.0.1:17373",
                     "test_mode": test_workspace_root is not None,
                 },
                 ensure_ascii=False,

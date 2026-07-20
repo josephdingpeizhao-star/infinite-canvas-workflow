@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-19（M2-a 验收通过后，用户已在"无限画布 1"亲手完成第二个真实批次登记：`杯子_20260719`，2 张相机原片白底图经本机保真通道无损落盘，三处 SHA-256 与独立复核一致；用户决定先以此 2 张跑通全流程，正式投产前另建素材更充足的批次。批次数据经用户单独批准后入 Git。`inputs\style_refs` 与 `requested_outputs` 均为空、批次状态 `not_started`，待 M2-b 按门禁处理；`shuiping_20260712` 的关账状态与长期重生成冻结保持不变）。
+> 最后更新：2026-07-20（M2-b 阶段 C/D 纯离线实现完成：真实费用确认、信息卡真实模式、风格参考“画布补登 A”、`run_controller` 原三段门禁后台编排、正式 PNG 逐张上桌与浏览器持久化均已接通；主仓 392 项、fork 50 项自动测试及 TypeScript/构建通过。阶段 E 尚未开始，`杯子_20260719` 仍保持 2 张原图及既有凭证只读、零真实模型/零密钥/零费用；首批 `shuiping_20260712` 的关账与长期重生成冻结不变）。
 
 ## 1. 定位与目标
 
@@ -41,6 +41,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | ⑧ | 《产品形态蓝图 v1.0》定稿：产品采用桌上六物、四条机器礼仪、两条边界原则和 M0–M3 分期；旧九工序监控投影从用户画布退役。撤掉运行台后暂时没有生产命令入口，不造成运营损失：首批已关账、重生成长期冻结；命令通道由 M1 工作流节点按钮承接，并保持原门禁语义 | 2026-07-18 |
 | ⑨ | 品类扩展策略定案（三层结构）：通用流水线骨架（九工序 + 可替换执行器边界，品类无关）＋每品类一套配方手册（核心文档按工序分册，品类知识只写在册内；套装三册为既有先例）＋每批一张事实卡（`user_confirmed_facts` 七字段）。14 张 = 6 主图 1:1 + 8 详情 3:4 为全店所有品类通用规范，归入骨架（手持 2+1 暂按通用处理）。扩展纪律：新品类只新增文件、不修改旧品类文档与骨架；核心文档今后“工序说明”与“品类知识”分段书写；杯壶家族专属规则（允许清水、倾倒加热禁令、已确认高度校验语境、A/B/C/D 槽位定义）登记为搬家清单，跨远品类时移入配方手册。近期不建品类插件框架、不预写假想品类配置；下一品类为餐具/杯具邻近品类。 | 2026-07-18 |
 | ⑩ | M2-a 的开批入口由用户拍板为“信息卡直接在画布填写”，不要求用户填写任何本机路径；原图由画布选择器经独立的本机保真通道上传。批次号采用中文品类加日期（如 `餐具_20260718`），七字段结构与全店 6+8、手持 2+1 规范保持不变。浏览器原图、上传暂存与最终工作区任一 SHA-256 不一致即硬停止，不降级、不重试、不放宽无损标准。 | 2026-07-18 |
+| ⑪ | M2-b 风格缺口选择“画布补登 A”：磁盘风格图直接连到已登记信息卡，经 17373 原字节与 SHA-256 核对后写入批次独立目录并新建回执。真实费用确认后，`requested_outputs` 必须通过既有编辑门禁一次性声明 `main, detail, final_prompts, qc_reports`；完整性与渲染仍只由 `run_controller` 三段门禁放行，不另建生产续跑路由。阶段 E 每个闸门启动前和收尾都把 17373 无监听作为硬预检。 | 2026-07-20 |
 
 ## 4. 阶段进度台账
 
@@ -59,10 +60,13 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | M1-b | 真机器、假图片 | ✅ 后台 demo 链路完成；命令经既有三段门禁，14 个真实占位 PNG 先落盘后流式上桌；模型、真实费用与真实批次仍未接入 | 本次主仓与 fork 提交 | 主仓 297 项、fork 17 项 + TypeScript + 构建；隔离画布两轮各 14 张、28 节点/28 回连，首轮约 33 秒，取消零新增，离线提示通过；真实账本 72 行与冻结区 70 文件指纹不变 |
 | M1-c | 用户亲手验收 M1 全剧本 | ✅ 用户验收通过，M1 整体闭环 | — | 2026-07-18 用户亲手走完 M1-c 全剧本，反馈“全部顺利，没有卡点” |
 | M2-a | 信息卡画布直填 + 受控建批/本机原图通道（NC-01） | ✅ 实现、全量回归与隔离现场验收完成；测试批次已剔除；真实第二批次 `杯子_20260719` 已由用户于 2026-07-19 亲手登记 | 本轮主仓与 fork 独立提交 | 主仓 360/360；fork 36 项/272 断言 + TypeScript + 构建；`验收餐具_20260719` 中文路径往返和两张原图全链路 SHA-256 一致；工作台/旧入口各完成 6+8 张；零模型、零费用 |
+| M2-b | 真图流式上桌 + 真实费用闸门（NC-02） | ✅ 阶段 C/D 纯离线实现、回归、干跑与文档完成；⏸️ 阶段 E 尚未开始，按三闸门分别等批准 | 本轮主仓与 fork 独立提交 | 主仓 392/392；fork 50 项/311 断言 + TypeScript + 构建；假执行器走完上游、完整性与一张假 PNG 的落盘→上桌→浏览器持久化后停在 QC 前；零外网、零模型、零密钥、零费用，真实用户画布未触碰 |
 
 2026-07-19 完成 M2-a 隔离现场验收。隔离画布 `oLQVWAip2nFC4FdAePNZa` 中，漏填品类以“请填写产品品类”拒绝且零写入；正确填写七字段后建立测试批次 `验收餐具_20260719`，仓库 manifest、外部工作区和路由读取均完整保留中文。两张原图的浏览器 Blob、上传暂存、回执和最终文件 SHA-256 分别保持 `3c022d02ef29f003abdc8fc0b0f378597f36eb6a936e753b2e3027b1b61bc97b`、`a0a0c54e3a4b089c67d25a0c3ab8136eedc1b906c7ff3b7f0991de0df978b22f`；重复建批在上传前拒绝，既有 manifest 和 5 个工作区文件指纹不变，只追加一行不含令牌或图片内容的门禁审计记录。首次 M1 回归因旧 demo 工作区已有 56 张历史结果、路由只允许 QC 而被门禁拒绝，现场按规则暂停；用户批准恢复后，改用两个带 `.canvas_demo` 标记、输出为空的独立验收工作区和两个初始 0/0 的工作流节点。画布工作台 run `28XHbtoooA` 与旧入口 run `nDm3XNZaKx` 均约 33 秒完成 6 张 `720x720` 主图和 8 张 `720x960` 详情图，各有 14 个结果节点与 14 条回连；两边 14 个同名 PNG 的 SHA-256 逐项一致。验收后测试 manifest、测试工作区、建批状态目录、隔离浏览器配置和两套 demo 根均送入 Windows 回收站，17372、9223、工作台与旧入口进程归零；原 demo 工作区未改，用户画布 `hPbkNXg3WA0p2i46VOh3s` 未进入。首批仍为 72 行账本、70 文件、73,579,807 bytes，三份仓库清单指纹不变。
 
 同日用户在自己的工作画布"无限画布 1"亲手完成第二个真实批次登记：批次号 `杯子_20260719`，2 张相机原片白底图（`1S0A9980.JPG` 3,013,892 bytes、`1S0A9981.JPG` 3,162,130 bytes）经本机保真通道落盘至 `D:\onedrive\OneDrive\Desktop\杯类\杯子_20260719`。接收凭证中浏览器、上传暂存、最终工作区三处 SHA-256 一致（`6bd9b58d…fe28df`、`eb5eaf6d…9287cf`），顾问独立重算落盘哈希亦逐字符吻合；七字段为杯子、高度 8 厘米、手持 2+1、允许清水、禁止倾倒与加热、D 缺失不补拍。工作区含 `.canvas_batch` 标记、2 张原图、资产清单与接收凭证；`inputs\style_refs` 为空、`requested_outputs` 为空、批次状态 `not_started`。用户明确决定：先以这 2 张原图跑通全流程（知悉角度库较薄、成图多样性受限），正式投产前再另建素材更充足的批次；批次 manifest 经用户单独批准后随本记录入 Git。画布上同时观察到既有 demo 机器提示"演示状态暂时不允许开始，请重新开始一次"，经查为共享演示工作区已有 4 轮历史结果、路由要求走重试语义所致，属预期门禁行为，与新批次无关。首批 72 行账本与冻结区在登记前后复核不变。（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
+
+2026-07-20 完成 M2-b 阶段 C/D 纯离线实现。工作流机器只在没有信息卡时继续 M1 的 0 元演示；连有信息卡但未登记完成、卡片歧义或缺批次素材时只显示人话拒绝，绝不退回演示。已登记卡先从 17373 只读取得剩余张数、约计金额和时长；取消零命令、零 manifest 变更，确认后才写 `run: next`，部分出图续跑只写既有 `retry: renders`。后台在费用确认后通过原 `batch_editor` 门禁把空目标一次性声明为 `main, detail, final_prompts, qc_reports`，八步实际执行全部仍依次经过 `run_controller` 的解析、真实路由和统一执行三段门禁；不存在完整性或渲染的旁路，14 张后停在 `needs_qc_reports`，不执行 QC。正式 PNG 使用 `wfprod-output:` 稳定节点，经 17373 读取时核对落盘 SHA、响应 SHA 和浏览器 Blob SHA，随后转存 localforage；data URI 只保留给 M1 演示。详情 2:3 只把供应端原图存入审计目录后停机，不自动扩边、不引 Pillow。风格参考采用用户选择的“画布补登 A”：图片直接连信息卡，整批核验通过才写 `inputs\style_refs` 与新的独立回执，白底原图、资产清单和建批回执不改写。离线假执行器覆盖失败停机、无自动重试、已有一张时 `retry: renders`、逐张持久化、服务/浏览器哈希拒绝、风格补登硬停止、17373 CORS 与监听释放；主仓 392 项、fork 50 项/311 断言、TypeScript 和生产构建通过。阶段 C/D 未设置真实开关、未读取或索要密钥、未调用模型、未产生费用、未进入用户画布；阶段 E 保持三闸门逐段批准。
 
 2026-07-16 按获批方案完成生产图片执行链的阶段 A/B。既有完整性脚本新增 `--prompts-only` 独立确定性分支，按主图 6 项、详情 8 项核对数量/顺序、`final_prompt.schema.json`、上游路径、源文件 SHA-256、逐项解析指纹、2+1 手持数量、1:1/3:4 字面、已确认高度约 25 厘米语义与 Unicode；不读取 ComfyUI 作业清单，并在报告记录跳过旧内容启发式扫描与旧编译器扫描的原因。默认 ComfyUI 模式、原报告行为、路由、Schema、批次 manifest 与正式产物均未改变。新增任务组装器按索引顺序绑定白底图目录中的唯一同名参考图，主图映射 `1024x1024`，详情图暂映射 `1024x1536`，已有 PNG 自动跳过；新增注册执行器 `image-production` 只接受 `integrity/renders`，真实渲染受 `RENDER_ALLOW_REAL_EXECUTION=1` 与 `OPENAI_API_KEY` 双门禁控制，可用 `RENDER_MAX_IMAGES` 限量，失败保留已成功图片并脱敏错误。全仓由 197 项增至 227 项并全部通过；当前真实 14 份提示词只读内存门禁为 pass、0 阻断/0 警告，现场索引只组装出 6+8 个任务。全程未设置真实开关、未读取密钥、未访问网络、未生成图片、未写正式报告或事件，ComfyUI/QC/renders/repaired 继续为 0，39 行事件与六份关键正式产物保持不变。
 
@@ -162,17 +166,21 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 - `canvas-bridge/batch_intake_controller.py`——M2-a 开批门禁：只认 `batch-info` 信息卡中的 `build: batch`，核对七字段、命令新鲜度、信息卡—素材—工作流连线和原图来源声明；错误只回人话，不回显本机路径或图片内容。
 - `canvas-bridge/batch_creator.py`——M2-a 建批事务：按 `<中文品类>_<YYYYMMDD>` 推导批次号，先做建批脚本只读预检，再把原图写入受保护工作区；最终逐文件复核哈希后才把仓库 manifest 作为最后一步发布，既有批次或同名文件一律不覆盖。
 - `canvas-bridge/workflow_batch_intake_service.py`——M2-a 常驻建批服务与原图上传监听器。监听器固定 `127.0.0.1:17372`，复用现有 canvas-agent 令牌，只接受本机画布来源；日志不记录令牌或图片内容，完整性不一致时进入不可重试的硬停止状态。
-- `canvas-bridge/canvas_workbench_service.py`——画布工作台新入口：同一进程、两个隔离线程承载既有 M1 演示与 M2-a 建批服务；一个组件停止不会把另一条链路误当成已完成。旧 `--serve-workflow-demo` 入口继续保留用于对照。
+- `canvas-bridge/workflow_production_controller.py` / `workflow_production_service.py`——M2-b 真实模式和后台编排：信息卡与批次素材唯一连线、费用确认后的四项目标受控声明、人话进度、失败停机与部分图片续跑；所有可执行步骤仍只走 `run_controller` 三段门禁，14 张后停在 QC 前。
+- `canvas-bridge/workflow_production_projection.py` / `workflow_production_render_observer.py`——M2-b 正式 PNG 逐张上桌、稳定节点 id、自动连线、避让与浏览器持久化等待；主图正方形、详情精确 3:4，2:3 只审计原图并停机。
+- `canvas-bridge/workflow_production_http_server.py`——M2-b 固定 `127.0.0.1:17373` 的费用/正式 PNG 只读端点与风格补登上传入口，复用 canvas-agent 令牌和本机来源白名单，支持 GET/POST CORS 预检并在停止时释放监听。
+- `canvas-bridge/workflow_style_reference_intake.py`——信息卡“画布补登 A”：核对直连磁盘图片凭证、类型、文件头、大小和 SHA-256；全部通过后才写批准的风格目录与新回执，既有建批证据不改写，失败不自动重试。
+- `canvas-bridge/canvas_workbench_service.py`——画布工作台入口：同一进程、四个隔离线程承载 M1 演示、M2-a 建批、M2-b 真实制作和风格补登，并管理 17372/17373 两个回环监听；一个组件停止不会把其他链路误当成已完成。旧 `--serve-workflow-demo` 入口继续保留用于对照。
 - `design/stage5_ui_prototype/`——阶段 5A 的旧线性页面设计稿；该承载形态已被用户否决，仅保留作信息架构与文案参考，不连接现有后台、画布、模型或真实批次。
 - `design/stage5_canvas_native/`——阶段 5A-R 的现行画布原生交互设计稿：覆盖 F1—F6 完整 demo 旅程、K01—K09 九类节点卡片、14 张图片结果卡、19 条 QC 问题卡、49 项既有动作契约差异与 fork 实施落点；未经 TDD 不得直接固化上线，不连接任何后台或真实批次。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_executor.py`、`tests/test_workflow_demo_projection.py`、`tests/test_workflow_demo_service.py`、`tests/test_batch_intake_controller.py`、`tests/test_batch_creator.py`、`tests/test_workflow_batch_intake_service.py`、`tests/test_canvas_workbench_service.py`、`tests/test_codex_dev_executor.py`、`tests/test_codex_dev_downstream.py`、`tests/test_codex_dev_qc.py`、`tests/test_final_prompt_integrity_prompts_only.py`、`tests/test_render_task_assembler.py`、`tests/test_image_production_executor.py`——画布子项目测试。M2-a 专项覆盖七字段、中文路径与路由 UTF-8 往返、哈希不一致硬停止、路径边界、防重、回执和 M1 演示隔离；2026-07-19 阶段 D 全仓实测为 360/360。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_*`、`tests/test_workflow_batch_intake_service.py`、`tests/test_workflow_production_*`、`tests/test_workflow_style_reference_intake.py`、`tests/test_canvas_workbench_service.py` 及各执行器测试——画布子项目测试。M2-b 新增覆盖模式判定、原三段门禁唯一放行、费用估算、逐张上桌/持久化、2:3 审计停机、风格补登、失败防重、CORS 和 17373 监听释放；2026-07-20 阶段 D 全仓实测为 392/392。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
 - 位置：`D:\dev\infinite-canvas`，分支 `workflow-editor`，M1-b 执行前 @ `b537f3c`，上游基线 ebd8ae2（2026-07-09 origin/main）。
-- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——截至 2026-07-18 共 19 个锚点：#5–#8 为 canvas-agent 可选模型、真实 turn status、测试入口和连续 UTF-8 解码；#9 为 TypeScript 基线单行修复；#10–#17 为 M1-a；#18 为 M1-b 排队/时间戳类型扩展，#19 为 M1-b CHANGELOG。动 fork 前必读，同步上游后逐条复核。
-- M1-a 的五个新增文件在 M1-b 中继续承担前端合同、机器卡、0 元确认卡、页面控制器与测试；本次把确认后的本地计时绘图替换为后台命令，新增排队、接单超时和进度中断的人话状态，fork 测试由 7 项增至 11 项，连同既有 agent 测试共 17 项。canvas-agent 零改动、零新增依赖。
+- **改动登记册：`FORK_NOTES.md`（fork 仓库根目录）**——截至 2026-07-20 共 32 个锚点：#5–#8 为 canvas-agent 兼容；#10–#19 为 M1；#20–#26 为 M2-a；#27–#32 为 M2-b 类型、页面接入、机器/信息卡人话 UI 与两份用户文档。动 fork 前必读，同步上游后逐条复核。
+- M2-b 在 fork 新增真实费用、生产状态、正式图片转存、风格补登三套前端合同与页面私有控制器，工作流和信息卡只显示用户可见状态，不包含九工序业务实现；canvas-agent 零改动、零新增依赖。fork 全量现为 50 项、311 个断言，TypeScript 与生产构建通过。
 
 **演示工作区（可丢弃）**：`D:\dev\canvas-demo-workspace`，由 `canvas-bridge/make_demo_workspace.py` 管理（`--init/--add-inputs/--advance <步骤>/--prepare-workflow-demo/--reset`），带 `.canvas_demo` 安全标记，绝不写仓库。M1-b 的每个新写盘入口都会在建目录、临时文件和正式文件前重复验证标记与解析后路径边界；每轮结果只落在 `outputs/renders/<run_id>/`。
 
@@ -186,20 +194,22 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 |---|---|---|
 | canvas-agent | :17371 | `bun run --cwd D:/dev/infinite-canvas/canvas-agent dev` |
 | 画布网页 | :3000 | `bun run --cwd D:/dev/infinite-canvas/web dev` |
-| 画布工作台服务 | 本机常驻；M1 演示与 M2-a 建批隔离承载；原图监听固定 `127.0.0.1:17372` | `python canvas-bridge/spike_canvas_push.py --serve-canvas-workbench D:\dev\canvas-demo-workspace\manifests\batch_manifest.json --interval 2` |
+| 画布工作台服务 | 本机常驻；M1 演示、M2-a 建批、M2-b 真实制作/风格补登隔离承载；原图 `127.0.0.1:17372`，费用/真图/风格 `127.0.0.1:17373` | `python canvas-bridge/spike_canvas_push.py --serve-canvas-workbench D:\dev\canvas-demo-workspace\manifests\batch_manifest.json --interval 2` |
 | 旧 demo 桥接入口（对照用） | 本机临时、无原图监听；只消费工作流机器命令 | `python canvas-bridge/spike_canvas_push.py --serve-workflow-demo D:\dev\canvas-demo-workspace\manifests\batch_manifest.json --interval 2` |
 | 后台只读投影（按需） | 手工临时工具，不随日常启动 | `python canvas-bridge/spike_canvas_push.py --watch <approved-manifest> --layout-path <approved-layout> --interval 2` |
 | 批次运行台（按批准临时启动） | 临时 cmd 窗口 | `python canvas-bridge/spike_canvas_push.py --serve <approved-manifest> --layout-path <approved-layout> --executor <approved-executor> --interval 2` |
 | 静态图片（按需） | :8801（仅图片演示需要） | `python -m http.server`（临时目录） |
 
-- **日常入口：仓库根目录 `启动画布.bat`**。仍保持三服务结构：agent、web、作为第三服务的“画布工作台”，并在页面就绪后打开 Chrome 直达画布。工作台取代原 demo 单服务，同时隔离承载原有 M1 演示和 M2-a 建批/原图通道。它不投影九工序、运行台或日志，不接模型或费用。旧 `--serve-workflow-demo` 入口仍保留，只用于单独对照，不再由启动器启动。启动器不含清理命令，也不启动真实批次 `--watch` 或旧 `--serve`；`wfdemo-output:` 清理仍只能在隔离画布人工验收时显式执行。M2-a 修改前备份位于外层 `_archive/启动画布.pre-M2-a-20260718.bat`；该文件继续**有意不入 Git**并保持纯 CRLF。
+- **日常入口：仓库根目录 `启动画布.bat`**。仍保持三服务结构：agent、web、作为第三服务的“画布工作台”，并在页面就绪后打开 Chrome 直达画布。工作台隔离承载 M1 演示、M2-a 建批/原图、M2-b 真实制作和风格补登；它不投影九工序、运行台或日志。真实执行仍受进程内开关和阶段 E 单闸门批准约束，日常启动不会因代码存在就产生模型调用或费用。旧 `--serve-workflow-demo` 入口仍保留，只用于单独对照。启动器不含清理命令，也不启动真实批次 `--watch` 或旧 `--serve`；`wfdemo-output:` 清理仍只能在隔离画布人工验收时显式执行。M2-a 修改前备份位于外层 `_archive/启动画布.pre-M2-a-20260718.bat`；该文件继续**有意不入 Git**并保持纯 CRLF，本次 M2-b 未修改启动器。
 - 连接凭据：`%USERPROFILE%\.infinite-canvas\canvas-agent.json`（url + token）。**token 不随 agent 重启轮换**（文件存在即沿用）。
 - 用户（非程序员）的工作画布：Chrome 里"无限画布 1"（id hPbkNXg3WA0p2i46VOh3s，localhost:3000）；其浏览器 localStorage 已存 token，刷新自动重连。
-- M0 完成后该画布是原生创作台，不再显示旧运行台或九工序监控节点。M1 的“工作流”按钮仍保持 0 元演示：在 demo 工作区产生 6+8 张真实占位 PNG，并逐张上桌。M2-a 新增的“建批”只登记信息卡和用户原始白底图，不启动真图制作；成功回执会明确提示“批次已登记，真图制作将在下一里程碑开通”。两条链路互不替代，也不解除首批关账与重生成冻结。
+- M0 完成后该画布是原生创作台，不再显示旧运行台或九工序监控节点。无信息卡的“工作流”按钮继续 M1 的 0 元演示；连有已登记信息卡时进入 M2-b 真实模式，先显示真实费用卡，确认后才由后台运行，取消零副作用。连有无效信息卡时只拒绝，不回退演示。M2-a“建批”和 M2-b“制作”互不替代，也不解除首批关账与重生成冻结。
 - M2-a 的原图监听器只绑定 `127.0.0.1:17372`，必须复用现有画布令牌；只接受本机画布来源，日志不记录令牌、图片正文或本机原图内容。浏览器存储原图、上传暂存文件、工作区最终文件的 SHA-256 任一不一致即立即停止，不能重试或改用有损通道。
 - 隔离验收时可在工作台命令后追加 `--batch-intake-test-root <测试根目录>`；该目录必须事先带精确的 `.canvas_intake_test_root` 安全标记，且与真实批次父目录分离。日常启动器和用户真实建批不使用此参数；生产路径由首批权威 manifest 的父目录受控推导，用户不填写文件系统路径。
 - M1 演示回归必须先在 `--serve-canvas-workbench` 承载模式下完整走一遍，证明第三服务替换后体验不回退；随后再用旧 `--serve-workflow-demo` 单独做一次对照。旧入口的通过不能替代工作台模式验收。
-- 服务收尾除既有 `--watch` / `--serve` / demo 进程外，必须核对 `127.0.0.1:17372` 已无监听。先用 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17372 -State Listen -ErrorAction SilentlyContinue` 找占用者，再按完整命令行确认它确为本轮画布工作台后精确停止；不得按宽泛名称结束其他 Python、bun 或画布进程。
+- 服务收尾除既有 `--watch` / `--serve` / demo 进程外，必须核对 `127.0.0.1:17372` 和 `127.0.0.1:17373` 均无监听。分别用 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17372 -State Listen -ErrorAction SilentlyContinue` 与 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17373 -State Listen -ErrorAction SilentlyContinue` 找占用者，再按完整命令行确认它确为本轮画布工作台后精确停止；不得按宽泛名称结束其他 Python、bun 或画布进程。
+
+**M2-b 阶段 E 每闸门预检（闸门①上游六工序、闸门②完整性+首张、闸门③剩余十三张，每次都从头执行）**：两仓干净且测试/TypeScript/构建全绿；首批 72 行与冻结指纹不变；第二批次事件行数、路由和已有产物先登记；进程、用户、机器三个作用域的两项真实执行开关、`OPENAI_API_KEY` 及全部 `OPENAI_*` 运行变量为空；不存在并行 `--watch`、旧 `--serve`、另一个工作台或其他真实执行进程；**工作台启动前 17373 必须无监听**；本闸门只准备一次画布命令。任一项不符即停。每闸门结束立即停服务、清本次进程内变量，再复核三个作用域为空及 17372/17373 均无监听。任何失败不现场改码、不自动重试、不发第二条命令。
 
 **连接机制要点（2026-07-11 实证）**：
 
@@ -231,7 +241,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 2. **M1 工作流节点 MVP（已闭环）**：M1-a、M1-b 已完成；用户又于 2026-07-18 亲手走完 M1-c 全剧本并确认“全部顺利，没有卡点”。零成本“制图机器”的素材输入、0 元确认、后台命令、三段门禁、6+8 占位文件落盘、流式上桌、自动连线、避让、重跑保留、取消与离线提示均已完成用户验收。
 3. **M2 通真电（严格按 a→e 推进）**：
    1. **M2-a 信息卡 + 建批（已完成）**：信息卡画布直填；真实白底原图经本机保真通道受控落盘，形成仓库 manifest、外部工作区与哈希回执；已完成隔离现场验收，不接模型、不产生费用，真实第二批次保留给用户本人。
-   2. **M2-b 真图 + 费用闸门**：接入真实图片制作；任何花费发生前先显示金额、张数和时长，由用户确认后才走。
+   2. **M2-b 真图 + 费用闸门（阶段 C/D 已完成，阶段 E 待逐闸门批准）**：真实费用卡、风格补登、原三段门禁编排、正式图片逐张上桌与浏览器持久化已离线实现；任何真实调用仍未发生。
    3. **M2-c QC 角标 + 收货框**：把质量问题直接标在图片上，满意图片进入收货框。
    4. **M2-d 单图重做**：只对用户选中的单张图片按一句人话要求重做，不扩大到整批。
    5. **M2-e 交付打包**：14 张收齐后按既有账本规则关账并形成交付包。
