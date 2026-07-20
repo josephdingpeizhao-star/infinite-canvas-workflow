@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-20（M2-b 阶段 C/D 纯离线实现完成：真实费用确认、信息卡真实模式、风格参考“画布补登 A”、`run_controller` 原三段门禁后台编排、正式 PNG 逐张上桌与浏览器持久化均已接通；主仓 392 项、fork 50 项自动测试及 TypeScript/构建通过。阶段 E 尚未开始，`杯子_20260719` 仍保持 2 张原图及既有凭证只读、零真实模型/零密钥/零费用；首批 `shuiping_20260712` 的关账与长期重生成冻结不变）。
+> 最后更新：2026-07-20（M2-b 阶段 C/D 纯离线实现完成：真实费用确认、信息卡真实模式、风格参考“画布补登 A”、`run_controller` 原三段门禁后台编排、正式 PNG 逐张上桌与浏览器持久化均已接通；闸门①完成上游六工序后会在完整性执行器前正常暂停；主仓 393 项、fork 50 项自动测试及 TypeScript/构建通过。阶段 E 尚未开始，`杯子_20260719` 仍保持 2 张原图及既有凭证只读、零真实模型/零密钥/零费用；首批 `shuiping_20260712` 的关账与长期重生成冻结不变）。
 
 ## 1. 定位与目标
 
@@ -66,7 +66,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 
 同日用户在自己的工作画布"无限画布 1"亲手完成第二个真实批次登记：批次号 `杯子_20260719`，2 张相机原片白底图（`1S0A9980.JPG` 3,013,892 bytes、`1S0A9981.JPG` 3,162,130 bytes）经本机保真通道落盘至 `D:\onedrive\OneDrive\Desktop\杯类\杯子_20260719`。接收凭证中浏览器、上传暂存、最终工作区三处 SHA-256 一致（`6bd9b58d…fe28df`、`eb5eaf6d…9287cf`），顾问独立重算落盘哈希亦逐字符吻合；七字段为杯子、高度 8 厘米、手持 2+1、允许清水、禁止倾倒与加热、D 缺失不补拍。工作区含 `.canvas_batch` 标记、2 张原图、资产清单与接收凭证；`inputs\style_refs` 为空、`requested_outputs` 为空、批次状态 `not_started`。用户明确决定：先以这 2 张原图跑通全流程（知悉角度库较薄、成图多样性受限），正式投产前再另建素材更充足的批次；批次 manifest 经用户单独批准后随本记录入 Git。画布上同时观察到既有 demo 机器提示"演示状态暂时不允许开始，请重新开始一次"，经查为共享演示工作区已有 4 轮历史结果、路由要求走重试语义所致，属预期门禁行为，与新批次无关。首批 72 行账本与冻结区在登记前后复核不变。（门禁报告不再算质检完成）、孤儿修复（重投影删除全图节点 id，20ba7a8）均已入库。
 
-2026-07-20 完成 M2-b 阶段 C/D 纯离线实现。工作流机器只在没有信息卡时继续 M1 的 0 元演示；连有信息卡但未登记完成、卡片歧义或缺批次素材时只显示人话拒绝，绝不退回演示。已登记卡先从 17373 只读取得剩余张数、约计金额和时长；取消零命令、零 manifest 变更，确认后才写 `run: next`，部分出图续跑只写既有 `retry: renders`。后台在费用确认后通过原 `batch_editor` 门禁把空目标一次性声明为 `main, detail, final_prompts, qc_reports`，八步实际执行全部仍依次经过 `run_controller` 的解析、真实路由和统一执行三段门禁；不存在完整性或渲染的旁路，14 张后停在 `needs_qc_reports`，不执行 QC。正式 PNG 使用 `wfprod-output:` 稳定节点，经 17373 读取时核对落盘 SHA、响应 SHA 和浏览器 Blob SHA，随后转存 localforage；data URI 只保留给 M1 演示。详情 2:3 只把供应端原图存入审计目录后停机，不自动扩边、不引 Pillow。风格参考采用用户选择的“画布补登 A”：图片直接连信息卡，整批核验通过才写 `inputs\style_refs` 与新的独立回执，白底原图、资产清单和建批回执不改写。离线假执行器覆盖失败停机、无自动重试、已有一张时 `retry: renders`、逐张持久化、服务/浏览器哈希拒绝、风格补登硬停止、17373 CORS 与监听释放；主仓 392 项、fork 50 项/311 断言、TypeScript 和生产构建通过。阶段 C/D 未设置真实开关、未读取或索要密钥、未调用模型、未产生费用、未进入用户画布；阶段 E 保持三闸门逐段批准。
+2026-07-20 完成 M2-b 阶段 C/D 纯离线实现。工作流机器只在没有信息卡时继续 M1 的 0 元演示；连有信息卡但未登记完成、卡片歧义或缺批次素材时只显示人话拒绝，绝不退回演示。已登记卡先从 17373 只读取得剩余张数、约计金额和时长；取消零命令、零 manifest 变更，确认后才写 `run: next`，部分出图续跑只写既有 `retry: renders`。后台在费用确认后通过原 `batch_editor` 门禁把空目标一次性声明为 `main, detail, final_prompts, qc_reports`，八步实际执行全部仍依次经过 `run_controller` 的解析、真实路由和统一执行三段门禁；不存在完整性或渲染的旁路，14 张后停在 `needs_qc_reports`，不执行 QC。真实联调拆闸门审计又补上一项只限制前进的保护：图片执行开关关闭时，后台仍先由 `run_controller` 解析并按真实路由判定下一步，但在完整性第三段执行门禁之前正常暂停；不调用完整性执行器，也不记录完整性开始或失败，因此闸门①不会误入闸门②，而打开图片开关本身仍不能绕过三段门禁。正式 PNG 使用 `wfprod-output:` 稳定节点，经 17373 读取时核对落盘 SHA、响应 SHA 和浏览器 Blob SHA，随后转存 localforage；data URI 只保留给 M1 演示。详情 2:3 只把供应端原图存入审计目录后停机，不自动扩边、不引 Pillow。风格参考采用用户选择的“画布补登 A”：图片直接连信息卡，整批核验通过才写 `inputs\style_refs` 与新的独立回执，白底原图、资产清单和建批回执不改写。离线假执行器覆盖失败停机、无自动重试、已有一张时 `retry: renders`、逐张持久化、服务/浏览器哈希拒绝、风格补登硬停止、闸门①边界暂停、17373 CORS 与监听释放；主仓 393 项、fork 50 项/311 断言、TypeScript 和生产构建通过。阶段 C/D 未设置真实开关、未读取或索要密钥、未调用模型、未产生费用、未进入用户画布；阶段 E 保持三闸门逐段批准。
 
 2026-07-16 按获批方案完成生产图片执行链的阶段 A/B。既有完整性脚本新增 `--prompts-only` 独立确定性分支，按主图 6 项、详情 8 项核对数量/顺序、`final_prompt.schema.json`、上游路径、源文件 SHA-256、逐项解析指纹、2+1 手持数量、1:1/3:4 字面、已确认高度约 25 厘米语义与 Unicode；不读取 ComfyUI 作业清单，并在报告记录跳过旧内容启发式扫描与旧编译器扫描的原因。默认 ComfyUI 模式、原报告行为、路由、Schema、批次 manifest 与正式产物均未改变。新增任务组装器按索引顺序绑定白底图目录中的唯一同名参考图，主图映射 `1024x1024`，详情图暂映射 `1024x1536`，已有 PNG 自动跳过；新增注册执行器 `image-production` 只接受 `integrity/renders`，真实渲染受 `RENDER_ALLOW_REAL_EXECUTION=1` 与 `OPENAI_API_KEY` 双门禁控制，可用 `RENDER_MAX_IMAGES` 限量，失败保留已成功图片并脱敏错误。全仓由 197 项增至 227 项并全部通过；当前真实 14 份提示词只读内存门禁为 pass、0 阻断/0 警告，现场索引只组装出 6+8 个任务。全程未设置真实开关、未读取密钥、未访问网络、未生成图片、未写正式报告或事件，ComfyUI/QC/renders/repaired 继续为 0，39 行事件与六份关键正式产物保持不变。
 
@@ -174,7 +174,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 - `design/stage5_ui_prototype/`——阶段 5A 的旧线性页面设计稿；该承载形态已被用户否决，仅保留作信息架构与文案参考，不连接现有后台、画布、模型或真实批次。
 - `design/stage5_canvas_native/`——阶段 5A-R 的现行画布原生交互设计稿：覆盖 F1—F6 完整 demo 旅程、K01—K09 九类节点卡片、14 张图片结果卡、19 条 QC 问题卡、49 项既有动作契约差异与 fork 实施落点；未经 TDD 不得直接固化上线，不连接任何后台或真实批次。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_*`、`tests/test_workflow_batch_intake_service.py`、`tests/test_workflow_production_*`、`tests/test_workflow_style_reference_intake.py`、`tests/test_canvas_workbench_service.py` 及各执行器测试——画布子项目测试。M2-b 新增覆盖模式判定、原三段门禁唯一放行、费用估算、逐张上桌/持久化、2:3 审计停机、风格补登、失败防重、CORS 和 17373 监听释放；2026-07-20 阶段 D 全仓实测为 392/392。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_*`、`tests/test_workflow_batch_intake_service.py`、`tests/test_workflow_production_*`、`tests/test_workflow_style_reference_intake.py`、`tests/test_canvas_workbench_service.py` 及各执行器测试——画布子项目测试。M2-b 新增覆盖模式判定、原三段门禁唯一放行、费用估算、逐张上桌/持久化、2:3 审计停机、风格补登、失败防重、闸门①暂停、CORS 和 17373 监听释放；2026-07-20 阶段 D 全仓实测为 393/393。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
@@ -209,7 +209,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 - M1 演示回归必须先在 `--serve-canvas-workbench` 承载模式下完整走一遍，证明第三服务替换后体验不回退；随后再用旧 `--serve-workflow-demo` 单独做一次对照。旧入口的通过不能替代工作台模式验收。
 - 服务收尾除既有 `--watch` / `--serve` / demo 进程外，必须核对 `127.0.0.1:17372` 和 `127.0.0.1:17373` 均无监听。分别用 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17372 -State Listen -ErrorAction SilentlyContinue` 与 `Get-NetTCPConnection -LocalAddress 127.0.0.1 -LocalPort 17373 -State Listen -ErrorAction SilentlyContinue` 找占用者，再按完整命令行确认它确为本轮画布工作台后精确停止；不得按宽泛名称结束其他 Python、bun 或画布进程。
 
-**M2-b 阶段 E 每闸门预检（闸门①上游六工序、闸门②完整性+首张、闸门③剩余十三张，每次都从头执行）**：两仓干净且测试/TypeScript/构建全绿；首批 72 行与冻结指纹不变；第二批次事件行数、路由和已有产物先登记；进程、用户、机器三个作用域的两项真实执行开关、`OPENAI_API_KEY` 及全部 `OPENAI_*` 运行变量为空；不存在并行 `--watch`、旧 `--serve`、另一个工作台或其他真实执行进程；**工作台启动前 17373 必须无监听**；本闸门只准备一次画布命令。任一项不符即停。每闸门结束立即停服务、清本次进程内变量，再复核三个作用域为空及 17372/17373 均无监听。任何失败不现场改码、不自动重试、不发第二条命令。
+**M2-b 阶段 E 每闸门预检（闸门①上游六工序、闸门②完整性+首张、闸门③剩余十三张，每次都从头执行）**：两仓干净且测试/TypeScript/构建全绿；首批 72 行与冻结指纹不变；第二批次事件行数、路由和已有产物先登记；进程、用户、机器三个作用域的两项真实执行开关、`OPENAI_API_KEY` 及全部 `OPENAI_*` 运行变量为空；不存在并行 `--watch`、旧 `--serve`、另一个工作台或其他真实执行进程；**工作台启动前 17373 必须无监听**；本闸门只准备一次画布命令。闸门①只临时打开上游执行开关，图片执行开关保持关闭；上游六工序成功后应出现“上游准备完成，已停在出图前。等待批准下一闸门。”，事件中不得出现完整性的 `step_started` / `step_failed`。这项保护只会阻止越过阶段边界；真正执行完整性或渲染时仍必须依次通过 `run_controller` 的解析、真实路由和统一执行三段门禁。任一项不符即停。每闸门结束立即停服务、清本次进程内变量，再复核三个作用域为空及 17372/17373 均无监听。任何失败不现场改码、不自动重试、不发第二条命令。
 
 **连接机制要点（2026-07-11 实证）**：
 

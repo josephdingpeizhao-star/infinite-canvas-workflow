@@ -93,6 +93,7 @@ class WorkflowProductionService:
         interval: float = 2.0,
         production_base_url: str = "http://127.0.0.1:17373",
         persistence_timeout_ms: int = 12_000,
+        environment: Mapping[str, str] | None = None,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.client = client
@@ -105,6 +106,7 @@ class WorkflowProductionService:
         self.interval = interval
         self.production_base_url = production_base_url.rstrip("/")
         self.persistence_timeout_ms = max(0, int(persistence_timeout_ms))
+        self.environment = environment if environment is not None else os.environ
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
 
@@ -168,15 +170,18 @@ class WorkflowProductionService:
         step: str | None = None,
         produced_count: int | None = None,
         error_message: str | None = None,
+        message: str | None = None,
     ) -> dict[str, Any]:
         state = self._production_state(node)
         state["status"] = status
         state["updatedAt"] = self.clock_ms()
         if step:
             state["step"] = step
-            state["message"] = human_step_message(step, produced_count=produced_count or 0)
+            state["message"] = message or human_step_message(step, produced_count=produced_count or 0)
         else:
             state.pop("step", None)
+            if message:
+                state["message"] = message
         if produced_count is not None:
             state["producedCount"] = produced_count
         state["totalCount"] = PRODUCTION_TOTAL_IMAGES
@@ -272,7 +277,7 @@ class WorkflowProductionService:
     ) -> Executor:
         if step in UPSTREAM_STEPS:
             return executor_factory.build_executor("codex-dev", manifest, manifest_path)
-        context = ExecutorContext(manifest=manifest, manifest_path=manifest_path, environment=os.environ)
+        context = ExecutorContext(manifest=manifest, manifest_path=manifest_path, environment=self.environment)
         if step == "integrity":
             return ImageProductionExecutor(context)
         if step == "renders":
@@ -379,6 +384,31 @@ class WorkflowProductionService:
             step = resolve_gated_step(command_text, route, integrity)
             if step not in M2B_STEPS:
                 raise ProductionGateError("M2-b 已停在待质检，不会越界执行 QC。")
+            # This is a deny-only phase boundary, not an execution route.  The
+            # existing run controller has already parsed and resolved the next
+            # step above; when the image gate is closed we stop before gate 3,
+            # so no integrity/render executor is called or recorded as started.
+            if step in {"integrity", "renders"} and self.environment.get("RENDER_ALLOW_REAL_EXECUTION") != "1":
+                self._apply_with_reconnect(
+                    [
+                        self._machine_update(
+                            machine,
+                            status="paused",
+                            content=f"# request-id: {request_id}\n# gate-paused",
+                            step=step,
+                            produced_count=produced_count,
+                            message="上游准备完成，已停在出图前。等待批准下一闸门。",
+                        )
+                    ]
+                )
+                run_controller.append_event(
+                    journal,
+                    "production_paused",
+                    request_id=request_id,
+                    produced_count=produced_count,
+                    reason="awaiting_render_gate",
+                )
+                return
             run_controller.append_event(journal, "step_started", request_id=request_id, step=step)
             self._apply_with_reconnect(
                 [

@@ -218,6 +218,7 @@ class ProductionServiceTest(unittest.TestCase):
             clock_ms=lambda: 1_100,
             sleep=lambda _seconds: None,
             persistence_timeout_ms=50,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
         )
         service.poll_once()
 
@@ -230,6 +231,34 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertTrue(output["metadata"]["storageKey"].startswith("image:"))
         events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertIn("image_persisted", [event["event"] for event in events])
+
+    def test_gate_one_pauses_before_integrity_when_image_gate_is_closed(self) -> None:
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda step, _manifest, _path, on_output: FakeExecutor(step, executed, on_output=on_output),
+            route_reader=self._route_reader(executed),
+            integrity_reader=self._integrity_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+            environment={},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(STEPS[:6], executed)
+        machine = client.state["nodes"][0]
+        production = machine["metadata"]["workflowProduction"]
+        self.assertEqual("paused", production["status"])
+        self.assertEqual("上游准备完成，已停在出图前。等待批准下一闸门。", production["message"])
+        events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
+        self.assertNotIn(
+            ("step_started", "integrity"),
+            [(event["event"], event.get("step")) for event in events],
+        )
+        self.assertIn("production_paused", [event["event"] for event in events])
 
     def test_partial_batch_requires_existing_retry_renders_gate(self) -> None:
         image = self.workspace / "outputs" / "renders" / "main_01.png"
@@ -254,6 +283,7 @@ class ProductionServiceTest(unittest.TestCase):
             artifact_reader=lambda _manifest: (artifact,),
             clock_ms=lambda: 1_100,
             persistence_timeout_ms=0,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
         )
         service.poll_once()
         self.assertEqual(["renders"], executed)
