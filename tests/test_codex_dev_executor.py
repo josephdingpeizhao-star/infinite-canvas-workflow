@@ -5,9 +5,11 @@ import io
 import json
 import sys
 import tempfile
+import threading
 import unittest
 import urllib.error
 import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -2932,6 +2934,83 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             "/agent/codex/threads/thread-empty-typed",
             [urllib.parse.urlparse(request.full_url).path for request in requests],
         )
+
+    def test_typed_empty_agent_error_crosses_real_loopback_http_sse_boundary(self) -> None:
+        turn_started = threading.Event()
+        request_bodies: list[tuple[str, dict[str, object]]] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def _json_body(self) -> dict[str, object]:
+                size = int(self.headers.get("Content-Length") or "0")
+                return json.loads(self.rfile.read(size).decode("utf-8"))
+
+            def _send_json(self, payload: dict[str, object]) -> None:
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:
+                if urllib.parse.urlparse(self.path).path != "/events":
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if turn_started.wait(3):
+                    self.wfile.write(
+                        b'event: agent_error\ndata: {"agent":"codex","message":"Codex turn failed","failureCode":"empty_assistant_response"}\n\n'
+                    )
+                    self.wfile.flush()
+
+            def do_POST(self) -> None:
+                path = urllib.parse.urlparse(self.path).path
+                body = self._json_body()
+                request_bodies.append((path, body))
+                if path == "/agent/codex/threads/new":
+                    self._send_json({"ok": True, "thread": {"id": "thread-loopback"}})
+                    return
+                if path == "/agent/codex/turn":
+                    self._send_json({"ok": True, "threadId": "thread-loopback"})
+                    turn_started.set()
+                    return
+                self.send_error(404)
+
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+        server = Server(("127.0.0.1", 0), Handler)
+        server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+        server_thread.start()
+        try:
+            transport = CanvasAgentCodexTransport(
+                config={"url": f"http://127.0.0.1:{server.server_port}", "token": "test-token"},
+                timeout=5,
+            )
+
+            with self.assertRaises(CanvasAgentTransportError) as caught:
+                transport.run_turn("offline prompt", ())
+
+            self.assertEqual("empty_response", caught.exception.code)
+            self.assertEqual(
+                ["/agent/codex/threads/new", "/agent/codex/turn"],
+                [path for path, _body in request_bodies],
+            )
+            self.assertEqual("gpt-5.5", request_bodies[0][1]["model"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            server_thread.join(timeout=3)
 
     def test_sse_message_from_another_turn_is_not_used_as_result(self) -> None:
         sse = b"".join(

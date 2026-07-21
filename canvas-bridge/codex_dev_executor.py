@@ -544,6 +544,10 @@ class CanvasAgentCodexTransport:
                 continue
 
             payload = self._event_payload(data_lines)
+            if event_name == "agent_error" and payload.get("agent") == "codex":
+                if payload.get("failureCode") == "empty_assistant_response":
+                    raise CanvasAgentTransportError("empty_response")
+                raise CanvasAgentTransportError("thread")
             if event_name == "agent_done" and payload.get("agent") == "codex":
                 status = str(payload.get("status") or "")
                 if status and status != "completed":
