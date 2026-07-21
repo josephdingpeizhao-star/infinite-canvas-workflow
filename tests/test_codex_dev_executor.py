@@ -901,6 +901,34 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertNotIn("img_005.jpg", prompt)
             self.assertEqual((), attachments)
 
+    def test_detail_literal_slot_variant_passes_chunk_and_full_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path, _main_path = self.make_detail_fixture(root)
+            response = valid_detail_variable_response()
+            response["configs"][0]["per_image_overrides"]["绑定角度槽位"] = (
+                "img_001；槽位 A"
+            )
+            transport = FakeTransport(
+                detail_chunk_turns(
+                    valid_detail_chunk_responses(response),
+                    thread_id="thread-detail-literal-slot-variant",
+                )
+            )
+
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="detail_vc"))
+
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "img_001；槽位 A",
+                artifact["configs"][0]["per_image_overrides"]["绑定角度槽位"],
+            )
+            self.assertEqual("详情图变量配置已生成", result.detail)
+
     def test_main_vc_accepts_canonical_handheld_reference_values_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

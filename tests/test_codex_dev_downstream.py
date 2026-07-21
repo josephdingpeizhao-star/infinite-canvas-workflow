@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import subprocess
@@ -16,11 +17,16 @@ if str(BRIDGE) not in sys.path:
     sys.path.insert(0, str(BRIDGE))
 
 from codex_dev_downstream import (  # noqa: E402
+    _reject_scene_policy_violations,
+    _reject_unsupported_claims,
+    _validate_bound_angle,
     artifact_file_under_root,
     build_final_prompt_batch_prompt,
+    build_variable_config_prompt,
     load_skill_runtime_package,
     load_typed_artifact,
     parse_user_confirmed_requirements,
+    parse_variable_config_response,
     qualified_angle_assets,
     stable_json_sha256,
     write_bundle_exclusive,
@@ -44,6 +50,60 @@ STRUCTURED_FACTS = {
     "forbid_pouring_and_heating": True,
     "missing_d_no_retake": True,
 }
+
+SEMANTIC_GATE_FIXTURE = ROOT / "tests" / "fixtures" / "main_vc_reply_20260721_semantic_gate.json"
+ANGLE_SLOT_LITERAL_CONTRACT = (
+    "每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；"
+    "X 必须是该源图实际对应的 A/B/C 槽位。"
+)
+
+
+def semantic_gate_requirements():
+    return parse_user_confirmed_requirements(
+        {
+            "user_confirmed_facts": {
+                "product_type": "杯子",
+                "height_cm": 8,
+                "handheld_main": 2,
+                "handheld_detail": 1,
+                "allow_clear_water": True,
+                "forbid_pouring_and_heating": True,
+                "missing_d_no_retake": True,
+            }
+        }
+    )
+
+
+def semantic_gate_angle_inventory() -> dict[str, object]:
+    return {
+        "angle_slots": [
+            {
+                "source_asset_id": "img_002",
+                "angle_slot": "A",
+                "admission_result": "合格，可进入对应槽位",
+            },
+            {
+                "source_asset_id": "img_001",
+                "angle_slot": "B",
+                "admission_result": "合格，可进入对应槽位",
+            },
+        ],
+        "missing_angle_slots": ["D"],
+    }
+
+
+def semantic_gate_response() -> dict[str, object]:
+    return json.loads(SEMANTIC_GATE_FIXTURE.read_text(encoding="utf-8"))
+
+
+def semantic_gate_response_with_literal_slots() -> dict[str, object]:
+    response = copy.deepcopy(semantic_gate_response())
+    for index, config in enumerate(response["configs"]):
+        binding = config["per_image_overrides"]["绑定角度槽位"]
+        slot = binding[0]
+        replacement = f"{slot} 槽位" if index % 2 == 0 else f"槽位 {slot}"
+        config["per_image_overrides"]["绑定角度槽位"] = replacement + binding[1:]
+    return response
 
 
 FINAL_PROMPT_BINDINGS = {
@@ -168,6 +228,113 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 requirements_manifest or {"notes": NOTES}
             ),
         )
+
+    def test_real_main_vc_fixture_accepts_non_product_material_props(self) -> None:
+        response = semantic_gate_response()
+
+        _reject_unsupported_claims(response, 8, "主图变量配置")
+
+    def test_real_main_vc_fixture_accepts_unarranged_prohibited_actions(self) -> None:
+        requirements = semantic_gate_requirements()
+
+        _reject_scene_policy_violations(
+            semantic_gate_response(),
+            requirements,
+            "主图变量配置",
+        )
+        _reject_scene_policy_violations(
+            {"notes": "禁止在保持原角度和自然静态握持的长句说明中安排倾倒、沸腾或炉灶加热"},
+            requirements,
+            "主图变量配置",
+        )
+
+    def test_prop_material_context_does_not_hide_product_material_claims(self) -> None:
+        for claim in (
+            "杯身为玻璃材质",
+            "玻璃质感壶身",
+            "产品采用陶瓷",
+            "产品采用玻璃花瓶造型",
+        ):
+            with self.subTest(claim=claim):
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    _reject_unsupported_claims(
+                        {"per_image_overrides": {"展示重点": claim}},
+                        8,
+                        "主图变量配置",
+                    )
+                self.assertIn("未确认商品事实", str(caught.exception))
+
+    def test_scene_negation_predicates_do_not_hide_positive_actions(self) -> None:
+        requirements = semantic_gate_requirements()
+        for claim in (
+            "本张安排倾倒展示",
+            "安排自然握持，随后执行倾倒",
+            "未确认背景节奏，本张安排炉灶加热",
+        ):
+            with self.subTest(claim=claim):
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    _reject_scene_policy_violations(
+                        {"notes": claim},
+                        requirements,
+                        "主图变量配置",
+                    )
+                self.assertIn("违反用户确认场景边界", str(caught.exception))
+
+    def test_main_variable_prompt_requires_literal_angle_slot_contract(self) -> None:
+        prompt = build_variable_config_prompt(
+            mode="main",
+            product_id="杯子_20260719",
+            repository_root=ROOT,
+            identity={},
+            style_master={},
+            angle_inventory=semantic_gate_angle_inventory(),
+            requirements=semantic_gate_requirements(),
+        )
+
+        self.assertIn(ANGLE_SLOT_LITERAL_CONTRACT, prompt)
+
+    def test_detail_variable_prompt_requires_literal_angle_slot_contract(self) -> None:
+        prompt = build_variable_config_prompt(
+            mode="detail",
+            product_id="杯子_20260719",
+            repository_root=ROOT,
+            identity={},
+            style_master={},
+            angle_inventory=semantic_gate_angle_inventory(),
+            requirements=semantic_gate_requirements(),
+            main_variable_config=semantic_gate_response_with_literal_slots(),
+        )
+
+        self.assertIn(ANGLE_SLOT_LITERAL_CONTRACT, prompt)
+
+    def test_real_main_fixture_with_literal_slots_passes_full_validation(self) -> None:
+        artifact = parse_variable_config_response(
+            json.dumps(semantic_gate_response_with_literal_slots(), ensure_ascii=False),
+            mode="main",
+            product_id="杯子_20260719",
+            requirements=semantic_gate_requirements(),
+            angle_inventory=semantic_gate_angle_inventory(),
+            upstream_paths={
+                "product_identity_archive": Path("identity.json"),
+                "style_master": Path("style.json"),
+                "angle_inventory": Path("angles.json"),
+            },
+        )
+
+        self.assertEqual("main_variable_config", artifact["artifact_type"])
+        self.assertEqual(6, artifact["config_count"])
+
+    def test_bound_angle_still_rejects_missing_literal_and_d_slot(self) -> None:
+        qualified = qualified_angle_assets(semantic_gate_angle_inventory())
+        cases = (
+            ("A / img_002，正面微俯视", "角度绑定异常"),
+            ("img_002；A 槽位；D 槽位", "使用了缺失的 D 槽位"),
+        )
+        for binding, expected in cases:
+            with self.subTest(binding=binding):
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    _validate_bound_angle(binding, qualified, "主图变量配置")
+                self.assertIn(expected, str(caught.exception))
 
     def test_final_prompt_builder_lists_main_handheld_literal_contract_per_config(self) -> None:
         prompt = self.build_final_prompt("main", {"main_02", "main_05"})

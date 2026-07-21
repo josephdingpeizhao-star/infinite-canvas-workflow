@@ -446,6 +446,36 @@ _SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN = re.compile(
 )
 _UNSUPPORTED_FACT_PATTERN = re.compile(_UNSUPPORTED_FACT_TOKEN_PATTERN)
 _FACT_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[。；;\n]+")
+_NON_PRODUCT_PROP_CONTEXT_FIELDS = frozenset(
+    {
+        "风格贴合锚点调用",
+        "背景层次配置",
+        "道具生成",
+        "道具关系",
+        "背景与光线",
+    }
+)
+_NON_PRODUCT_PROP_HOST_PATTERN = re.compile(
+    r"\s*(?:花瓶|花器|托盘|碟(?:子)?|盘(?:子)?|摆件|装饰品|灯具|布料|桌布|背景板|道具)"
+)
+_PRODUCT_MATERIAL_CONTEXT_MARKERS = (
+    "产品",
+    "商品",
+    "主体",
+    "本体",
+    "杯身",
+    "杯体",
+    "杯口",
+    "壶身",
+    "壶体",
+    "壶口",
+    "内壁",
+    "外壁",
+)
+_PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN = re.compile(
+    rf"(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
+    r"[^，,、。；;：:]{0,8}$"
+)
 _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
     {
         "chunk_index",
@@ -476,6 +506,20 @@ _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
     }
 )
 _INDEXED_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset({"configs", "prompts"})
+
+
+def _is_non_product_prop_material(
+    sentence: str,
+    path: tuple[str, ...],
+    fact: re.Match[str],
+) -> bool:
+    if not any(part in _NON_PRODUCT_PROP_CONTEXT_FIELDS for part in path):
+        return False
+    host = _NON_PRODUCT_PROP_HOST_PATTERN.match(sentence, fact.end())
+    if host is None:
+        return False
+    local_prefix = sentence[max(0, fact.start() - 20) : fact.start()]
+    return _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
 
 
 def _is_confirmed_height_measurement(
@@ -693,7 +737,7 @@ def _reject_unsupported_claims(value: Mapping[str, Any], height_cm: int, label: 
                 if protected_by_existing_marker or any(
                     start <= fact.start() and fact.end() <= end
                     for start, end in protected_spans
-                ):
+                ) or _is_non_product_prop_material(sentence, path, fact):
                     continue
                 collect("未确认商品事实", path)
 
@@ -719,9 +763,14 @@ _PROHIBITED_ACTION_TERMS = ("倾倒", "倒水", "倒出", "加热", "沸腾", "�
 
 def _term_has_scene_negation(clause: str, term_start: int) -> bool:
     prefix = clause[:term_start]
-    return any(marker in prefix for marker in _SCENE_NEGATION_MARKERS) or bool(
+    existing_marker = any(marker in prefix for marker in _SCENE_NEGATION_MARKERS)
+    existing_suffix = bool(
         re.search(r"(?:不|无|未)(?:会|再|进行|出现|使用|包含|装入|呈现)?\s*$", prefix)
     )
+    negated_predicate = bool(
+        re.search(r"(?:不|无|未)(?:再|予以)?(?:安排|计划|执行|展示|涉及|发生|允许)\s*$", prefix)
+    )
+    return existing_marker or existing_suffix or negated_predicate
 
 
 def _reject_scene_policy_violations(
@@ -842,6 +891,7 @@ def build_variable_config_prompt(
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须生成且只生成 main_01 至 main_06 六项，输出画布比例全部为 1:1，恰好 {requirements.handheld_main} 项启用手持。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
+每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(MAIN_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
@@ -874,6 +924,7 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须生成且只生成 detail_01 至 detail_08 八项；标准模块归属依次且唯一为模块01至模块08；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
+每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。

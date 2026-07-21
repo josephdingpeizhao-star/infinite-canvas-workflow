@@ -122,6 +122,18 @@ class EmptyResponseExecutor:
         raise failure
 
 
+class MessageFailureExecutor:
+    name = "fake-message-failure"
+
+    def __init__(self, executed: list[str], message: str):
+        self.executed = executed
+        self.message = message
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        raise ExecutorExecutionError(self.message)
+
+
 class ProductionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -239,6 +251,92 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
         artifact_root = self.workspace / "artifacts"
         self.assertEqual([], list(artifact_root.rglob("*")) if artifact_root.exists() else [])
+
+    def test_sanitized_codex_failure_reaches_event_and_workbench(self) -> None:
+        detail = (
+            "codex-dev 收到的主图变量配置包含未确认商品事实（10 处："
+            "configs/0/per_image_overrides/风格贴合锚点调用；"
+            "configs/0/per_image_overrides/背景层次配置；"
+            "configs/0/per_image_overrides/道具生成；"
+            "configs/1/per_image_overrides/道具生成；等 6 处）"
+        )
+        client = FakeCanvasClient()
+        executed = STEPS[:3].copy()
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: MessageFailureExecutor(
+                executed, detail
+            ),
+            route_reader=self._route_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+        )
+
+        service.poll_once()
+
+        self.assertEqual(STEPS[:4], executed)
+        machine = client.state["nodes"][0]
+        self.assertEqual(
+            detail.removeprefix("codex-dev 收到的").replace(
+                "包含", "未通过：包含", 1
+            )
+            + "。机器已停下，未自动重试。",
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual("step_failed", events[-1]["event"])
+        self.assertEqual(detail, events[-1]["detail"])
+
+    def test_unsafe_executor_failure_remains_redacted_everywhere(self) -> None:
+        unsafe_details = (
+            r"codex-dev 收到的主图变量配置包含未确认商品事实（1 处：C:\private\reply.json）",
+            "codex-dev 收到的主图变量配置违反用户确认场景边界 https://example.test/private",
+            "codex-dev 收到的主图变量配置角度绑定异常 bearer token-123",
+            "codex-dev 收到的主图变量配置角度绑定异常 api_key=private-value",
+        )
+        for index, detail in enumerate(unsafe_details, start=1):
+            with self.subTest(detail=detail):
+                client = FakeCanvasClient()
+                request_id = f"req-unsafe-{index}"
+                client.state["nodes"][0]["metadata"]["content"] = (
+                    f"# workflow-production\n# request-id: {request_id}\nrun: next"
+                )
+                client.state["nodes"][0]["metadata"]["workflowProduction"][
+                    "requestId"
+                ] = request_id
+                executed = STEPS[:3].copy()
+                service = production_service.WorkflowProductionService(
+                    self.repo,
+                    client=client,
+                    executor_builder=lambda _step, _manifest, _path, _on_output: MessageFailureExecutor(
+                        executed, detail
+                    ),
+                    route_reader=self._route_reader(executed),
+                    artifact_reader=lambda _manifest: (),
+                    clock_ms=lambda: 1_100,
+                )
+
+                service.poll_once()
+
+                machine = client.state["nodes"][0]
+                self.assertEqual(
+                    "这一步没做好，机器已停下。已经完成的成果都保留了。",
+                    machine["metadata"]["workflowProduction"]["errorMessage"],
+                )
+                events = [
+                    json.loads(line)
+                    for line in (self.repo / "manifests" / "cup.events.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
+                self.assertNotIn(detail, events[-1]["detail"])
 
     def test_full_fake_pipeline_streams_one_persisted_render_then_pauses_without_qc(self) -> None:
         image = self.workspace / "outputs" / "renders" / "main_01.png"

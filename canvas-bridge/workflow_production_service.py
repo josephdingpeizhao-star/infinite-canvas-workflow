@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -36,6 +37,25 @@ from workflow_production_render_observer import ProductionRenderObserverExecutor
 COMMAND_MAX_AGE_MS = 8_000
 UPSTREAM_STEPS = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc", "final_prompts"}
 M2B_STEPS = UPSTREAM_STEPS | {"integrity", "renders"}
+
+_CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
+    {"主图变量配置", "详情图变量配置"}
+)
+_CONTROLLED_CODEX_SIMPLE_REASONS = frozenset(
+    {"违反用户确认场景边界", "角度绑定异常", "使用了缺失的 D 槽位"}
+)
+_CONTROLLED_CODEX_CLAIM_CATEGORIES = frozenset(
+    {"未确认参数", "未确认商品事实"}
+)
+_CONTROLLED_CODEX_CLAIM_PATH_PATTERN = re.compile(
+    r"(?:\$|notes|common_constraints(?:/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+))?|"
+    r"configs/\d+/(?:notes|per_image_overrides/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+)))"
+)
+_UNSAFE_FAILURE_DETAIL_PATTERN = re.compile(
+    r"(?:[A-Za-z]:[\\/]|\\\\|(?:^|[\s（：；])/[^/]|https?://|ftp://|www\.|"
+    r"bearer|token|api[_ -]?key|secret|令牌|密钥|sk-[A-Za-z0-9])",
+    flags=re.IGNORECASE,
+)
 
 
 def _inside(path: Path, parent: Path) -> bool:
@@ -297,7 +317,55 @@ class WorkflowProductionService:
         raise ProductionGateError("M2-b 不允许执行这个步骤。")
 
     @staticmethod
-    def _safe_failure(exc: BaseException) -> str:
+    def _controlled_codex_failure(exc: BaseException) -> tuple[str, str] | None:
+        if not isinstance(exc, ExecutorExecutionError):
+            return None
+        detail = str(exc)
+        if (
+            not detail
+            or len(detail) > 200
+            or "\n" in detail
+            or "\r" in detail
+            or _UNSAFE_FAILURE_DETAIL_PATTERN.search(detail)
+        ):
+            return None
+        match = re.fullmatch(
+            r"codex-dev 收到的(?P<label>主图变量配置|详情图变量配置)(?P<reason>.+)",
+            detail,
+        )
+        if match is None:
+            return None
+        label = match.group("label")
+        reason = match.group("reason")
+        if label not in _CONTROLLED_CODEX_FAILURE_LABELS:
+            return None
+        if reason not in _CONTROLLED_CODEX_SIMPLE_REASONS:
+            claim = re.fullmatch(
+                r"包含(?P<categories>未确认参数(?:、未确认商品事实)?|"
+                r"未确认商品事实(?:、未确认参数)?)"
+                r"（(?P<count>[1-9]\d*) 处：(?P<paths>.+)）",
+                reason,
+            )
+            if claim is None:
+                return None
+            categories = claim.group("categories").split("、")
+            if (
+                len(categories) != len(set(categories))
+                or not set(categories).issubset(_CONTROLLED_CODEX_CLAIM_CATEGORIES)
+            ):
+                return None
+            paths = claim.group("paths").split("；")
+            if not paths or any(
+                re.fullmatch(r"等 [1-9]\d* 处", path) is None
+                and _CONTROLLED_CODEX_CLAIM_PATH_PATTERN.fullmatch(path) is None
+                for path in paths
+            ):
+                return None
+        workbench = f"{label}未通过：{reason}。机器已停下，未自动重试。"
+        return detail, workbench
+
+    @classmethod
+    def _safe_failure(cls, exc: BaseException) -> str:
         if isinstance(exc, ProductionGateError):
             return str(exc)
         if isinstance(exc, ExecutorExecutionError) and "2:3" in str(exc):
@@ -306,6 +374,9 @@ class WorkflowProductionService:
             return "前面的成果已保留。本机还没有准备图片服务凭据，当前未出图、未产生新的图片费用。"
         if isinstance(exc, ExecutorExecutionError) and getattr(exc, "code", "") == "empty_assistant_response":
             return "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。"
+        controlled = cls._controlled_codex_failure(exc)
+        if controlled is not None:
+            return controlled[1]
         return "这一步没做好，机器已停下。已经完成的成果都保留了。"
 
     def _reject(self, node: Mapping[str, Any], request_id: str, message: str) -> None:
@@ -502,13 +573,14 @@ class WorkflowProductionService:
                 self._process(node, state)
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
+                controlled = self._controlled_codex_failure(exc)
                 try:
                     manifest_path = self._manifest_path(batch_id)
                     run_controller.append_event(
                         self._journal_path(manifest_path, batch_id),
                         "step_failed",
                         request_id=request_id,
-                        detail="执行已停止，未自动重试",
+                        detail=controlled[0] if controlled is not None else "执行已停止，未自动重试",
                     )
                 except ProductionGateError:
                     pass
