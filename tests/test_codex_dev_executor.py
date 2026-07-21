@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import io
 import json
@@ -2783,8 +2784,182 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertIsNone(caught.exception.__cause__)
             self.assertIsNone(caught.exception.__context__)
 
+    def test_completed_null_loopback_turn_hard_stops_once_without_artifact(self) -> None:
+        turn_started = threading.Event()
+        request_bodies: list[tuple[str, dict[str, object]]] = []
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+            def _json_body(self) -> dict[str, object]:
+                size = int(self.headers.get("Content-Length") or "0")
+                return json.loads(self.rfile.read(size).decode("utf-8"))
+
+            def _send_json(self, payload: dict[str, object]) -> None:
+                body = json.dumps(payload).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_GET(self) -> None:
+                path = urllib.parse.urlparse(self.path).path
+                if path == "/events":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    if turn_started.wait(3):
+                        self.wfile.write(
+                            b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
+                        )
+                        self.wfile.flush()
+                    return
+                if path == "/agent/codex/threads/thread-null":
+                    self._send_json(
+                        {
+                            "ok": True,
+                            "thread": {"id": "thread-null"},
+                            "messages": [{"role": "user", "text": "batch input"}],
+                        }
+                    )
+                    return
+                self.send_error(404)
+
+            def do_POST(self) -> None:
+                path = urllib.parse.urlparse(self.path).path
+                body = self._json_body()
+                request_bodies.append((path, body))
+                if path == "/agent/codex/threads/new":
+                    self._send_json({"ok": True, "thread": {"id": "thread-null"}})
+                    return
+                if path == "/agent/codex/turn":
+                    self._send_json({"ok": True, "threadId": "thread-null"})
+                    turn_started.set()
+                    return
+                self.send_error(404)
+
+        class Server(ThreadingHTTPServer):
+            daemon_threads = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_dir = self.make_fixture(root)
+            server = Server(("127.0.0.1", 0), Handler)
+            server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+            server_thread.start()
+            try:
+                transport = CanvasAgentCodexTransport(
+                    config={"url": f"http://127.0.0.1:{server.server_port}", "token": "test-token"},
+                    timeout=5,
+                )
+                executor = CodexDevExecutor(context, transport=transport, repository_root=root)
+
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    executor.execute(ExecutionRequest(step="identity"))
+
+                self.assertEqual("empty_assistant_response", getattr(caught.exception, "code", ""))
+                self.assertEqual(
+                    ["/agent/codex/threads/new", "/agent/codex/turn"],
+                    [path for path, _body in request_bodies],
+                )
+                self.assertEqual(
+                    {"model": "gpt-5.5", "effort": "xhigh"},
+                    request_bodies[0][1],
+                )
+                self.assertEqual(
+                    1,
+                    sum(path == "/agent/codex/turn" for path, _body in request_bodies),
+                )
+                self.assertFalse((output_dir / "product_identity_archive.json").exists())
+            finally:
+                server.shutdown()
+                server.server_close()
+                server_thread.join(timeout=3)
+
+    def test_identity_attachments_preserve_source_bytes_order_and_encoding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, _output_dir = self.make_fixture(root)
+            inputs = Path(context.manifest["inputs"]["white_bg_images"][0])
+            source_bytes = {
+                "front.jpg": b"\xff\xd8\x00first-original-bytes\xff\xd9",
+                "rear.png": b"\x89PNG\r\n\x1a\nsecond-original-bytes",
+            }
+            for name, content in source_bytes.items():
+                (inputs / name).write_bytes(content)
+            transport = FakeTransport(
+                CodexTurnResult(text=json.dumps(VALID_IDENTITY), thread_id="thread-attachments")
+            )
+            executor = CodexDevExecutor(context, transport=transport, repository_root=root)
+
+            executor.execute(ExecutionRequest(step="identity"))
+
+            _prompt, attachments = transport.calls[0]
+            self.assertEqual(tuple(source_bytes), tuple(item.name for item in attachments))
+            self.assertEqual(("image/jpeg", "image/png"), tuple(item.mime_type for item in attachments))
+            self.assertEqual(
+                tuple(source_bytes.values()),
+                tuple(base64.b64decode(item.data_url.split(",", 1)[1]) for item in attachments),
+            )
+
 
 class CanvasAgentCodexTransportTest(unittest.TestCase):
+    def test_production_transport_model_and_effort_are_fixed(self) -> None:
+        transport = CanvasAgentCodexTransport(
+            config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+            opener=mock.Mock(),
+        )
+
+        self.assertEqual("gpt-5.5", transport.model)
+        self.assertEqual("xhigh", transport.effort)
+        with self.assertRaises(TypeError):
+            CanvasAgentCodexTransport(
+                config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+                opener=mock.Mock(),
+                model="gpt-5.6-sol",
+            )
+
+    def test_thread_start_http_payload_contains_fixed_model_and_effort(self) -> None:
+        sse = b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
+        responses = [
+            FakeResponse(sse),
+            FakeResponse(b'{"ok":true,"thread":{"id":"thread-settings"}}'),
+            FakeResponse(b'{"ok":true,"threadId":"thread-settings"}'),
+            FakeResponse(
+                b'{"ok":true,"messages":[{"role":"assistant","text":"SETTINGS_OK"}]}'
+            ),
+        ]
+        requests = []
+
+        def opener(request, timeout):
+            requests.append(request)
+            return responses.pop(0)
+
+        transport = CanvasAgentCodexTransport(
+            config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+            opener=opener,
+        )
+
+        result = transport.run_turn("offline prompt", ())
+
+        new_thread_request = next(
+            request
+            for request in requests
+            if urllib.parse.urlparse(request.full_url).path == "/agent/codex/threads/new"
+        )
+        self.assertEqual("SETTINGS_OK", result.text)
+        self.assertEqual(
+            {"model": "gpt-5.5", "effort": "xhigh"},
+            json.loads(new_thread_request.data.decode("utf-8")),
+        )
+
     def test_http_and_sse_are_wrapped_without_real_network(self) -> None:
         sse = b"".join(
             [
@@ -2824,7 +2999,10 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             for item in requests
             if urllib.parse.urlparse(item[0].full_url).path == "/agent/codex/threads/new"
         )
-        self.assertEqual({"model": "gpt-5.5"}, json.loads(new_thread_request.data.decode("utf-8")))
+        self.assertEqual(
+            {"model": "gpt-5.5", "effort": "xhigh"},
+            json.loads(new_thread_request.data.decode("utf-8")),
+        )
         self.assertTrue(all(item[0].get_header("X-canvas-agent-token") == "test-token" for item in requests))
 
     def test_existing_thread_continuation_reuses_thread_without_creating_another(self) -> None:
@@ -2877,6 +3055,8 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
                 "threadId": "thread-existing",
                 "prompt": "repair",
                 "attachments": [],
+                "model": "gpt-5.5",
+                "effort": "xhigh",
             },
             json.loads(turn_request.data.decode("utf-8")),
         )
@@ -3006,7 +3186,10 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
                 ["/agent/codex/threads/new", "/agent/codex/turn"],
                 [path for path, _body in request_bodies],
             )
-            self.assertEqual("gpt-5.5", request_bodies[0][1]["model"])
+            self.assertEqual(
+                {"model": "gpt-5.5", "effort": "xhigh"},
+                request_bodies[0][1],
+            )
         finally:
             server.shutdown()
             server.server_close()

@@ -54,6 +54,8 @@ from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".infinite-canvas" / "canvas-agent.json"
+PRODUCTION_CODEX_MODEL = "gpt-5.5"
+PRODUCTION_CODEX_REASONING_EFFORT = "xhigh"
 SUPPORTED_IMAGE_SUFFIXES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -248,7 +250,6 @@ class CanvasAgentCodexTransport:
         config: Mapping[str, str] | None = None,
         opener: Callable[..., Any] | None = None,
         timeout: float = 300.0,
-        model: str = "gpt-5.5",
         max_attachment_payload_bytes: int = 20 * 1024 * 1024,
         max_request_body_bytes: int = 28 * 1024 * 1024,
     ) -> None:
@@ -256,7 +257,8 @@ class CanvasAgentCodexTransport:
         self.config = dict(config) if config is not None else None
         self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({})).open
         self.timeout = timeout
-        self.model = model
+        self.model = PRODUCTION_CODEX_MODEL
+        self.effort = PRODUCTION_CODEX_REASONING_EFFORT
         self.max_attachment_payload_bytes = max_attachment_payload_bytes
         self.max_request_body_bytes = max_request_body_bytes
 
@@ -305,7 +307,7 @@ class CanvasAgentCodexTransport:
                     "POST",
                     f"{base_url}/agent/codex/threads/new",
                     token,
-                    {"model": self.model},
+                    {"model": self.model, "effort": self.effort},
                     error_code="thread",
                 )
                 thread = thread_response.get("thread") if isinstance(thread_response, dict) else None
@@ -480,6 +482,8 @@ class CanvasAgentCodexTransport:
             "threadId": thread_id,
             "prompt": prompt,
             "attachments": [item.as_payload() for item in attachments],
+            "model": self.model,
+            "effort": self.effort,
         }
         body_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         if body_size > self.max_request_body_bytes:
