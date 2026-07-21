@@ -5,3 +5,18 @@
 {"ts": "2026-07-20T23:33:48", "event": "command_received", "request_id": "UaFsi0eFZ3", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
 {"ts": "2026-07-20T23:33:48", "event": "step_started", "request_id": "UaFsi0eFZ3", "step": "identity"}
 {"ts": "2026-07-20T23:34:12", "event": "step_failed", "request_id": "UaFsi0eFZ3", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-21T01:56:02", "event": "command_received", "request_id": "iy5bJvGRIV", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
+{"ts": "2026-07-21T01:56:02", "event": "step_started", "request_id": "iy5bJvGRIV", "step": "identity"}
+{"ts": "2026-07-21T01:56:27", "event": "step_failed", "request_id": "iy5bJvGRIV", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-21T16:08:09", "event": "command_received", "request_id": "BXyS6QqH6U", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
+{"ts": "2026-07-21T16:08:09", "event": "step_started", "request_id": "BXyS6QqH6U", "step": "identity"}
+{"ts": "2026-07-21T16:08:09", "event": "step_failed", "request_id": "BXyS6QqH6U", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-21T16:24:25", "event": "command_received", "request_id": "LlSqbdWMs_", "command": "workflow-production", "machine_id": "workflow-1784429128659-s5wd8"}
+{"ts": "2026-07-21T16:24:25", "event": "step_started", "request_id": "LlSqbdWMs_", "step": "identity"}
+{"ts": "2026-07-21T16:26:17", "event": "step_succeeded", "request_id": "LlSqbdWMs_", "step": "identity", "detail": "产品身份档案已生成"}
+{"ts": "2026-07-21T16:26:17", "event": "step_started", "request_id": "LlSqbdWMs_", "step": "style_master"}
+{"ts": "2026-07-21T16:36:40", "event": "step_succeeded", "request_id": "LlSqbdWMs_", "step": "style_master", "detail": "风格母版已生成"}
+{"ts": "2026-07-21T16:36:40", "event": "step_started", "request_id": "LlSqbdWMs_", "step": "angle_inventory"}
+{"ts": "2026-07-21T16:38:28", "event": "step_succeeded", "request_id": "LlSqbdWMs_", "step": "angle_inventory", "detail": "角度槽位入库表已生成"}
+{"ts": "2026-07-21T16:38:28", "event": "step_started", "request_id": "LlSqbdWMs_", "step": "main_vc"}
+{"ts": "2026-07-21T16:41:46", "event": "step_failed", "request_id": "LlSqbdWMs_", "detail": "执行已停止，未自动重试"}
