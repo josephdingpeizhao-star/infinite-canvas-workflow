@@ -149,6 +149,26 @@ class RealExecutionDisabledExecutor:
         )
 
 
+class IntegrityFailureExecutor:
+    name = "fake-integrity-failure"
+
+    def __init__(self, executed: list[str], report_path: Path, report: object):
+        self.executed = executed
+        self.report_path = report_path
+        self.report = report
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        if request.step == "integrity":
+            self.report_path.parent.mkdir(parents=True, exist_ok=True)
+            self.report_path.write_text(
+                json.dumps(self.report, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            raise ExecutorExecutionError("完整性门禁未通过，渲染保持阻断")
+        return ExecutionResult(detail="ok", provider=self.name)
+
+
 class ProductionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -595,6 +615,115 @@ class ProductionServiceTest(unittest.TestCase):
             message,
         )
         self.assertNotIn("OPENAI_API_KEY", message)
+
+    def test_integrity_failure_uses_controlled_blocking_count_without_path_leak(self) -> None:
+        report_path = self.workspace / "artifacts" / "qc_reports" / "final_prompt_integrity_report.json"
+        report = {
+            "status": "fail",
+            "render_blocked": True,
+            "blocking_issue_count": 11,
+        }
+        client = FakeCanvasClient()
+        executed: list[str] = []
+
+        def integrity_reader(_route):
+            if not report_path.is_file():
+                return {"found": False, "path": "", "status": "", "render_blocked": False}
+            return {
+                "found": True,
+                "path": str(report_path),
+                "status": "fail",
+                "render_blocked": True,
+            }
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: IntegrityFailureExecutor(
+                executed, report_path, report
+            ),
+            route_reader=self._route_reader(executed),
+            integrity_reader=integrity_reader,
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(STEPS[:7], executed)
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        expected = "完整性检查未通过：11 项阻塞，报告已写入 qc_reports"
+        self.assertEqual(expected, events[-1]["detail"])
+        message = client.state["nodes"][0]["metadata"]["workflowProduction"]["errorMessage"]
+        self.assertEqual(f"{expected}。机器已停下，未自动重试。", message)
+        self.assertNotIn(str(report_path), events[-1]["detail"])
+        self.assertNotIn(str(report_path), message)
+
+    def test_invalid_integrity_report_count_keeps_generic_failure_copy(self) -> None:
+        report_path = self.workspace / "artifacts" / "qc_reports" / "final_prompt_integrity_report.json"
+        invalid_reports = (
+            {"status": "fail", "render_blocked": True, "blocking_issue_count": None},
+            {"status": "fail", "render_blocked": True, "blocking_issue_count": "11"},
+            {"status": "fail", "render_blocked": True, "blocking_issue_count": -1},
+            {"status": "fail", "render_blocked": True, "blocking_issue_count": True},
+            {"status": "pass", "render_blocked": False, "blocking_issue_count": 11},
+            ["invalid", "report"],
+        )
+        for index, report in enumerate(invalid_reports, start=1):
+            with self.subTest(report=report):
+                manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+                manifest["requested_outputs"] = []
+                self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+                client = FakeCanvasClient()
+                request_id = f"req-integrity-invalid-{index}"
+                client.state["nodes"][0]["metadata"]["content"] = (
+                    f"# workflow-production\n# request-id: {request_id}\nrun: next"
+                )
+                client.state["nodes"][0]["metadata"]["workflowProduction"]["requestId"] = request_id
+                executed: list[str] = []
+
+                def integrity_reader(_route):
+                    if not report_path.is_file():
+                        return {"found": False, "path": "", "status": "", "render_blocked": False}
+                    return {
+                        "found": True,
+                        "path": str(report_path),
+                        "status": "fail",
+                        "render_blocked": True,
+                    }
+
+                service = production_service.WorkflowProductionService(
+                    self.repo,
+                    client=client,
+                    executor_builder=lambda _step, _manifest, _path, _on_output: IntegrityFailureExecutor(
+                        executed, report_path, report
+                    ),
+                    route_reader=self._route_reader(executed),
+                    integrity_reader=integrity_reader,
+                    artifact_reader=lambda _manifest: (),
+                    clock_ms=lambda: 1_100,
+                    environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
+                )
+
+                service.poll_once()
+
+                events = [
+                    json.loads(line)
+                    for line in (self.repo / "manifests" / "cup.events.jsonl")
+                    .read_text(encoding="utf-8")
+                    .splitlines()
+                ]
+                self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
+                self.assertEqual(
+                    "这一步没做好，机器已停下。已经完成的成果都保留了。",
+                    client.state["nodes"][0]["metadata"]["workflowProduction"]["errorMessage"],
+                )
 
 
 if __name__ == "__main__":

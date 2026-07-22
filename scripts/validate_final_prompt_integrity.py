@@ -7,7 +7,7 @@ import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1462,6 +1462,62 @@ def note_int(notes: str, label: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+_USER_CONFIRMED_FACT_KEYS = frozenset(
+    {
+        "product_type",
+        "height_cm",
+        "handheld_main",
+        "handheld_detail",
+        "allow_clear_water",
+        "forbid_pouring_and_heating",
+        "missing_d_no_retake",
+    }
+)
+
+
+def integrity_expectations(
+    batch_manifest: Mapping[str, Any],
+) -> tuple[int | None, dict[str, int | None], str]:
+    """Read structured facts first; notes are only a legacy fallback."""
+
+    if "user_confirmed_facts" in batch_manifest:
+        raw = batch_manifest["user_confirmed_facts"]
+        if not isinstance(raw, Mapping) or set(raw) != _USER_CONFIRMED_FACT_KEYS:
+            raise ValueError("invalid structured user facts")
+        product_type = raw["product_type"]
+        height_cm = raw["height_cm"]
+        handheld_main = raw["handheld_main"]
+        handheld_detail = raw["handheld_detail"]
+        boolean_values = (
+            raw["allow_clear_water"],
+            raw["forbid_pouring_and_heating"],
+            raw["missing_d_no_retake"],
+        )
+        if (
+            not isinstance(product_type, str)
+            or not product_type.strip()
+            or type(height_cm) is not int
+            or height_cm <= 0
+            or type(handheld_main) is not int
+            or handheld_main != 2
+            or type(handheld_detail) is not int
+            or handheld_detail != 1
+            or any(type(value) is not bool for value in boolean_values)
+        ):
+            raise ValueError("invalid structured user facts")
+        return height_cm, {"main": handheld_main, "detail": handheld_detail}, "structured"
+
+    notes = str(batch_manifest.get("notes") or "")
+    return (
+        note_int(notes, "用户确认高度厘米"),
+        {
+            "main": note_int(notes, "主图手持数量"),
+            "detail": note_int(notes, "详情图手持数量"),
+        },
+        "notes",
+    )
+
+
 def build_prompts_only_report(
     *,
     batch_manifest_path: Path,
@@ -1719,24 +1775,31 @@ def build_prompts_only_report(
     prompt_handheld = {"main": 0, "detail": 0}
     invalid_ratio_count = 0
     height_mismatch_count = 0
-    confirmed_height = note_int(str(batch_manifest.get("notes") or ""), "用户确认高度厘米")
-    expected_handheld = {
-        "main": note_int(str(batch_manifest.get("notes") or ""), "主图手持数量"),
-        "detail": note_int(str(batch_manifest.get("notes") or ""), "详情图手持数量"),
-    }
-    if confirmed_height is None:
+    try:
+        confirmed_height, expected_handheld, expectation_source = integrity_expectations(batch_manifest)
+    except ValueError:
+        confirmed_height = None
+        expected_handheld = {"main": None, "detail": None}
+        expectation_source = "invalid_structured"
         block(
-            "confirmed_height_missing_from_manifest_notes",
-            "Batch manifest notes do not contain a confirmed height in centimeters.",
+            "user_confirmed_facts_invalid",
+            "Batch manifest user_confirmed_facts must contain the exact seven validated fields.",
             asset=batch_manifest_path,
         )
-    for mode, count in expected_handheld.items():
-        if count is None:
+    if expectation_source == "notes":
+        if confirmed_height is None:
             block(
-                f"handheld_count_missing_{mode}",
-                "Batch manifest notes do not contain the required handheld count.",
+                "confirmed_height_missing_from_manifest_notes",
+                "Batch manifest notes do not contain a confirmed height in centimeters.",
                 asset=batch_manifest_path,
             )
+        for mode, count in expected_handheld.items():
+            if count is None:
+                block(
+                    f"handheld_count_missing_{mode}",
+                    "Batch manifest notes do not contain the required handheld count.",
+                    asset=batch_manifest_path,
+                )
 
     for position, record in enumerate(expected_records):
         config_id = record["config_id"]
@@ -1947,8 +2010,8 @@ def build_prompts_only_report(
                 config_id=config_id,
             )
 
-        ratio_literal = "画布比例固定为 1:1" if mode == "main" else "画布比例固定为 3:4"
-        if ratio_literal not in positive:
+        ratio_pattern = re.compile(r"画布比例固定为\s*1:1" if mode == "main" else r"画布比例固定为\s*3:4")
+        if ratio_pattern.search(positive) is None:
             invalid_ratio_count += 1
             block(
                 f"canvas_ratio_literal_mismatch_{config_id}",
@@ -1979,7 +2042,7 @@ def build_prompts_only_report(
         ):
             block(
                 f"handheld_count_{mode}_mismatch",
-                "Handheld counts do not match the batch manifest notes.",
+                "Handheld counts do not match the batch manifest requirements.",
                 asset=batch_manifest_path,
                 evidence={
                     "expected": expected,

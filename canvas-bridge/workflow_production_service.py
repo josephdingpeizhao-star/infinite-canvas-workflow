@@ -43,6 +43,7 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
     "请先关闭工作台窗口，按闸门流程用带开关的命令重新启动工作台，再回到画布重新开始。"
 )
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
+_INTEGRITY_FAILURE_CODE = "integrity_check_failed"
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
@@ -324,9 +325,15 @@ class WorkflowProductionService:
         raise ProductionGateError("M2-b 不允许执行这个步骤。")
 
     @staticmethod
-    def _controlled_codex_failure(exc: BaseException) -> tuple[str, str] | None:
+    def _controlled_failure(exc: BaseException) -> tuple[str, str] | None:
         if not isinstance(exc, ExecutorExecutionError):
             return None
+        if getattr(exc, "code", "") == _INTEGRITY_FAILURE_CODE:
+            count = getattr(exc, "blocking_issue_count", None)
+            if type(count) is not int or not 1 <= count <= 9_999:
+                return None
+            event_detail = f"完整性检查未通过：{count} 项阻塞，报告已写入 qc_reports"
+            return event_detail, f"{event_detail}。机器已停下，未自动重试。"
         if getattr(exc, "code", "") == _REAL_EXECUTION_DISABLED_CODE:
             return (
                 _REAL_EXECUTION_DISABLED_EVENT_DETAIL,
@@ -392,7 +399,7 @@ class WorkflowProductionService:
             return "前面的成果已保留。本机还没有准备图片服务凭据，当前未出图、未产生新的图片费用。"
         if isinstance(exc, ExecutorExecutionError) and getattr(exc, "code", "") == "empty_assistant_response":
             return "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。"
-        controlled = cls._controlled_codex_failure(exc)
+        controlled = cls._controlled_failure(exc)
         if controlled is not None:
             return controlled[1]
         return "这一步没做好，机器已停下。已经完成的成果都保留了。"
@@ -537,6 +544,29 @@ class WorkflowProductionService:
                 code = str(getattr(exc, "code", ""))
                 if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
                     self.diagnostic_recorder(step, code)
+                if step == "integrity":
+                    try:
+                        integrity_state = self.integrity_reader(self.route_reader(manifest_path))
+                        report_path = Path(str(integrity_state.get("path") or ""))
+                        if (
+                            integrity_state.get("found") is True
+                            and integrity_state.get("status") == "fail"
+                            and integrity_state.get("render_blocked") is True
+                            and report_path.name == "final_prompt_integrity_report.json"
+                        ):
+                            report = json.loads(report_path.read_text(encoding="utf-8"))
+                            count = report.get("blocking_issue_count") if isinstance(report, dict) else None
+                            if (
+                                isinstance(report, dict)
+                                and report.get("status") == "fail"
+                                and report.get("render_blocked") is True
+                                and type(count) is int
+                                and 1 <= count <= 9_999
+                            ):
+                                exc.code = _INTEGRITY_FAILURE_CODE
+                                exc.blocking_issue_count = count
+                    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                        pass
                 raise
             run_controller.append_event(journal, "step_succeeded", request_id=request_id, step=step, detail=result.detail[:160])
             if step == "renders":
@@ -591,7 +621,7 @@ class WorkflowProductionService:
                 self._process(node, state)
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
-                controlled = self._controlled_codex_failure(exc)
+                controlled = self._controlled_failure(exc)
                 try:
                     manifest_path = self._manifest_path(batch_id)
                     run_controller.append_event(
