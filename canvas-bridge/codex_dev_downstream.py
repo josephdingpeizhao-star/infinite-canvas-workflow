@@ -458,6 +458,10 @@ _NON_PRODUCT_PROP_CONTEXT_FIELDS = frozenset(
 _NON_PRODUCT_PROP_HOST_PATTERN = re.compile(
     r"\s*(?:花瓶|花器|托盘|碟(?:子)?|盘(?:子)?|摆件|装饰品|灯具|布料|桌布|背景板|道具)"
 )
+_STYLE_MASTER_PROP_CONTEXT_FIELDS = frozenset(
+    {*_NON_PRODUCT_PROP_CONTEXT_FIELDS, "final_prompt"}
+)
+_PROP_MATERIAL_PREFIXES = ("陶瓷", "玻璃", "不锈钢", "塑料")
 _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
     "产品",
     "商品",
@@ -475,6 +479,12 @@ _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
 _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN = re.compile(
     rf"(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
     r"[^，,、。；;：:]{0,8}$"
+)
+_PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN = re.compile(
+    rf"\s*(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
+)
+_STYLE_MASTER_PHRASE_BOUNDARY_PATTERN = re.compile(
+    r"(?:$|[，,。；;：:、/／（）()\[\]【】\n]|和|或|与|及|可|应|需|用于|作为|位于|虚化|形成)"
 )
 _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
     {
@@ -519,7 +529,104 @@ def _is_non_product_prop_material(
     if host is None:
         return False
     local_prefix = sentence[max(0, fact.start() - 20) : fact.start()]
-    return _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
+    local_suffix = sentence[fact.end() : fact.end() + 20]
+    return (
+        _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
+        and _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(local_suffix) is None
+    )
+
+
+def _is_style_master_prop_candidate(
+    sentence: str,
+    path: tuple[str, ...],
+    fact: re.Match[str],
+) -> bool:
+    if not any(part in _STYLE_MASTER_PROP_CONTEXT_FIELDS for part in path):
+        return False
+    if not fact.group(0).startswith(_PROP_MATERIAL_PREFIXES):
+        return False
+    local_prefix = sentence[max(0, fact.start() - 20) : fact.start()]
+    local_suffix = sentence[fact.end() : fact.end() + 20]
+    return (
+        _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
+        and _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(local_suffix) is None
+    )
+
+
+def _style_master_contains_material_phrase(
+    sentence: str,
+    fact: re.Match[str],
+    style_master_text: str,
+) -> bool:
+    fact_text = re.sub(r"\s+", "", fact.group(0))
+    candidate = re.sub(r"\s+", "", sentence[fact.start() :])
+    if not candidate.startswith(fact_text):
+        return False
+    tail_match = re.match(r"[\u3400-\u9fffA-Za-z0-9_-]{0,8}", candidate[len(fact_text) :])
+    tail = tail_match.group(0) if tail_match else ""
+    if len(tail) < 2:
+        return False
+    normalized_master = re.sub(r"[ \t\r\f\v]+", "", style_master_text)
+    for extra_length in range(len(tail), 1, -1):
+        phrase = fact_text + tail[:extra_length]
+        for occurrence in re.finditer(re.escape(phrase), normalized_master):
+            following = normalized_master[occurrence.end() :]
+            if _STYLE_MASTER_PHRASE_BOUNDARY_PATTERN.match(following):
+                return True
+    return False
+
+
+def _is_style_master_prop_material(
+    sentence: str,
+    path: tuple[str, ...],
+    fact: re.Match[str],
+    style_master_text: str,
+) -> bool:
+    return _is_style_master_prop_candidate(sentence, path, fact) and (
+        _style_master_contains_material_phrase(sentence, fact, style_master_text)
+    )
+
+
+def _string_leaf_values(value: Any):
+    if isinstance(value, Mapping):
+        for item in value.values():
+            yield from _string_leaf_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _string_leaf_values(item)
+    elif isinstance(value, str) and value.strip():
+        yield value.strip()
+
+
+def style_master_material_reference_text(
+    style_master: Mapping[str, Any],
+    *,
+    product_id: str,
+) -> str:
+    """Return formal style-master body text used for prop-material validation."""
+
+    if (
+        not isinstance(style_master, Mapping)
+        or style_master.get("artifact_type") != "style_master"
+        or not isinstance(style_master.get("style_master"), Mapping)
+    ):
+        raise ExecutorExecutionError("codex-dev 无法读取有效的正式风格母版")
+    if style_master.get("product_id") != product_id:
+        raise ExecutorExecutionError("codex-dev 检测到正式风格母版与当前商品不匹配")
+    text = "\n".join(_string_leaf_values(style_master["style_master"]))
+    if not text:
+        raise ExecutorExecutionError("codex-dev 无法读取有效的正式风格母版")
+    return text
+
+
+def _load_style_master_material_reference_text(path: Path, *, product_id: str) -> str:
+    try:
+        style_master = json.loads(path.read_text(encoding="utf-8"))
+    except (AttributeError, OSError, TypeError, UnicodeError, json.JSONDecodeError):
+        raise ExecutorExecutionError("codex-dev 无法读取有效的正式风格母版") from None
+    if not isinstance(style_master, Mapping):
+        raise ExecutorExecutionError("codex-dev 无法读取有效的正式风格母版")
+    return style_master_material_reference_text(style_master, product_id=product_id)
 
 
 def _is_confirmed_height_measurement(
@@ -674,7 +781,14 @@ def _reject_unicode_damage_or_forbidden_keys(value: Mapping[str, Any], label: st
     inspect(value)
 
 
-def _reject_unsupported_claims(value: Mapping[str, Any], height_cm: int, label: str) -> None:
+def _reject_unsupported_claims(
+    value: Mapping[str, Any],
+    height_cm: int,
+    label: str,
+    *,
+    style_master_text: str | None = None,
+    defer_style_master_prop_materials: bool = False,
+) -> None:
     measurement_pattern = re.compile(
         r"(?<![A-Za-z0-9_])(\d+(?:\.\d+)?)\s*"
         r"(毫升|ml|升|l|毫米|mm|厘米|cm|克|g|千克|kg)",
@@ -737,7 +851,20 @@ def _reject_unsupported_claims(value: Mapping[str, Any], height_cm: int, label: 
                 if protected_by_existing_marker or any(
                     start <= fact.start() and fact.end() <= end
                     for start, end in protected_spans
-                ) or _is_non_product_prop_material(sentence, path, fact):
+                ):
+                    continue
+                if style_master_text is not None:
+                    if _is_style_master_prop_material(
+                        sentence,
+                        path,
+                        fact,
+                        style_master_text,
+                    ):
+                        continue
+                elif defer_style_master_prop_materials:
+                    if _is_style_master_prop_candidate(sentence, path, fact):
+                        continue
+                elif _is_non_product_prop_material(sentence, path, fact):
                     continue
                 collect("未确认商品事实", path)
 
@@ -893,6 +1020,7 @@ def build_variable_config_prompt(
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(MAIN_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
+主图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
@@ -926,6 +1054,7 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
+详情图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
@@ -1212,7 +1341,12 @@ def _validate_detail_chunk_business_content(
     """Prove config content is safe before granting one envelope correction."""
 
     label = "详情图变量配置"
-    _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_unsupported_claims(
+        value,
+        requirements.height_cm,
+        label,
+        defer_style_master_prop_materials=True,
+    )
     _reject_scene_policy_violations(value, requirements, label)
     if chunk_index == 1 and (
         not isinstance(value.get("common_constraints"), dict)
@@ -1358,11 +1492,32 @@ def parse_variable_config_response(
         raise ExecutorExecutionError("codex-dev 收到不支持的变量配置模式")
     is_main = mode == "main"
     label = "主图变量配置" if is_main else "详情图变量配置"
+    required_upstreams = (
+        ("product_identity_archive", "style_master", "angle_inventory")
+        if is_main
+        else (
+            "product_identity_archive",
+            "style_master",
+            "angle_inventory",
+            "main_variable_configs",
+        )
+    )
+    if set(upstream_paths) != set(required_upstreams):
+        raise ExecutorExecutionError(f"codex-dev 无法固定{label}上游引用")
+    style_master_text = _load_style_master_material_reference_text(
+        upstream_paths["style_master"],
+        product_id=product_id,
+    )
     value = _extract_json_object(text, label)
     if set(value) - _VARIABLE_ALLOWED_TOP_LEVEL:
         raise ExecutorExecutionError(f"codex-dev 收到的{label}包含越界顶层字段")
     _reject_unicode_damage_or_forbidden_keys(value, label)
-    _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_unsupported_claims(
+        value,
+        requirements.height_cm,
+        label,
+        style_master_text=style_master_text,
+    )
     _reject_scene_policy_violations(value, requirements, label)
 
     common = value.get("common_constraints")
@@ -1458,18 +1613,6 @@ def parse_variable_config_response(
         label=label,
     )
 
-    required_upstreams = (
-        ("product_identity_archive", "style_master", "angle_inventory")
-        if is_main
-        else (
-            "product_identity_archive",
-            "style_master",
-            "angle_inventory",
-            "main_variable_configs",
-        )
-    )
-    if set(upstream_paths) != set(required_upstreams):
-        raise ExecutorExecutionError(f"codex-dev 无法固定{label}上游引用")
     return {
         "product_id": product_id,
         "artifact_type": f"{mode}_variable_config",
@@ -1675,6 +1818,7 @@ def parse_final_prompt_batch_response(
     requirements: UserConfirmedRequirements,
     angle_inventory: Mapping[str, Any],
     variable_config: Mapping[str, Any],
+    style_master_text: str | None = None,
 ) -> dict[str, dict[str, str]]:
     """Validate one prompt batch against immutable variable-config decisions."""
 
@@ -1686,7 +1830,12 @@ def parse_final_prompt_batch_response(
         raise ExecutorExecutionError(f"codex-dev 收到的{label}返回格式异常")
     if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
         raise ExecutorExecutionError(f"codex-dev 收到的{label}包含损坏字符")
-    _reject_unsupported_claims(value, requirements.height_cm, label)
+    _reject_unsupported_claims(
+        value,
+        requirements.height_cm,
+        label,
+        style_master_text=style_master_text,
+    )
     _reject_scene_policy_violations(value, requirements, label)
 
     configs = _validate_variable_config_document(variable_config, mode=mode, product_id=product_id)

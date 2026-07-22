@@ -930,6 +930,43 @@ class CodexDevExecutorTest(CodexDevFixture):
             )
             self.assertEqual("详情图变量配置已生成", result.detail)
 
+    def test_detail_vc_style_master_allows_prop_phrase_in_chunk_and_full_chain(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_path, _main_path = self.make_detail_fixture(root)
+            style_path = (
+                root
+                / "workspace"
+                / "artifacts"
+                / "style_master"
+                / "style_master.json"
+            )
+            style = json.loads(style_path.read_text(encoding="utf-8"))
+            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
+            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
+            response = valid_detail_variable_response()
+            response["configs"][0]["per_image_overrides"]["背景层次配置"] += (
+                "；后景玻璃器皿虚化"
+            )
+            transport = FakeTransport(
+                detail_chunk_turns(
+                    valid_detail_chunk_responses(response),
+                    thread_id="thread-detail-style-master-prop",
+                )
+            )
+
+            CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="detail_vc"))
+
+            artifact = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertIn(
+                "玻璃器皿",
+                artifact["configs"][0]["per_image_overrides"]["背景层次配置"],
+            )
+
     def test_main_vc_accepts_canonical_handheld_reference_values_and_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2148,6 +2185,75 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertIn("FINAL_RUNTIME_MARKER", transport.calls[1][0])
             self.assertFalse((root / "workspace" / "artifacts" / "comfyui_jobs").exists())
             self.assertFalse((root / "workspace" / "artifacts" / "qc_reports").exists())
+
+    def test_final_prompts_style_master_allows_prop_phrase_in_prompt_body(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
+            style_path = (
+                root
+                / "workspace"
+                / "artifacts"
+                / "style_master"
+                / "style_master.json"
+            )
+            style = json.loads(style_path.read_text(encoding="utf-8"))
+            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
+            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
+            main_response = valid_final_prompt_response("main")
+            main_response["prompts"][0]["final_prompt"] += "；后景玻璃器皿虚化。"
+            transport = FakeTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(main_response, ensure_ascii=False),
+                        thread_id="thread-final-main-style-prop",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
+                        thread_id="thread-final-detail-style-prop",
+                    ),
+                ]
+            )
+
+            CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                ExecutionRequest(step="final_prompts")
+            )
+
+            prompt = json.loads(
+                (final_dir / "main_01_final_prompt.json").read_text(encoding="utf-8")
+            )
+            self.assertIn("玻璃器皿", prompt["final_prompt"])
+
+    def test_final_prompts_style_master_still_rejects_product_material_claim(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
+            style_path = (
+                root
+                / "workspace"
+                / "artifacts"
+                / "style_master"
+                / "style_master.json"
+            )
+            style = json.loads(style_path.read_text(encoding="utf-8"))
+            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
+            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
+            main_response = valid_final_prompt_response("main")
+            main_response["prompts"][0]["final_prompt"] += "；杯身为玻璃。"
+            transport = FakeTransport(
+                CodexTurnResult(
+                    text=json.dumps(main_response, ensure_ascii=False),
+                    thread_id="thread-final-main-product-material",
+                )
+            )
+
+            with self.assertRaises(ExecutorExecutionError) as caught:
+                CodexDevExecutor(context, transport=transport, repository_root=root).execute(
+                    ExecutionRequest(step="final_prompts")
+                )
+
+            self.assertIn("未确认商品事实", str(caught.exception))
+            self.assertFalse(final_dir.exists())
 
     def test_final_prompts_invalid_second_batch_leaves_no_formal_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

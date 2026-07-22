@@ -25,6 +25,7 @@ from codex_dev_downstream import (  # noqa: E402
     build_variable_config_prompt,
     load_skill_runtime_package,
     load_typed_artifact,
+    parse_final_prompt_batch_response,
     parse_user_confirmed_requirements,
     parse_variable_config_response,
     qualified_angle_assets,
@@ -52,6 +53,12 @@ STRUCTURED_FACTS = {
 }
 
 SEMANTIC_GATE_FIXTURE = ROOT / "tests" / "fixtures" / "main_vc_reply_20260721_semantic_gate.json"
+SEMANTIC_GATE_20260722_FIXTURE = (
+    ROOT / "tests" / "fixtures" / "main_vc_reply_20260722_semantic_gate.json"
+)
+STYLE_MASTER_GLASS_PROP_TEXT = (
+    "后景可有柔和虚化的玻璃器皿、植物、玻璃花器和玻璃花瓶。"
+)
 ANGLE_SLOT_LITERAL_CONTRACT = (
     "每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；"
     "X 必须是该源图实际对应的 A/B/C 槽位。"
@@ -92,6 +99,12 @@ def semantic_gate_angle_inventory() -> dict[str, object]:
     }
 
 
+def semantic_gate_20260722_angle_inventory() -> dict[str, object]:
+    inventory = semantic_gate_angle_inventory()
+    inventory["angle_slots"][0]["angle_slot"] = "C"
+    return inventory
+
+
 def semantic_gate_response() -> dict[str, object]:
     return json.loads(SEMANTIC_GATE_FIXTURE.read_text(encoding="utf-8"))
 
@@ -104,6 +117,46 @@ def semantic_gate_response_with_literal_slots() -> dict[str, object]:
         replacement = f"{slot} 槽位" if index % 2 == 0 else f"槽位 {slot}"
         config["per_image_overrides"]["绑定角度槽位"] = replacement + binding[1:]
     return response
+
+
+def semantic_gate_20260722_response() -> dict[str, object]:
+    text = SEMANTIC_GATE_20260722_FIXTURE.read_text(encoding="utf-8")
+    return json.loads(text[text.index("{") :])
+
+
+def replace_corresponding_product_with_product_id(
+    response: dict[str, object],
+    product_id: str = "杯子_20260722",
+) -> dict[str, object]:
+    updated = copy.deepcopy(response)
+    for config in updated["configs"]:
+        overrides = config["per_image_overrides"]
+        overrides["辅助参考图调用"] = overrides["辅助参考图调用"].replace(
+            "对应产品：竖条纹陶瓷马克杯",
+            f"对应产品：{product_id}",
+        )
+    return updated
+
+
+def write_style_master_fixture(
+    root: Path,
+    *,
+    product_id: str,
+    text: str = STYLE_MASTER_GLASS_PROP_TEXT,
+) -> Path:
+    path = root / "style_master.json"
+    path.write_text(
+        json.dumps(
+            {
+                "artifact_type": "style_master",
+                "product_id": product_id,
+                "style_master": {"prop_rules": text},
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 FINAL_PROMPT_BINDINGS = {
@@ -234,6 +287,108 @@ class CodexDevDownstreamTest(unittest.TestCase):
 
         _reject_unsupported_claims(response, 8, "主图变量配置")
 
+    def test_20260722_fixture_style_master_allows_all_sixteen_prop_material_mentions(self) -> None:
+        response = replace_corresponding_product_with_product_id(
+            semantic_gate_20260722_response()
+        )
+
+        _reject_unsupported_claims(
+            response,
+            8,
+            "主图变量配置",
+            style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+        )
+
+    def test_20260722_fixture_still_rejects_only_six_ceramic_product_mentions(self) -> None:
+        with self.assertRaises(ExecutorExecutionError) as caught:
+            _reject_unsupported_claims(
+                semantic_gate_20260722_response(),
+                8,
+                "主图变量配置",
+                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            )
+
+        detail = str(caught.exception)
+        self.assertIn("未确认商品事实（6 处：", detail)
+        self.assertIn("configs/0/per_image_overrides/辅助参考图调用", detail)
+        self.assertNotIn("道具生成", detail)
+        self.assertNotIn("背景层次配置", detail)
+
+    def test_20260722_fixture_with_product_id_passes_main_full_validation(self) -> None:
+        response = replace_corresponding_product_with_product_id(
+            semantic_gate_20260722_response()
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            style_path = write_style_master_fixture(
+                Path(tmp),
+                product_id="杯子_20260722",
+            )
+
+            artifact = parse_variable_config_response(
+                json.dumps(response, ensure_ascii=False),
+                mode="main",
+                product_id="杯子_20260722",
+                requirements=semantic_gate_requirements(),
+                angle_inventory=semantic_gate_20260722_angle_inventory(),
+                upstream_paths={
+                    "product_identity_archive": Path("identity.json"),
+                    "style_master": style_path,
+                    "angle_inventory": Path("angles.json"),
+                },
+            )
+
+        self.assertEqual("main_variable_config", artifact["artifact_type"])
+        self.assertEqual(6, artifact["config_count"])
+
+    def test_style_master_phrase_boundary_accepts_glass_vessel(self) -> None:
+        _reject_unsupported_claims(
+            {"per_image_overrides": {"道具生成": "后景玻璃器皿虚化"}},
+            8,
+            "主图变量配置",
+            style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+        )
+
+    def test_style_master_phrase_boundary_rejects_material_word_alone(self) -> None:
+        with self.assertRaises(ExecutorExecutionError):
+            _reject_unsupported_claims(
+                {"per_image_overrides": {"道具生成": "后景使用玻璃"}},
+                8,
+                "主图变量配置",
+                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            )
+
+    def test_style_master_phrase_boundary_rejects_absent_phrase(self) -> None:
+        with self.assertRaises(ExecutorExecutionError):
+            _reject_unsupported_claims(
+                {"per_image_overrides": {"道具生成": "后景使用玻璃雕塑"}},
+                8,
+                "主图变量配置",
+                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            )
+
+    def test_style_master_prop_allowlist_rejects_product_directed_materials(self) -> None:
+        for claim in ("杯身为玻璃", "玻璃质感壶身"):
+            with self.subTest(claim=claim):
+                with self.assertRaises(ExecutorExecutionError) as caught:
+                    _reject_unsupported_claims(
+                        {"per_image_overrides": {"道具生成": claim}},
+                        8,
+                        "主图变量配置",
+                        style_master_text=(
+                            STYLE_MASTER_GLASS_PROP_TEXT + "玻璃质感壶身。"
+                        ),
+                    )
+                self.assertIn("未确认商品事实", str(caught.exception))
+
+    def test_style_master_prop_allowlist_rejects_non_prop_field(self) -> None:
+        with self.assertRaises(ExecutorExecutionError):
+            _reject_unsupported_claims(
+                {"per_image_overrides": {"展示重点": "后景玻璃器皿虚化"}},
+                8,
+                "主图变量配置",
+                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            )
+
     def test_real_main_vc_fixture_accepts_unarranged_prohibited_actions(self) -> None:
         requirements = semantic_gate_requirements()
 
@@ -293,6 +448,23 @@ class CodexDevDownstreamTest(unittest.TestCase):
 
         self.assertIn(ANGLE_SLOT_LITERAL_CONTRACT, prompt)
 
+    def test_main_variable_prompt_requires_product_id_only_corresponding_product_contract(self) -> None:
+        prompt = build_variable_config_prompt(
+            mode="main",
+            product_id="杯子_20260722",
+            repository_root=ROOT,
+            identity={},
+            style_master={},
+            angle_inventory=semantic_gate_angle_inventory(),
+            requirements=semantic_gate_requirements(),
+        )
+
+        self.assertIn(
+            "主图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 "
+            "product_id：杯子_20260722；不得填写产品外观、材质、品类昵称或其他描述性名称。",
+            prompt,
+        )
+
     def test_detail_variable_prompt_requires_literal_angle_slot_contract(self) -> None:
         prompt = build_variable_config_prompt(
             mode="detail",
@@ -307,7 +479,31 @@ class CodexDevDownstreamTest(unittest.TestCase):
 
         self.assertIn(ANGLE_SLOT_LITERAL_CONTRACT, prompt)
 
+    def test_detail_variable_prompt_requires_product_id_only_corresponding_product_contract(self) -> None:
+        prompt = build_variable_config_prompt(
+            mode="detail",
+            product_id="杯子_20260722",
+            repository_root=ROOT,
+            identity={},
+            style_master={},
+            angle_inventory=semantic_gate_angle_inventory(),
+            requirements=semantic_gate_requirements(),
+            main_variable_config=semantic_gate_response_with_literal_slots(),
+        )
+
+        self.assertIn(
+            "详情图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 "
+            "product_id：杯子_20260722；不得填写产品外观、材质、品类昵称或其他描述性名称。",
+            prompt,
+        )
+
     def test_real_main_fixture_with_literal_slots_passes_full_validation(self) -> None:
+        style_root = tempfile.TemporaryDirectory()
+        self.addCleanup(style_root.cleanup)
+        style_path = write_style_master_fixture(
+            Path(style_root.name),
+            product_id="杯子_20260719",
+        )
         artifact = parse_variable_config_response(
             json.dumps(semantic_gate_response_with_literal_slots(), ensure_ascii=False),
             mode="main",
@@ -316,13 +512,37 @@ class CodexDevDownstreamTest(unittest.TestCase):
             angle_inventory=semantic_gate_angle_inventory(),
             upstream_paths={
                 "product_identity_archive": Path("identity.json"),
-                "style_master": Path("style.json"),
+                "style_master": style_path,
                 "angle_inventory": Path("angles.json"),
             },
         )
 
         self.assertEqual("main_variable_config", artifact["artifact_type"])
         self.assertEqual(6, artifact["config_count"])
+
+    def test_variable_config_fails_closed_when_style_master_is_unreadable(self) -> None:
+        response = replace_corresponding_product_with_product_id(
+            semantic_gate_20260722_response()
+        )
+
+        with self.assertRaises(ExecutorExecutionError) as caught:
+            parse_variable_config_response(
+                json.dumps(response, ensure_ascii=False),
+                mode="main",
+                product_id="杯子_20260722",
+                requirements=semantic_gate_requirements(),
+                angle_inventory=semantic_gate_angle_inventory(),
+                upstream_paths={
+                    "product_identity_archive": Path("identity.json"),
+                    "style_master": Path("missing-style-master.json"),
+                    "angle_inventory": Path("angles.json"),
+                },
+            )
+
+        self.assertEqual(
+            "codex-dev 无法读取有效的正式风格母版",
+            str(caught.exception),
+        )
 
     def test_bound_angle_still_rejects_missing_literal_and_d_slot(self) -> None:
         qualified = qualified_angle_assets(semantic_gate_angle_inventory())

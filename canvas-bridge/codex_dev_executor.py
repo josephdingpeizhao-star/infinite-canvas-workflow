@@ -36,6 +36,7 @@ from codex_dev_downstream import (
     parse_detail_variable_config_chunk,
     parse_user_confirmed_requirements,
     parse_variable_config_response,
+    style_master_material_reference_text,
     write_bundle_exclusive,
     write_json_exclusive,
 )
@@ -1004,6 +1005,10 @@ class CodexDevExecutor:
             "detail_variable_config",
             "正式详情图变量配置",
         )
+        style_master_text = style_master_material_reference_text(
+            style_master,
+            product_id=product_id,
+        )
 
         main_prompt = build_final_prompt_batch_prompt(
             mode="main",
@@ -1023,6 +1028,7 @@ class CodexDevExecutor:
             requirements=requirements,
             angle_inventory=angle_inventory,
             variable_config=main_variable_config,
+            style_master_text=style_master_text,
         )
 
         detail_prompt = build_final_prompt_batch_prompt(
@@ -1043,6 +1049,7 @@ class CodexDevExecutor:
             requirements=requirements,
             angle_inventory=angle_inventory,
             variable_config=detail_variable_config,
+            style_master_text=style_master_text,
         )
 
         bundle = build_final_prompt_bundle(
