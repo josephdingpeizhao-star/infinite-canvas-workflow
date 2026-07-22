@@ -917,6 +917,42 @@ _SCENE_ENUMERATION_NEGATION_PATTERN = re.compile(
     r"(?:、|或|和|及|与)\s*$"
 )
 _SCENE_ENUMERATION_SCOPE_BREAKERS = ("而", "但", "却", "仍", "再")
+_SCENE_FIRST_ENUMERATION_NEGATION_HEAD_PATTERN = re.compile(
+    r"^\s*(?:不|无|未)(?P<connecting_component>[㐀-鿿]{1,2})$"
+)
+_SCENE_FIRST_ENUMERATION_ADVERB_EXCLUSIONS = frozenset(
+    ("慎", "小心", "停", "断", "住", "禁")
+)
+_SCENE_ENUMERATION_CONNECTORS = ("、", "或", "和", "及", "与")
+
+
+def _term_is_first_negated_enumeration_item(clause: str, term_start: int) -> bool:
+    head = _SCENE_FIRST_ENUMERATION_NEGATION_HEAD_PATTERN.fullmatch(
+        clause[:term_start]
+    )
+    if not head:
+        return False
+    if (
+        head.group("connecting_component")
+        in _SCENE_FIRST_ENUMERATION_ADVERB_EXCLUSIONS
+    ):
+        return False
+    if any(breaker in clause for breaker in _SCENE_ENUMERATION_SCOPE_BREAKERS):
+        return False
+    scanned_term = next(
+        (
+            term
+            for term in ("清水", *_PROHIBITED_ACTION_TERMS)
+            if clause.startswith(term, term_start)
+        ),
+        None,
+    )
+    if scanned_term is None:
+        return False
+    return clause.startswith(
+        _SCENE_ENUMERATION_CONNECTORS,
+        term_start + len(scanned_term),
+    )
 
 
 def _term_has_scene_negation(clause: str, term_start: int) -> bool:
@@ -929,6 +965,8 @@ def _term_has_scene_negation(clause: str, term_start: int) -> bool:
         re.search(r"(?:不|无|未)(?:再|予以)?(?:安排|计划|执行|展示|涉及|发生|允许)\s*$", prefix)
     )
     if existing_marker or existing_suffix or negated_predicate:
+        return True
+    if _term_is_first_negated_enumeration_item(clause, term_start):
         return True
     enumerated_scope = _SCENE_ENUMERATION_NEGATION_PATTERN.fullmatch(prefix)
     return bool(
@@ -1797,6 +1835,9 @@ def build_final_prompt_batch_prompt(
 这是提示词编译，不生成图片、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须且只返回这些配置：{json.dumps(expected_ids, ensure_ascii=False)}。
 每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 A/B/C 槽位、画布比例 {expected_ratio}、产品高度约 {requirements.height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。
+final_prompt 正文必须遵守以下场景安全规则：{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
+场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
+如需逐词列出禁止项，只能写入 negative_prompt 字段；不得把逐词禁止清单写入 final_prompt 正文。
 恰好 {expected_handheld} 份保持启用手持；{_final_forbidden_rule(requirements)}
 不得新增变量配置没有的道具、文字、卖点或页面任务，不得把 Skill 或运行规则正文复制成最终画面要求。
 只返回一个 JSON 对象，形状必须严格为 {{"prompts":[{{"config_id":"...","final_prompt":"...","negative_prompt":"..."}}]}}，不要 Markdown、说明、上游路径、图片、QC 或其他字段。
