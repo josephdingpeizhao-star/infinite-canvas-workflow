@@ -503,6 +503,11 @@ _VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE = (
     "“不锈钢”“塑料”等具体材质词；环境道具描述除外，但环境道具仍必须遵守正式"
     "风格母版与现有门禁。"
 )
+_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE = (
+    "表达内容物与动作安全边界时，不得逐词列举“倾倒、倒水、倒出、加热、沸腾、"
+    "炉灶、热水”等禁止动作词；统一使用“不出现任何禁止的内容物或动作”这一统称"
+    "表述，或原样复述本提示中的场景规则句，不得自行改写为禁止词清单。"
+)
 _PROP_MATERIAL_PREFIXES = ("陶瓷", "玻璃", "不锈钢", "塑料")
 _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
     "产品",
@@ -928,6 +933,12 @@ _SCENE_NEGATION_MARKERS = (
     "无清水",
 )
 _PROHIBITED_ACTION_TERMS = ("倾倒", "倒水", "倒出", "加热", "沸腾", "炉灶", "热水")
+_SCENE_ENUMERATION_NEGATION_PATTERN = re.compile(
+    r"^\s*(?:不|无|未)[㐀-鿿]{1,2}[㐀-鿿]{2,12}"
+    r"(?:(?:、|或|和|及|与)[㐀-鿿]{1,12})*"
+    r"(?:、|或|和|及|与)\s*$"
+)
+_SCENE_ENUMERATION_SCOPE_BREAKERS = ("而", "但", "却", "仍", "再")
 
 
 def _term_has_scene_negation(clause: str, term_start: int) -> bool:
@@ -939,7 +950,16 @@ def _term_has_scene_negation(clause: str, term_start: int) -> bool:
     negated_predicate = bool(
         re.search(r"(?:不|无|未)(?:再|予以)?(?:安排|计划|执行|展示|涉及|发生|允许)\s*$", prefix)
     )
-    return existing_marker or existing_suffix or negated_predicate
+    if existing_marker or existing_suffix or negated_predicate:
+        return True
+    enumerated_scope = _SCENE_ENUMERATION_NEGATION_PATTERN.fullmatch(prefix)
+    return bool(
+        enumerated_scope
+        and not any(
+            breaker in enumerated_scope.group(0)
+            for breaker in _SCENE_ENUMERATION_SCOPE_BREAKERS
+        )
+    )
 
 
 def _reject_scene_policy_violations(
@@ -1068,7 +1088,9 @@ def build_variable_config_prompt(
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
 尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”；不得补写容量、其他尺寸、重量、具体材质、耐热、认证、品牌或型号。
-{_variable_scene_rule(requirements)}手持只能自然握住把手、轻扶壶身或轻微拿起，不能改变绑定角度。
+{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
+场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
+手持只能自然握住把手、轻扶壶身或轻微拿起，不能改变绑定角度。
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
 【Skill 原文】
@@ -1103,7 +1125,9 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
 所有尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”。模块05是唯一尺寸标注图，只能标注“高度约 {requirements.height_cm} 厘米”，必须明确禁止容量、宽度、直径、重量、材质等未确认参数，并且不得启用手持；其他模块不得启用尺寸标注信息。
-详情页全批恰好一项启用手持，只能自然握住把手、轻扶壶身或轻微拿起；{_variable_scene_rule(requirements)}
+{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
+场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
+详情页全批恰好一项启用手持，只能自然握住把手、轻扶壶身或轻微拿起。
 模块01须承接正式主图配置中的已支持核心承诺，但不得复制或新增任何未确认说法。
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
