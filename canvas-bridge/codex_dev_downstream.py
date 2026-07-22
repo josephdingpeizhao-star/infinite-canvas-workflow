@@ -459,7 +459,49 @@ _NON_PRODUCT_PROP_HOST_PATTERN = re.compile(
     r"\s*(?:花瓶|花器|托盘|碟(?:子)?|盘(?:子)?|摆件|装饰品|灯具|布料|桌布|背景板|道具)"
 )
 _STYLE_MASTER_PROP_CONTEXT_FIELDS = frozenset(
-    {*_NON_PRODUCT_PROP_CONTEXT_FIELDS, "final_prompt"}
+    {
+        *_NON_PRODUCT_PROP_CONTEXT_FIELDS,
+        "构图方式",
+        "道具密度等级",
+        "真实感要求",
+        "风格防退化检查",
+        "final_prompt",
+    }
+)
+_NON_STYLE_MASTER_PROP_CONTEXT_FIELDS = frozenset(
+    {
+        "中文营销文案",
+        "主图核心承诺",
+        "买家疑问",
+        "产品位置",
+        "产品占比",
+        "产品角度依据",
+        "产品颜色依据",
+        "信息来源与可用证据",
+        "内容物状态",
+        "动态手持样式参考图调用",
+        "尺寸标注信息",
+        "尺寸标注图规则",
+        "尺寸比例锁定",
+        "展示重点",
+        "平台硬约束检查",
+        "手持交互声明",
+        "文字信息",
+        "文字渲染要求",
+        "标准模块归属",
+        "禁止事项",
+        "绑定角度槽位",
+        "角度适配原则",
+        "辅助参考图调用",
+        "输出画布比例",
+        "镜头距离",
+        "页面任务",
+    }
+)
+_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE = (
+    "所有字段中提及产品材质时，一律使用“材质”统称，不得写出“陶瓷”“玻璃”"
+    "“不锈钢”“塑料”等具体材质词；环境道具描述除外，但环境道具仍必须遵守正式"
+    "风格母版与现有门禁。"
 )
 _PROP_MATERIAL_PREFIXES = ("陶瓷", "玻璃", "不锈钢", "塑料")
 _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
@@ -1021,6 +1063,7 @@ def build_variable_config_prompt(
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(MAIN_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 主图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
+{_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
@@ -1055,6 +1098,7 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 详情图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
+{_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
