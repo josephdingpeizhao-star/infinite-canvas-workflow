@@ -649,7 +649,10 @@ class CodexDevExecutor:
                 f"detail_vc、final_prompts、qc，拒绝步骤：{request.step}"
             )
         if self.context.environment.get("CODEX_DEV_ALLOW_REAL_EXECUTION") != "1":
-            raise ExecutorExecutionError("codex-dev 未获准真实执行；阶段 B 批准前保持禁用")
+            raise CodexDevExecutionError(
+                "codex-dev 未获准真实执行；阶段 B 批准前保持禁用",
+                "real_execution_disabled",
+            )
 
         product_id = str(self.context.manifest.get("product_id") or "").strip()
         if not product_id:

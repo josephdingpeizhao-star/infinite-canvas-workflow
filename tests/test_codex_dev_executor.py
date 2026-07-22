@@ -24,6 +24,7 @@ from codex_dev_executor import (  # noqa: E402
     CanvasAgentCodexTransport,
     CanvasAgentTransportError,
     CodexAttachment,
+    CodexDevExecutionError,
     CodexDevExecutor,
     CodexTurnResult,
 )
@@ -2792,6 +2793,35 @@ class CodexDevExecutorTest(CodexDevFixture):
                 executor.execute(ExecutionRequest(step="identity"))
 
             self.assertIn("未获准真实执行", str(caught.exception))
+            self.assertEqual([], transport.calls)
+            self.assertFalse((output_dir / "product_identity_archive.json").exists())
+
+    def test_real_execution_disabled_is_typed_before_transport_or_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, output_dir = self.make_fixture(root)
+            disabled_context = ExecutorContext(
+                manifest=context.manifest,
+                manifest_path=context.manifest_path,
+                environment={},
+            )
+            transport = FakeTransport(
+                CodexTurnResult(text=json.dumps(VALID_IDENTITY), thread_id="unused")
+            )
+            executor = CodexDevExecutor(
+                disabled_context,
+                transport=transport,
+                repository_root=root,
+            )
+
+            with self.assertRaises(CodexDevExecutionError) as caught:
+                executor.execute(ExecutionRequest(step="identity"))
+
+            self.assertEqual("real_execution_disabled", caught.exception.code)
+            self.assertEqual(
+                "codex-dev 未获准真实执行；阶段 B 批准前保持禁用",
+                str(caught.exception),
+            )
             self.assertEqual([], transport.calls)
             self.assertFalse((output_dir / "product_identity_archive.json").exists())
 

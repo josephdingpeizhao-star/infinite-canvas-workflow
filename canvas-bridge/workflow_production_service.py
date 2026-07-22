@@ -37,6 +37,12 @@ from workflow_production_render_observer import ProductionRenderObserverExecutor
 COMMAND_MAX_AGE_MS = 8_000
 UPSTREAM_STEPS = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc", "final_prompts"}
 M2B_STEPS = UPSTREAM_STEPS | {"integrity", "renders"}
+_REAL_EXECUTION_DISABLED_CODE = "real_execution_disabled"
+_REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
+    "本机真实执行开关未开启，本次没有调用模型、没有产生费用。"
+    "请先关闭工作台窗口，按闸门流程用带开关的命令重新启动工作台，再回到画布重新开始。"
+)
+_REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置"}
@@ -320,6 +326,11 @@ class WorkflowProductionService:
     def _controlled_codex_failure(exc: BaseException) -> tuple[str, str] | None:
         if not isinstance(exc, ExecutorExecutionError):
             return None
+        if getattr(exc, "code", "") == _REAL_EXECUTION_DISABLED_CODE:
+            return (
+                _REAL_EXECUTION_DISABLED_EVENT_DETAIL,
+                _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE,
+            )
         detail = str(exc)
         if (
             not detail
@@ -368,6 +379,11 @@ class WorkflowProductionService:
     def _safe_failure(cls, exc: BaseException) -> str:
         if isinstance(exc, ProductionGateError):
             return str(exc)
+        if (
+            isinstance(exc, ExecutorExecutionError)
+            and getattr(exc, "code", "") == _REAL_EXECUTION_DISABLED_CODE
+        ):
+            return _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE
         if isinstance(exc, ExecutorExecutionError) and "2:3" in str(exc):
             return "详情图返回 2:3，原图已保留。机器已停下，等待人工尺寸处理批准。"
         if isinstance(exc, ExecutorExecutionError) and "OPENAI_API_KEY" in str(exc):

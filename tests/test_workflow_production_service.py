@@ -13,6 +13,7 @@ if str(BRIDGE) not in sys.path:
     sys.path.insert(0, str(BRIDGE))
 
 from executor_contract import ExecutionResult, ExecutorExecutionError  # noqa: E402
+from codex_dev_executor import CodexDevExecutionError  # noqa: E402
 from workflow_demo_executor import write_placeholder_png  # noqa: E402
 from workflow_production_projection import artifact_from_path  # noqa: E402
 import workflow_production_service as production_service  # noqa: E402
@@ -134,6 +135,20 @@ class MessageFailureExecutor:
         raise ExecutorExecutionError(self.message)
 
 
+class RealExecutionDisabledExecutor:
+    name = "fake-real-execution-disabled"
+
+    def __init__(self, executed: list[str]):
+        self.executed = executed
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        raise CodexDevExecutionError(
+            "codex-dev 未获准真实执行；阶段 B 批准前保持禁用",
+            "real_execution_disabled",
+        )
+
+
 class ProductionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -251,6 +266,96 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
         artifact_root = self.workspace / "artifacts"
         self.assertEqual([], list(artifact_root.rglob("*")) if artifact_root.exists() else [])
+
+    def test_real_execution_disabled_uses_human_workbench_copy(self) -> None:
+        message = production_service.WorkflowProductionService._safe_failure(
+            CodexDevExecutionError(
+                "codex-dev 未获准真实执行；阶段 B 批准前保持禁用",
+                "real_execution_disabled",
+            )
+        )
+
+        self.assertEqual(
+            "本机真实执行开关未开启，本次没有调用模型、没有产生费用。请先关闭工作台窗口，按闸门流程用带开关的命令重新启动工作台，再回到画布重新开始。",
+            message,
+        )
+        self.assertNotIn("CODEX_DEV_ALLOW_REAL_EXECUTION", message)
+
+    def test_real_execution_disabled_writes_fixed_event_detail_without_retry(self) -> None:
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: RealExecutionDisabledExecutor(
+                executed
+            ),
+            route_reader=self._route_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+        )
+
+        service.poll_once()
+
+        self.assertEqual(["identity"], executed)
+        machine = client.state["nodes"][0]
+        self.assertEqual("failed", machine["metadata"]["workflowProduction"]["status"])
+        self.assertEqual(
+            "本机真实执行开关未开启，本次没有调用模型、没有产生费用。请先关闭工作台窗口，按闸门流程用带开关的命令重新启动工作台，再回到画布重新开始。",
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        failed_events = [event for event in events if event["event"] == "step_failed"]
+        self.assertEqual(1, len(failed_events))
+        self.assertEqual(
+            "真实执行开关未开启，执行已停止，未自动重试",
+            failed_events[0]["detail"],
+        )
+        artifact_root = self.workspace / "artifacts"
+        self.assertEqual([], list(artifact_root.rglob("*")) if artifact_root.exists() else [])
+
+    def test_existing_failure_copy_branches_remain_unchanged(self) -> None:
+        empty_response = ExecutorExecutionError("codex-dev 本轮没有返回内容")
+        empty_response.code = "empty_assistant_response"
+        controlled_detail = "codex-dev 收到的主图变量配置违反用户确认场景边界"
+        cases = (
+            (
+                production_service.ProductionGateError("闸门提示原文"),
+                "闸门提示原文",
+            ),
+            (
+                ExecutorExecutionError("详情图尺寸不是 2:3"),
+                "详情图返回 2:3，原图已保留。机器已停下，等待人工尺寸处理批准。",
+            ),
+            (
+                ExecutorExecutionError("OPENAI_API_KEY missing"),
+                "前面的成果已保留。本机还没有准备图片服务凭据，当前未出图、未产生新的图片费用。",
+            ),
+            (
+                empty_response,
+                "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。",
+            ),
+            (
+                ExecutorExecutionError(controlled_detail),
+                "主图变量配置未通过：违反用户确认场景边界。机器已停下，未自动重试。",
+            ),
+            (
+                ExecutorExecutionError("unknown provider failure"),
+                "这一步没做好，机器已停下。已经完成的成果都保留了。",
+            ),
+        )
+
+        for failure, expected in cases:
+            with self.subTest(failure=str(failure)):
+                self.assertEqual(
+                    expected,
+                    production_service.WorkflowProductionService._safe_failure(failure),
+                )
 
     def test_sanitized_codex_failure_reaches_event_and_workbench(self) -> None:
         detail = (
