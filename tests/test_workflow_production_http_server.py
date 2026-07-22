@@ -219,6 +219,29 @@ class ProductionHttpServerTest(unittest.TestCase):
             response.read()
             self.assertEqual("http://localhost:3000", response.headers["Access-Control-Allow-Origin"])
 
+    def test_browser_output_get_exposes_sha_header(self) -> None:
+        request = urllib.request.Request(
+            self.base + "/workflow-production/cup/outputs/main_01",
+            headers={
+                "Origin": "http://localhost:3000",
+                "x-canvas-agent-token": "canvas-token",
+            },
+        )
+
+        with urllib.request.urlopen(request, timeout=2) as response:
+            body = response.read()
+            headers = response.headers
+
+        self.assertEqual(200, response.status)
+        self.assertEqual(self.image.read_bytes(), body)
+        self.assertEqual("image/png", headers.get_content_type())
+        self.assertEqual(64, len(headers["x-content-sha256"]))
+        self.assertEqual("http://localhost:3000", headers["Access-Control-Allow-Origin"])
+        self.assertEqual(
+            "x-content-sha256",
+            headers["Access-Control-Expose-Headers"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

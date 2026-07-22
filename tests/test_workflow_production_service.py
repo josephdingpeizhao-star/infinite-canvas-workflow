@@ -453,6 +453,42 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual("step_failed", events[-1]["event"])
         self.assertEqual(detail, events[-1]["detail"])
 
+    def test_persistence_timeout_reaches_event_and_workbench_without_retry(self) -> None:
+        detail = "真实图片没有在规定时间内完成浏览器持久化"
+        client = FakeCanvasClient(command="run: renders")
+        executed = STEPS[:-1].copy()
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: MessageFailureExecutor(
+                executed, detail
+            ),
+            route_reader=self._route_reader(executed),
+            integrity_reader=self._integrity_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(STEPS, executed)
+        machine = client.state["nodes"][0]
+        self.assertEqual("failed", machine["metadata"]["workflowProduction"]["status"])
+        self.assertEqual(
+            f"{detail}。机器已停下，未自动重试。",
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        failed_events = [event for event in events if event["event"] == "step_failed"]
+        self.assertEqual(1, len(failed_events))
+        self.assertEqual(detail, failed_events[0]["detail"])
+
     def test_unsafe_executor_failure_remains_redacted_everywhere(self) -> None:
         unsafe_details = (
             r"codex-dev 收到的主图变量配置包含未确认商品事实（1 处：C:\private\reply.json）",

@@ -44,6 +44,7 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 )
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
+_PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
@@ -251,7 +252,7 @@ class WorkflowProductionService:
             if self._persisted(node_id, artifact.sha256):
                 return
             if time.monotonic() >= deadline or self.stopping:
-                raise ExecutorExecutionError("真实图片没有在规定时间内完成浏览器持久化")
+                raise ExecutorExecutionError(_PERSISTENCE_TIMEOUT_DETAIL)
             self.sleep(0.1)
 
     def _project_artifact(
@@ -348,6 +349,8 @@ class WorkflowProductionService:
             or _UNSAFE_FAILURE_DETAIL_PATTERN.search(detail)
         ):
             return None
+        if detail == _PERSISTENCE_TIMEOUT_DETAIL:
+            return detail, f"{detail}。机器已停下，未自动重试。"
         match = re.fullmatch(
             r"codex-dev 收到的(?P<label>主图变量配置|详情图变量配置|"
             r"主图最终提示词|详情图最终提示词)(?P<reason>.+)",

@@ -291,6 +291,7 @@ class WorkflowProductionHttpServer:
                         self.send_header("content-type", "image/png")
                         self.send_header("cache-control", "no-store")
                         self.send_header("x-content-sha256", sha256)
+                        self.send_header("Access-Control-Expose-Headers", "x-content-sha256")
                         self.send_header("content-length", str(len(data)))
                         self._send_cors(origin)
                         self.end_headers()
