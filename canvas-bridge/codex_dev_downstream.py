@@ -76,6 +76,58 @@ DETAIL_REQUIRED_OVERRIDE_FIELDS = (
     "禁止事项",
 )
 
+_SEMANTIC_CONTEXT_POSITIVE = "positive_description"
+_SEMANTIC_CONTEXT_NEGATIVE_LIST = "negative_list"
+_SEMANTIC_CONTEXT_NON_SEMANTIC = "non_semantic"
+_NON_SEMANTIC_OVERRIDE_FIELDS = frozenset(
+    {"输出画布比例", "动态手持样式参考图调用"}
+)
+FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS = {
+    "config_id": _SEMANTIC_CONTEXT_NON_SEMANTIC,
+    "final_prompt": _SEMANTIC_CONTEXT_POSITIVE,
+    "negative_prompt": _SEMANTIC_CONTEXT_NEGATIVE_LIST,
+}
+MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS = {
+    field: (
+        _SEMANTIC_CONTEXT_NON_SEMANTIC
+        if field in _NON_SEMANTIC_OVERRIDE_FIELDS
+        else _SEMANTIC_CONTEXT_POSITIVE
+    )
+    for field in MAIN_REQUIRED_OVERRIDE_FIELDS
+}
+DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS = {
+    field: (
+        _SEMANTIC_CONTEXT_NEGATIVE_LIST
+        if field == "禁止事项"
+        else _SEMANTIC_CONTEXT_NON_SEMANTIC
+        if field in _NON_SEMANTIC_OVERRIDE_FIELDS
+        else _SEMANTIC_CONTEXT_POSITIVE
+    )
+    for field in DETAIL_REQUIRED_OVERRIDE_FIELDS
+}
+_CONTROL_VALUE_FIELDS = frozenset(
+    {
+        "artifact_type",
+        "chunk_count",
+        "chunk_index",
+        "config_count",
+        "output_type",
+        "product_id",
+        "resolved_variable_config_sha256",
+        "用户要求主图手持数量",
+        "用户要求详情图手持数量",
+        "实际启用手持数量",
+        "未启用手持数量",
+        "启用手持配置",
+        "是否完全满足用户数量",
+    }
+)
+_SEMANTIC_FIELD_CONTEXTS = {
+    **MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+    **DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+    **FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS,
+}
+
 _VARIABLE_ALLOWED_TOP_LEVEL = {
     "common_constraints",
     "configs",
@@ -386,14 +438,23 @@ def _walk_string_contexts(value: Any, path: tuple[str, ...] = ()):
     if isinstance(value, Mapping):
         for key, item in value.items():
             key_text = str(key)
-            if isinstance(key, str):
-                yield path, key
             yield from _walk_string_contexts(item, (*path, key_text))
     elif isinstance(value, list):
         for index, item in enumerate(value):
             yield from _walk_string_contexts(item, (*path, str(index)))
     elif isinstance(value, str):
         yield path, value
+
+
+def _semantic_context_for_path(path: tuple[str, ...]) -> str:
+    if "handheld_count_summary" in path:
+        return _SEMANTIC_CONTEXT_NON_SEMANTIC
+    for part in reversed(path):
+        if part in _SEMANTIC_FIELD_CONTEXTS:
+            return _SEMANTIC_FIELD_CONTEXTS[part]
+        if part in _CONTROL_VALUE_FIELDS:
+            return _SEMANTIC_CONTEXT_NON_SEMANTIC
+    return _SEMANTIC_CONTEXT_POSITIVE
 
 
 _CLAUSE_SEPARATOR_PATTERN = r"[，,。；;\n]"
@@ -446,58 +507,6 @@ _SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN = re.compile(
 )
 _UNSUPPORTED_FACT_PATTERN = re.compile(_UNSUPPORTED_FACT_TOKEN_PATTERN)
 _FACT_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[。；;\n]+")
-_NON_PRODUCT_PROP_CONTEXT_FIELDS = frozenset(
-    {
-        "风格贴合锚点调用",
-        "背景层次配置",
-        "道具生成",
-        "道具关系",
-        "背景与光线",
-    }
-)
-_NON_PRODUCT_PROP_HOST_PATTERN = re.compile(
-    r"\s*(?:花瓶|花器|托盘|碟(?:子)?|盘(?:子)?|摆件|装饰品|灯具|布料|桌布|背景板|道具)"
-)
-_STYLE_MASTER_PROP_CONTEXT_FIELDS = frozenset(
-    {
-        *_NON_PRODUCT_PROP_CONTEXT_FIELDS,
-        "构图方式",
-        "道具密度等级",
-        "真实感要求",
-        "风格防退化检查",
-        "final_prompt",
-    }
-)
-_NON_STYLE_MASTER_PROP_CONTEXT_FIELDS = frozenset(
-    {
-        "中文营销文案",
-        "主图核心承诺",
-        "买家疑问",
-        "产品位置",
-        "产品占比",
-        "产品角度依据",
-        "产品颜色依据",
-        "信息来源与可用证据",
-        "内容物状态",
-        "动态手持样式参考图调用",
-        "尺寸标注信息",
-        "尺寸标注图规则",
-        "尺寸比例锁定",
-        "展示重点",
-        "平台硬约束检查",
-        "手持交互声明",
-        "文字信息",
-        "文字渲染要求",
-        "标准模块归属",
-        "禁止事项",
-        "绑定角度槽位",
-        "角度适配原则",
-        "辅助参考图调用",
-        "输出画布比例",
-        "镜头距离",
-        "页面任务",
-    }
-)
 _VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE = (
     "所有字段中提及产品材质时，一律使用“材质”统称，不得写出“陶瓷”“玻璃”"
     "“不锈钢”“塑料”等具体材质词；环境道具描述除外，但环境道具仍必须遵守正式"
@@ -508,10 +517,10 @@ _VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE = (
     "炉灶、热水”等禁止动作词；统一使用“不出现任何禁止的内容物或动作”这一统称"
     "表述，或原样复述本提示中的场景规则句，不得自行改写为禁止词清单。"
 )
-_PROP_MATERIAL_PREFIXES = ("陶瓷", "玻璃", "不锈钢", "塑料")
 _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
     "产品",
     "商品",
+    "本品",
     "主体",
     "本体",
     "杯身",
@@ -525,13 +534,11 @@ _PRODUCT_MATERIAL_CONTEXT_MARKERS = (
 )
 _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN = re.compile(
     rf"(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
-    r"[^，,、。；;：:]{0,8}$"
+    r"\s*(?:的\s*)?(?:主体\s*)?(?:材质\s*)?"
+    r"(?:(?:为|是|不是|采用|使用|选用|由|具有|呈现?|[:：])\s*)?$"
 )
 _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN = re.compile(
-    rf"\s*(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
-)
-_STYLE_MASTER_PHRASE_BOUNDARY_PATTERN = re.compile(
-    r"(?:$|[，,。；;：:、/／（）()\[\]【】\n]|和|或|与|及|可|应|需|用于|作为|位于|虚化|形成)"
+    rf"\s*(?:的\s*)?(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
 )
 _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
     {
@@ -565,72 +572,47 @@ _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
 _INDEXED_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset({"configs", "prompts"})
 
 
-def _is_non_product_prop_material(
-    sentence: str,
-    path: tuple[str, ...],
-    fact: re.Match[str],
-) -> bool:
-    if not any(part in _NON_PRODUCT_PROP_CONTEXT_FIELDS for part in path):
-        return False
-    host = _NON_PRODUCT_PROP_HOST_PATTERN.match(sentence, fact.end())
-    if host is None:
-        return False
-    local_prefix = sentence[max(0, fact.start() - 20) : fact.start()]
-    local_suffix = sentence[fact.end() : fact.end() + 20]
-    return (
-        _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
-        and _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(local_suffix) is None
-    )
+def _product_subject_terms(product_type: str | None) -> tuple[str, ...]:
+    normalized = re.sub(r"\s+", "", str(product_type or ""))
+    if not normalized:
+        return ()
+    terms = {normalized}
+    if len(normalized) > 1 and normalized.endswith("子"):
+        terms.add(normalized[:-1])
+    return tuple(sorted(terms, key=len, reverse=True))
 
 
-def _is_style_master_prop_candidate(
-    sentence: str,
-    path: tuple[str, ...],
-    fact: re.Match[str],
-) -> bool:
-    if not any(part in _STYLE_MASTER_PROP_CONTEXT_FIELDS for part in path):
-        return False
-    if not fact.group(0).startswith(_PROP_MATERIAL_PREFIXES):
-        return False
-    local_prefix = sentence[max(0, fact.start() - 20) : fact.start()]
-    local_suffix = sentence[fact.end() : fact.end() + 20]
-    return (
-        _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(local_prefix) is None
-        and _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(local_suffix) is None
-    )
-
-
-def _style_master_contains_material_phrase(
+def _is_product_directed_unsupported_fact(
     sentence: str,
     fact: re.Match[str],
-    style_master_text: str,
+    product_type: str | None,
 ) -> bool:
-    fact_text = re.sub(r"\s+", "", fact.group(0))
-    candidate = re.sub(r"\s+", "", sentence[fact.start() :])
-    if not candidate.startswith(fact_text):
-        return False
-    tail_match = re.match(r"[\u3400-\u9fffA-Za-z0-9_-]{0,8}", candidate[len(fact_text) :])
-    tail = tail_match.group(0) if tail_match else ""
-    if len(tail) < 2:
-        return False
-    normalized_master = re.sub(r"[ \t\r\f\v]+", "", style_master_text)
-    for extra_length in range(len(tail), 1, -1):
-        phrase = fact_text + tail[:extra_length]
-        for occurrence in re.finditer(re.escape(phrase), normalized_master):
-            following = normalized_master[occurrence.end() :]
-            if _STYLE_MASTER_PHRASE_BOUNDARY_PATTERN.match(following):
-                return True
-    return False
+    """Require grammatical attachment to the product, not mere same-clause presence."""
 
+    prefix = sentence[: fact.start()]
+    suffix = sentence[fact.end() :]
+    if _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(prefix):
+        return True
+    if _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(suffix):
+        return True
 
-def _is_style_master_prop_material(
-    sentence: str,
-    path: tuple[str, ...],
-    fact: re.Match[str],
-    style_master_text: str,
-) -> bool:
-    return _is_style_master_prop_candidate(sentence, path, fact) and (
-        _style_master_contains_material_phrase(sentence, fact, style_master_text)
+    subject_terms = _product_subject_terms(product_type)
+    if any(
+        re.search(
+            rf"{re.escape(term)}\s*(?:的\s*)?(?:主体\s*)?(?:材质\s*)?"
+            r"(?:(?:为|是|不是|采用|使用|选用|由|具有|呈现?|[:：])\s*)?$",
+            prefix,
+        )
+        for term in subject_terms
+    ):
+        return True
+    return any(
+        re.match(
+            rf"^[\u3400-\u9fffA-Za-z0-9_-]{{0,6}}{re.escape(term)}"
+            r"(?=$|[\s，,。；;：:、/／（）()\[\]【】的为是])",
+            suffix,
+        )
+        for term in subject_terms
     )
 
 
@@ -650,7 +632,7 @@ def style_master_material_reference_text(
     *,
     product_id: str,
 ) -> str:
-    """Return formal style-master body text used for prop-material validation."""
+    """Return validated formal style-master body text for downstream integrity."""
 
     if (
         not isinstance(style_master, Mapping)
@@ -833,6 +815,7 @@ def _reject_unsupported_claims(
     height_cm: int,
     label: str,
     *,
+    product_type: str | None = None,
     style_master_text: str | None = None,
     defer_style_master_prop_materials: bool = False,
 ) -> None:
@@ -871,6 +854,8 @@ def _reject_unsupported_claims(
             violations.append(violation)
 
     for path, item in _walk_string_contexts(value):
+        if _semantic_context_for_path(path) != _SEMANTIC_CONTEXT_POSITIVE:
+            continue
         if _DIMENSION_GROUP_PATTERN.search(item):
             collect("未确认参数", path)
         for match in measurement_pattern.finditer(item):
@@ -900,18 +885,11 @@ def _reject_unsupported_claims(
                     for start, end in protected_spans
                 ):
                     continue
-                if style_master_text is not None:
-                    if _is_style_master_prop_material(
-                        sentence,
-                        path,
-                        fact,
-                        style_master_text,
-                    ):
-                        continue
-                elif defer_style_master_prop_materials:
-                    if _is_style_master_prop_candidate(sentence, path, fact):
-                        continue
-                elif _is_non_product_prop_material(sentence, path, fact):
+                if not _is_product_directed_unsupported_fact(
+                    sentence,
+                    fact,
+                    product_type,
+                ):
                     continue
                 collect("未确认商品事实", path)
 
@@ -967,8 +945,11 @@ def _reject_scene_policy_violations(
     requirements: UserConfirmedRequirements,
     label: str,
 ) -> None:
-    for _path, text in _walk_string_contexts(value):
-        scene_text = text.replace(requirements.product_type, "")
+    exact_rule = _variable_scene_rule(requirements)
+    for path, text in _walk_string_contexts(value):
+        if _semantic_context_for_path(path) != _SEMANTIC_CONTEXT_POSITIVE:
+            continue
+        scene_text = text.replace(exact_rule, "").replace(requirements.product_type, "")
         if not requirements.allow_clear_water:
             for clause in re.split(r"[，,。；;\n]+", scene_text):
                 clear_water_at = clause.find("清水")
@@ -1413,6 +1394,7 @@ def _validate_detail_chunk_business_content(
         value,
         requirements.height_cm,
         label,
+        product_type=requirements.product_type,
         defer_style_master_prop_materials=True,
     )
     _reject_scene_policy_violations(value, requirements, label)
@@ -1584,6 +1566,7 @@ def parse_variable_config_response(
         value,
         requirements.height_cm,
         label,
+        product_type=requirements.product_type,
         style_master_text=style_master_text,
     )
     _reject_scene_policy_violations(value, requirements, label)
@@ -1902,6 +1885,7 @@ def parse_final_prompt_batch_response(
         value,
         requirements.height_cm,
         label,
+        product_type=requirements.product_type,
         style_master_text=style_master_text,
     )
     _reject_scene_policy_violations(value, requirements, label)

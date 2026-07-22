@@ -398,6 +398,41 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual("step_failed", events[-1]["event"])
         self.assertEqual(detail, events[-1]["detail"])
 
+    def test_sanitized_final_prompt_failure_reaches_event_and_workbench(self) -> None:
+        detail = (
+            "codex-dev 收到的详情图最终提示词包含未确认商品事实"
+            "（1 处：prompts/5/negative_prompt）"
+        )
+        client = FakeCanvasClient()
+        executed = STEPS[:3].copy()
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: MessageFailureExecutor(
+                executed, detail
+            ),
+            route_reader=self._route_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+        )
+
+        service.poll_once()
+
+        machine = client.state["nodes"][0]
+        self.assertEqual(
+            "详情图最终提示词未通过：包含未确认商品事实"
+            "（1 处：prompts/5/negative_prompt）。机器已停下，未自动重试。",
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual("step_failed", events[-1]["event"])
+        self.assertEqual(detail, events[-1]["detail"])
+
     def test_unsafe_executor_failure_remains_redacted_everywhere(self) -> None:
         unsafe_details = (
             r"codex-dev 收到的主图变量配置包含未确认商品事实（1 处：C:\private\reply.json）",

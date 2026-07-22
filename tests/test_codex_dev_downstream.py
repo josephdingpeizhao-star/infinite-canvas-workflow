@@ -287,7 +287,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
 
         _reject_unsupported_claims(response, 8, "主图变量配置")
 
-    def test_20260722_fixture_style_master_allows_all_sixteen_prop_material_mentions(self) -> None:
+    def test_20260722_fixture_allows_non_product_materials_without_phrase_allowlist(self) -> None:
         response = replace_corresponding_product_with_product_id(
             semantic_gate_20260722_response()
         )
@@ -296,7 +296,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
             response,
             8,
             "主图变量配置",
-            style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            product_type="杯子",
         )
 
     def test_20260722_fixture_still_rejects_only_six_ceramic_product_mentions(self) -> None:
@@ -305,6 +305,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 semantic_gate_20260722_response(),
                 8,
                 "主图变量配置",
+                product_type="杯子",
                 style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
             )
 
@@ -340,33 +341,31 @@ class CodexDevDownstreamTest(unittest.TestCase):
         self.assertEqual("main_variable_config", artifact["artifact_type"])
         self.assertEqual(6, artifact["config_count"])
 
-    def test_style_master_phrase_boundary_accepts_glass_vessel(self) -> None:
+    def test_non_product_glass_vessel_defaults_to_allow(self) -> None:
         _reject_unsupported_claims(
             {"per_image_overrides": {"道具生成": "后景玻璃器皿虚化"}},
             8,
             "主图变量配置",
-            style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
+            product_type="杯子",
         )
 
-    def test_style_master_phrase_boundary_rejects_material_word_alone(self) -> None:
-        with self.assertRaises(ExecutorExecutionError):
-            _reject_unsupported_claims(
-                {"per_image_overrides": {"道具生成": "后景使用玻璃"}},
-                8,
-                "主图变量配置",
-                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
-            )
+    def test_bare_non_product_material_word_defaults_to_allow(self) -> None:
+        _reject_unsupported_claims(
+            {"per_image_overrides": {"道具生成": "后景使用玻璃"}},
+            8,
+            "主图变量配置",
+            product_type="杯子",
+        )
 
-    def test_style_master_phrase_boundary_rejects_absent_phrase(self) -> None:
-        with self.assertRaises(ExecutorExecutionError):
-            _reject_unsupported_claims(
-                {"per_image_overrides": {"道具生成": "后景使用玻璃雕塑"}},
-                8,
-                "主图变量配置",
-                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
-            )
+    def test_absent_non_product_material_phrase_defaults_to_allow(self) -> None:
+        _reject_unsupported_claims(
+            {"per_image_overrides": {"道具生成": "后景使用玻璃雕塑"}},
+            8,
+            "主图变量配置",
+            product_type="杯子",
+        )
 
-    def test_style_master_prop_allowlist_rejects_product_directed_materials(self) -> None:
+    def test_product_directed_material_contract_rejects_tight_coupling(self) -> None:
         for claim in ("杯身为玻璃", "玻璃质感壶身"):
             with self.subTest(claim=claim):
                 with self.assertRaises(ExecutorExecutionError) as caught:
@@ -374,20 +373,17 @@ class CodexDevDownstreamTest(unittest.TestCase):
                         {"per_image_overrides": {"道具生成": claim}},
                         8,
                         "主图变量配置",
-                        style_master_text=(
-                            STYLE_MASTER_GLASS_PROP_TEXT + "玻璃质感壶身。"
-                        ),
+                        product_type="杯子",
                     )
                 self.assertIn("未确认商品事实", str(caught.exception))
 
-    def test_style_master_prop_allowlist_rejects_non_prop_field(self) -> None:
-        with self.assertRaises(ExecutorExecutionError):
-            _reject_unsupported_claims(
-                {"per_image_overrides": {"展示重点": "后景玻璃器皿虚化"}},
-                8,
-                "主图变量配置",
-                style_master_text=STYLE_MASTER_GLASS_PROP_TEXT,
-            )
+    def test_non_product_material_in_positive_field_defaults_to_allow(self) -> None:
+        _reject_unsupported_claims(
+            {"per_image_overrides": {"展示重点": "后景玻璃器皿虚化"}},
+            8,
+            "主图变量配置",
+            product_type="杯子",
+        )
 
     def test_real_main_vc_fixture_accepts_unarranged_prohibited_actions(self) -> None:
         requirements = semantic_gate_requirements()

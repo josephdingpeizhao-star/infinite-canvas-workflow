@@ -930,20 +930,10 @@ class CodexDevExecutorTest(CodexDevFixture):
             )
             self.assertEqual("详情图变量配置已生成", result.detail)
 
-    def test_detail_vc_style_master_allows_prop_phrase_in_chunk_and_full_chain(self) -> None:
+    def test_detail_vc_contract_allows_non_product_material_in_chunk_and_full_chain(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, output_path, _main_path = self.make_detail_fixture(root)
-            style_path = (
-                root
-                / "workspace"
-                / "artifacts"
-                / "style_master"
-                / "style_master.json"
-            )
-            style = json.loads(style_path.read_text(encoding="utf-8"))
-            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
-            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
             response = valid_detail_variable_response()
             response["configs"][0]["per_image_overrides"]["背景层次配置"] += (
                 "；后景玻璃器皿虚化"
@@ -1223,7 +1213,7 @@ class CodexDevExecutorTest(CodexDevFixture):
             value["configs"][0]["per_image_overrides"]["展示重点"] = "明确展示容量 2 L"
 
         def invented_material(value: dict[str, object]) -> None:
-            value["configs"][0]["per_image_overrides"]["展示重点"] = "突出陶瓷材质"
+            value["configs"][0]["per_image_overrides"]["展示重点"] = "突出杯身陶瓷材质"
 
         def downstream_field(value: dict[str, object]) -> None:
             value["final_prompt"] = "PRIVATE_FINAL_PROMPT"
@@ -2186,20 +2176,10 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertFalse((root / "workspace" / "artifacts" / "comfyui_jobs").exists())
             self.assertFalse((root / "workspace" / "artifacts" / "qc_reports").exists())
 
-    def test_final_prompts_style_master_allows_prop_phrase_in_prompt_body(self) -> None:
+    def test_final_prompts_contract_allows_non_product_material_in_prompt_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
-            style_path = (
-                root
-                / "workspace"
-                / "artifacts"
-                / "style_master"
-                / "style_master.json"
-            )
-            style = json.loads(style_path.read_text(encoding="utf-8"))
-            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
-            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；后景玻璃器皿虚化。"
             transport = FakeTransport(
@@ -2224,20 +2204,10 @@ class CodexDevExecutorTest(CodexDevFixture):
             )
             self.assertIn("玻璃器皿", prompt["final_prompt"])
 
-    def test_final_prompts_style_master_still_rejects_product_material_claim(self) -> None:
+    def test_final_prompts_contract_still_rejects_product_material_claim(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
-            style_path = (
-                root
-                / "workspace"
-                / "artifacts"
-                / "style_master"
-                / "style_master.json"
-            )
-            style = json.loads(style_path.read_text(encoding="utf-8"))
-            style["style_master"]["prop_rules"] += " 后景可使用玻璃器皿虚化。"
-            style_path.write_text(json.dumps(style, ensure_ascii=False), encoding="utf-8")
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；杯身为玻璃。"
             transport = FakeTransport(
@@ -3926,19 +3896,23 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
 
                 self.assertIn("未确认参数", message)
 
-    def test_detail_vc_rejects_unconfirmed_measurements_inside_negative_sentences(self) -> None:
+    def test_detail_vc_accepts_unconfirmed_measurements_inside_negative_list(self) -> None:
         cases = ("不要标注 500 毫升", "不得写入 0.5 升", "避免声称 250 克")
         for index, value in enumerate(cases, start=1):
             with self.subTest(value=value):
                 response = valid_detail_variable_response()
                 response["configs"][0]["per_image_overrides"]["禁止事项"] = value
 
-                message = self._reject_detail_response(
+                artifact, detail = self._run_detail_response(
                     response,
                     thread_id=f"thread-detail-negative-measurement-{index}",
                 )
 
-                self.assertIn("未确认参数", message)
+                self.assertEqual(
+                    value,
+                    artifact["configs"][0]["per_image_overrides"]["禁止事项"],
+                )
+                self.assertEqual("详情图变量配置已生成", detail)
 
     def test_detail_vc_rejects_signed_or_powered_confirmed_height(self) -> None:
         for index, value in enumerate(("-25 厘米", "25 厘米²"), start=1):
@@ -3955,7 +3929,7 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
 
     def test_detail_vc_rejects_positive_material_claims(self) -> None:
         for index, value in enumerate(
-            ("采用不锈钢材质", "不锈钢壶身经久耐用"),
+            ("杯身采用不锈钢材质", "不锈钢壶身经久耐用"),
             start=1,
         ):
             with self.subTest(value=value):
@@ -3969,13 +3943,25 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
 
                 self.assertIn("未确认商品事实", message)
 
-    def test_detail_vc_rejects_is_not_plastic_as_unsupported_material_claim(self) -> None:
+    def test_detail_vc_defaults_bare_material_to_allow_but_rejects_product_coupling(self) -> None:
         response = valid_detail_variable_response()
         response["configs"][0]["per_image_overrides"]["真实感要求"] = "不是塑料"
 
+        artifact, detail = self._run_detail_response(
+            response,
+            thread_id="thread-detail-is-not-plastic-default-allow",
+        )
+
+        self.assertEqual(
+            "不是塑料",
+            artifact["configs"][0]["per_image_overrides"]["真实感要求"],
+        )
+        self.assertEqual("详情图变量配置已生成", detail)
+
+        response["configs"][0]["per_image_overrides"]["真实感要求"] = "本品不是塑料"
         message = self._reject_detail_response(
             response,
-            thread_id="thread-detail-is-not-plastic",
+            thread_id="thread-detail-product-is-not-plastic",
         )
 
         self.assertIn("未确认商品事实", message)
@@ -4002,10 +3988,10 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
 
     def test_detail_vc_rejects_positive_certification_claims(self) -> None:
         cases = (
-            "通过 FDA 认证",
-            "认证编号 12345",
-            "通过 FDA，取得认证",
-            "通过 FDA，认证有效",
+            "本品通过 FDA 认证",
+            "本品认证编号 12345",
+            "本品通过 FDA，取得认证",
+            "本品通过 FDA，认证有效",
             "本品通过欧盟，安全认证",
         )
         for index, value in enumerate(cases, start=1):
@@ -4025,9 +4011,9 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
     ) -> None:
         response = valid_detail_variable_response()
         width_claim = "壶身宽约 25 厘米"
-        volume_claim = "不得写入 500 毫升"
+        volume_claim = "商品容量为 500 毫升"
         response["configs"][0]["per_image_overrides"]["中文营销文案"] = width_claim
-        response["configs"][1]["per_image_overrides"]["禁止事项"] = volume_claim
+        response["configs"][1]["per_image_overrides"]["中文营销文案"] = volume_claim
 
         message = self._reject_detail_response(
             response,
@@ -4037,7 +4023,7 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
         self.assertIn("未确认参数", message)
         self.assertIn("2 处", message)
         self.assertIn("configs/0/per_image_overrides/中文营销文案", message)
-        self.assertIn("configs/1/per_image_overrides/禁止事项", message)
+        self.assertIn("configs/1/per_image_overrides/中文营销文案", message)
         self.assertNotIn(width_claim, message)
         self.assertNotIn(volume_claim, message)
         self.assertLessEqual(len(message), 200)

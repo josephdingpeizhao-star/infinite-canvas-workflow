@@ -137,25 +137,40 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
     def test_detail_vc_chunk1_20260722_fixture_sha256_is_frozen(self) -> None:
         self.assertEqual(FIXTURE_SHA256, hashlib.sha256(FIXTURE.read_bytes()).hexdigest())
 
-    def test_required_override_fields_have_exactly_one_prop_context_classification(self) -> None:
-        required_groups = {
-            "main": downstream.MAIN_REQUIRED_OVERRIDE_FIELDS,
-            "detail": downstream.DETAIL_REQUIRED_OVERRIDE_FIELDS,
+    def test_all_contract_fields_have_exactly_one_semantic_context(self) -> None:
+        groups = {
+            "final": (
+                ("config_id", "final_prompt", "negative_prompt"),
+                downstream.FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS,
+            ),
+            "main": (
+                downstream.MAIN_REQUIRED_OVERRIDE_FIELDS,
+                downstream.MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+            ),
+            "detail": (
+                downstream.DETAIL_REQUIRED_OVERRIDE_FIELDS,
+                downstream.DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+            ),
         }
-        required = set().union(*map(set, required_groups.values()))
-        prop = downstream._STYLE_MASTER_PROP_CONTEXT_FIELDS
-        non_prop = downstream._NON_STYLE_MASTER_PROP_CONTEXT_FIELDS
+        allowed = {
+            downstream._SEMANTIC_CONTEXT_POSITIVE,
+            downstream._SEMANTIC_CONTEXT_NEGATIVE_LIST,
+            downstream._SEMANTIC_CONTEXT_NON_SEMANTIC,
+        }
 
-        for group_name, fields in required_groups.items():
-            for field in fields:
-                with self.subTest(group=group_name, field=field):
-                    self.assertEqual(1, int(field in prop) + int(field in non_prop))
-        self.assertFalse(prop & non_prop)
-        self.assertEqual(required, (prop & required) | non_prop)
-        self.assertLessEqual(non_prop, required)
-        self.assertEqual({"final_prompt"}, prop - required)
+        for group_name, (fields, contexts) in groups.items():
+            with self.subTest(group=group_name):
+                self.assertEqual(set(fields), set(contexts))
+                self.assertTrue(set(contexts.values()) <= allowed)
+        self.assertEqual(3, len(downstream.FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS))
+        self.assertEqual(23, len(downstream.MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS))
+        self.assertEqual(33, len(downstream.DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS))
+        self.assertEqual(
+            downstream._SEMANTIC_CONTEXT_NEGATIVE_LIST,
+            downstream.DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS["禁止事项"],
+        )
 
-    def test_real_detail_vc_chunk1_defers_style_master_prop_in_new_context_field(self) -> None:
+    def test_real_detail_vc_chunk1_accepts_non_product_material_by_contract(self) -> None:
         parsed = downstream.parse_detail_variable_config_chunk(
             fixture_text(),
             1,
@@ -170,7 +185,7 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
             parsed["configs"][0]["per_image_overrides"]["风格防退化检查"],
         )
 
-    def test_real_detail_vc_fixture_phrase_passes_full_style_master_adjudication(self) -> None:
+    def test_real_detail_vc_fixture_passes_without_phrase_allowlist_dependency(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             style_path = write_style_master(Path(tmp))
             artifact = downstream.parse_variable_config_response(
@@ -193,7 +208,7 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
             artifact["configs"][0]["per_image_overrides"]["风格防退化检查"],
         )
 
-    def test_new_prop_context_fields_reject_product_material_in_chunk_mode(self) -> None:
+    def test_positive_context_fields_reject_product_material_in_chunk_mode(self) -> None:
         for field in NEW_PROP_CONTEXT_FIELDS:
             with self.subTest(field=field):
                 with self.assertRaises(ExecutorExecutionError):
@@ -201,10 +216,11 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
                         {"per_image_overrides": {field: "杯身为玻璃"}},
                         8,
                         "详情图变量配置",
+                        product_type="杯子",
                         defer_style_master_prop_materials=True,
                     )
 
-    def test_new_prop_context_fields_reject_product_material_in_full_mode(self) -> None:
+    def test_positive_context_fields_reject_product_material_in_full_mode(self) -> None:
         for field in NEW_PROP_CONTEXT_FIELDS:
             with self.subTest(field=field):
                 with self.assertRaises(ExecutorExecutionError):
@@ -212,7 +228,7 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
                         {"per_image_overrides": {field: "杯身为玻璃"}},
                         8,
                         "详情图变量配置",
-                        style_master_text=STYLE_MASTER_PROP_TEXT,
+                        product_type="杯子",
                     )
 
     def test_main_variable_prompt_uses_generic_product_material_term(self) -> None:

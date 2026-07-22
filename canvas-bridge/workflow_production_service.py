@@ -45,7 +45,7 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
-    {"主图变量配置", "详情图变量配置"}
+    {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
 )
 _CONTROLLED_CODEX_SIMPLE_REASONS = frozenset(
     {"违反用户确认场景边界", "角度绑定异常", "使用了缺失的 D 槽位"}
@@ -55,7 +55,8 @@ _CONTROLLED_CODEX_CLAIM_CATEGORIES = frozenset(
 )
 _CONTROLLED_CODEX_CLAIM_PATH_PATTERN = re.compile(
     r"(?:\$|notes|common_constraints(?:/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+))?|"
-    r"configs/\d+/(?:notes|per_image_overrides/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+)))"
+    r"configs/\d+/(?:notes|per_image_overrides/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+))|"
+    r"prompts/\d+/(?:final_prompt|negative_prompt))"
 )
 _UNSAFE_FAILURE_DETAIL_PATTERN = re.compile(
     r"(?:[A-Za-z]:[\\/]|\\\\|(?:^|[\s（：；])/[^/]|https?://|ftp://|www\.|"
@@ -341,7 +342,8 @@ class WorkflowProductionService:
         ):
             return None
         match = re.fullmatch(
-            r"codex-dev 收到的(?P<label>主图变量配置|详情图变量配置)(?P<reason>.+)",
+            r"codex-dev 收到的(?P<label>主图变量配置|详情图变量配置|"
+            r"主图最终提示词|详情图最终提示词)(?P<reason>.+)",
             detail,
         )
         if match is None:
