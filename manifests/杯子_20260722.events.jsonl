@@ -102,3 +102,9 @@
 {"ts": "2026-07-23T11:31:21", "event": "image_persisted", "request_id": "fWJxuklNy2", "config_id": "detail_08", "sha256": "224183b53cf4f05526fc5e282f1314089e6e431083544c79fa719311583f24ec", "byte_count": 1719786, "width": 1152, "height": 1536}
 {"ts": "2026-07-23T11:31:21", "event": "step_succeeded", "request_id": "fWJxuklNy2", "step": "renders", "detail": "成功 4/计划 4（跳过 10）"}
 {"ts": "2026-07-23T11:31:22", "event": "production_completed", "request_id": "fWJxuklNy2", "produced_count": 14}
+{"ts": "2026-07-23T15:28:30", "event": "command_received", "request_id": "F-141wo56K", "command": "workflow-production", "machine_id": "workflow-1784791606810-tu1gy"}
+{"ts": "2026-07-23T15:28:30", "event": "step_started", "request_id": "F-141wo56K", "step": "qc"}
+{"ts": "2026-07-23T15:41:16", "event": "step_failed", "request_id": "F-141wo56K", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T16:20:43", "event": "command_received", "request_id": "6awPEsy1XB", "command": "workflow-production", "machine_id": "workflow-1784791606810-tu1gy"}
+{"ts": "2026-07-23T16:20:43", "event": "step_started", "request_id": "6awPEsy1XB", "step": "qc"}
+{"ts": "2026-07-23T16:38:02", "event": "step_succeeded", "request_id": "6awPEsy1XB", "step": "qc", "detail": "QC 报告已生成"}

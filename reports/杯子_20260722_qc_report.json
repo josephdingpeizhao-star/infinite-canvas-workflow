@@ -1,0 +1,1344 @@
+{
+  "adds_new_generation_direction": false,
+  "artifact_type": "qc_report",
+  "checked_assets": [
+    "main_01.png",
+    "main_02.png",
+    "main_03.png",
+    "main_04.png",
+    "main_05.png",
+    "main_06.png",
+    "detail_01.png",
+    "detail_02.png",
+    "detail_03.png",
+    "detail_04.png",
+    "detail_05.png",
+    "detail_06.png",
+    "detail_07.png",
+    "detail_08.png"
+  ],
+  "issues": [
+    {
+      "affected_asset": "main_01.png",
+      "category": "composition",
+      "description": "产品占画面高度明显低于main_01要求的55%至65%，主图主体识别权重不足。",
+      "issue_id": "issue_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "product_angle",
+      "description": "产品被生成成横向侧放状态，偏离B槽位直立杯口朝上的绑定角度。",
+      "issue_id": "issue_002",
+      "severity": "critical"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "page_task",
+      "description": "横向侧放导致main_02无法稳定完成近中景质感识别和直立杯口把手展示任务。",
+      "issue_id": "issue_003",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "realism",
+      "description": "产品以杯口边缘和把手形成异常支撑，接触与受力关系不真实。",
+      "issue_id": "issue_004",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "text",
+      "description": "画面文字为“竖纹釉色杯”，与指定文字“竖纹釉色杯”不一致。",
+      "issue_id": "issue_005",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "ai_artifacts",
+      "description": "侧倒姿态造成产品与桌面支撑关系异常，存在明显AI物理痕迹。",
+      "issue_id": "issue_006",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "category": "composition",
+      "description": "main_05.png 的杯子本体占比明显低于本张要求的约画面高度58%至68%，产品主体权重不足。",
+      "issue_id": "issue_c03_main05_composition_01",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "category": "composition",
+      "description": "detail_01.png 的产品主体高度占比低于本张要求的50%至60%，首屏商品识别权重不足。",
+      "issue_id": "qc4_detail01_composition_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "category": "composition",
+      "description": "detail_02.png 的产品主体高度占比低于本张要求的60%至70%，近中景核心卖点证明力度不足。",
+      "issue_id": "qc4_detail02_composition_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "category": "text",
+      "description": "detail_04.png将字段标签“卖点短语：”渲染进画面，超出正式文字要求，属于流程标签误入成片。",
+      "issue_id": "issue_5_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "category": "product_identity",
+      "description": "杯身比例被压成矮宽形态，口径相对杯身高度过大，偏离产品身份档案中的较高筒状开口杯比例。",
+      "issue_id": "qc6_d05_identity_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "category": "composition",
+      "description": "产品主体位于画面下半部且面积过小，大量留白导致规格尺寸说明页的商品主体弱化。",
+      "issue_id": "qc6_d05_composition_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "category": "size_ratio",
+      "description": "产品可见高度明显未达到本张要求的画面高度 58% 至 68%。",
+      "issue_id": "qc6_d05_size_ratio_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "category": "product_angle",
+      "description": "当前图把手侧向与 B 槽位绑定图存在疑似镜像风险，需要人工核对后决定是否返修角度。",
+      "issue_id": "qc6_d06_angle_review_001",
+      "severity": "needs_review"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "category": "size_ratio",
+      "description": "产品可见高度明显未达到本张要求的画面高度 62% 至 72%。",
+      "issue_id": "qc6_d06_size_ratio_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "category": "product_angle",
+      "description": "main_02横向侧放破坏主图组直立杯口朝上的统一商品展示关系，导致主图集合一致性失败。",
+      "issue_id": "issue_c08_main_set_001",
+      "severity": "critical"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "category": "product_identity",
+      "description": "detail_05杯身矮宽比例、主体过小和规格页占比不足叠加，削弱详情模块链中规格说明节点的商品可信度。",
+      "issue_id": "issue_c08_detail_chain_001",
+      "severity": "major"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "category": "text",
+      "description": "detail_04将字段标签渲染进画面，叠加多张占比和角度待核对问题，使全批暂不满足直接上架交付状态。",
+      "issue_id": "issue_c08_readiness_001",
+      "severity": "major"
+    }
+  ],
+  "notes": "QC 仅判断现有 14 张图片并给出返修归因；未新增生成方向。",
+  "product_id": "杯子_20260722",
+  "repair_targets": [
+    {
+      "affected_asset": "main_01.png",
+      "issue_id": "issue_001",
+      "repair_goal": "仅修正main_01产品主体占比不足问题，保持产品身份、B槽位角度、空置状态、无文字和生活化桌面风格不变。",
+      "return_stage": "variable_config",
+      "severity": "major",
+      "target_id": "repair_001"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_002",
+      "repair_goal": "仅修正main_02产品角度，恢复B槽位直立、杯口朝上、侧前方斜视关系，不改变产品身份和颜色。",
+      "return_stage": "variable_config",
+      "severity": "critical",
+      "target_id": "repair_002"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_003",
+      "repair_goal": "仅恢复main_02近中景质感识别主图任务，使杯口、条纹和把手在直立状态下完整可见。",
+      "return_stage": "variable_config",
+      "severity": "major",
+      "target_id": "repair_003"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_004",
+      "repair_goal": "仅修正main_02不可信支撑和接触关系，使杯子真实落在织物桌面上并形成合理接触阴影。",
+      "return_stage": "realism",
+      "severity": "major",
+      "target_id": "repair_004"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_005",
+      "repair_goal": "仅修正main_02文字错字，画面只保留指定短标题“竖纹釉色杯”，不添加其他文字或承诺。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_005"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_006",
+      "repair_goal": "仅消除main_02侧倒造成的物理异常和AI痕迹，保持真实商业摄影接触关系。",
+      "return_stage": "realism",
+      "severity": "major",
+      "target_id": "repair_006"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "issue_id": "issue_c03_main05_composition_01",
+      "repair_goal": "仅强化已存在的主体占比与构图约束，使杯子本体回到约画面高度58%至68%，不改变手持页面任务、产品身份、角度或道具方向。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_c03_main05_composition_01"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "issue_id": "qc4_detail01_composition_001",
+      "repair_goal": "仅修复主体高度占比不足问题，保持产品身份、角度、颜色、文字和道具边界不变。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair4_detail01_composition_001"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "issue_id": "qc4_detail02_composition_001",
+      "repair_goal": "仅修复主体高度占比不足问题，保持产品身份、角度、颜色、文字和道具边界不变。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair4_detail02_composition_001"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "issue_id": "issue_5_001",
+      "repair_goal": "仅去除画面中的“卖点短语：”字段标签，保留低干扰文字“杯口与内壁细节可见”及现有产品角度、身份、构图和风格。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_5_001"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "issue_id": "qc6_d05_identity_001",
+      "repair_goal": "按已锁定产品身份恢复较高筒状杯身、圆形杯口、竖向条纹和把手比例，不新增结构或卖点。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_qc6_d05_identity_001"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "issue_id": "qc6_d05_composition_001",
+      "repair_goal": "按现有规格标注图任务恢复产品中部略偏左、侧边标注留白和清晰主体，不新增信息模块。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_qc6_d05_composition_001"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "issue_id": "qc6_d05_size_ratio_001",
+      "repair_goal": "仅把产品可见高度恢复到既定 58% 至 68% 画面高度范围，保持现有高度文字和单一标注线。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_qc6_d05_size_ratio_001"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "issue_id": "qc6_d06_angle_review_001",
+      "repair_goal": "先核对 B 槽位绑定图的把手侧向关系；若确认镜像，只恢复绑定角度，不改变产品身份。",
+      "return_stage": "angle_inventory",
+      "severity": "needs_review",
+      "target_id": "repair_qc6_d06_angle_review_001"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "issue_id": "qc6_d06_size_ratio_001",
+      "repair_goal": "仅把产品可见高度恢复到既定 62% 至 72% 画面高度范围，保持无文字质感展示任务。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_qc6_d06_size_ratio_001"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "issue_id": "issue_c08_main_set_001",
+      "repair_goal": "仅恢复main_02为B槽位直立、杯口朝上、侧前方斜视的主图关系，使主图组回到统一商品展示状态。",
+      "return_stage": "variable_config",
+      "severity": "critical",
+      "target_id": "repair_c08_main_set_001"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "issue_id": "issue_c08_detail_chain_001",
+      "repair_goal": "仅恢复detail_05较高筒状杯身比例、主体占比和规格说明构图，不新增规格信息或新卖点。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_c08_detail_chain_001"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "issue_id": "issue_c08_readiness_001",
+      "repair_goal": "仅去除detail_04误入画面的字段标签，并在完成既有返修项后再复核全批平台就绪状态。",
+      "return_stage": "final_prompt",
+      "severity": "major",
+      "target_id": "repair_c08_readiness_001"
+    }
+  ],
+  "results": [
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯身份清楚，竖向条纹、深色杯口边缘和斑点把手保留，未见杯盖、吸管、滤网或包装。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "product_color",
+      "notes": "杯身浅暖色、杯口和把手深焦糖棕色分区清楚，未见明显整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "product_angle",
+      "notes": "呈侧前方斜视，可见杯身侧面、部分杯内壁和侧面把手，符合B槽位可见关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "page_task",
+      "notes": "能作为生活化主图第一印象，第一眼可识别单个带把手杯子。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "composition",
+      "notes": "产品明显小于约画面高度55%至65%的要求，主图识别权重不足。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "realism",
+      "notes": "柔和自然光、织物桌面和接触阴影基本真实，产品未见漂浮或明显贴片感。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "props",
+      "notes": "前景小碟、勺、糖粒和后景植物器皿服务生活化氛围，未遮挡杯口、条纹或把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "text",
+      "notes": "画面未出现文字，符合本张不设置文字信息要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "size_ratio",
+      "notes": "产品高度约8厘米无法仅由图片核实；未出现手持或强比例文字，但主体占比偏小影响构图比例。",
+      "status": "needs_review"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、柔和日光、前中后景层次和绿植虚化与风格母版一致。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "platform_spec",
+      "notes": "画布为1:1主图比例，未见平台禁用的促销、认证或售后承诺。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_01.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显文字乱码、边缘融化、道具穿模或严重AI痕迹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯身份清楚，竖向条纹、深色杯口边缘和斑点把手保留。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "product_color",
+      "notes": "杯身浅暖色、杯口和把手深焦糖棕色分区清楚，未见明显整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "product_angle",
+      "notes": "产品被旋转为横向侧放状态，不符合B槽位直立、杯口朝上的侧前方斜视关系。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "page_task",
+      "notes": "横向侧放削弱主图质感识别的可信商品展示，不符合近中景直立杯口和把手完整可见的任务。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "composition",
+      "notes": "产品侧倒且位置偏左，未按要求保持直立近中景主体构图。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "realism",
+      "notes": "杯子以把手和杯口边缘支撑，物理落点不自然，接触关系不可信。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "props",
+      "notes": "道具靠边且虚化，未遮挡杯身条纹、杯口边缘或把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "text",
+      "notes": "文字显示为“竖纹釉色杯”，与正式要求“竖纹釉色杯”不一致，存在错字。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "size_ratio",
+      "notes": "产品真实尺寸无法由图片核实；横向侧放会造成产品比例和支撑关系误读。",
+      "status": "needs_review"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、自然光、植物虚化和右侧器皿层次基本符合风格复现型要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "platform_spec",
+      "notes": "画布为1:1主图比例，未见未确认容量、重量、认证或售后承诺。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_02.png",
+      "check_item": "ai_artifacts",
+      "notes": "杯子侧倒支撑关系异常，属于明显物理和真实感风险。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯，圆筒杯身、圆形杯口、深色釉边、斑点把手和外壁竖向条纹均可识别。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "product_color",
+      "notes": "杯身为浅米杏色或浅暖陶土色，杯口边缘和把手为深焦糖棕或橘棕色，颜色分区清楚。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "product_angle",
+      "notes": "杯子保持直立，侧面把手、杯口内侧和杯身外壁透视符合 B 槽位斜侧视关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "page_task",
+      "notes": "画面明确表现手自然握住把手的生活方式主图，产品仍是第一视觉中心。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "composition",
+      "notes": "1:1 近中景，杯子位于中部偏右，杯口、杯身条纹、把手和手部接触关系清楚。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "realism",
+      "notes": "柔和自然光、桌面接触阴影、手与把手接触阴影和织物褶皱整体真实。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "props",
+      "notes": "背景绿植、玻璃器皿、布面和边缘小物均为低干扰元素，未遮挡杯口、条纹或把手关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "text",
+      "notes": "画面未出现文字、品牌、促销语或乱码。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "size_ratio",
+      "notes": "产品与手部比例未见明显失真；未出现容量、重量或其他未确认参数宣称。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、柔和自然日光、边缘道具、后景虚化植物和玻璃器皿符合风格复现要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "platform_spec",
+      "notes": "画布为 1:1，产品清晰突出，适合作为淘宝天猫生活方式主图。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见产品融化、漂浮、穿模、文字乱码或明显 AI 失真。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_03.png",
+      "check_item": "handheld",
+      "notes": "单手从把手侧自然握住杯把手，杯底仍接触织物桌面，手部未遮挡核心识别区域。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯身份明确，圆形杯口、深色釉边、浅暖内壁和把手局部可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "product_color",
+      "notes": "杯口边缘和把手为焦糖棕或橘棕色，杯内壁为浅暖色，颜色关系符合约束。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "product_angle",
+      "notes": "顶部俯视角度突出杯口和内壁，把手局部按 C 槽位自然呈现，未强行补出侧面完整结构。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "page_task",
+      "notes": "画面重点清楚落在圆形杯口、深色釉边和杯内壁识别，符合顶部杯口识别主图任务。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "composition",
+      "notes": "1:1 顶部生活化桌面构图，杯口位于画面中部略偏下，周边道具围绕边缘分布。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "realism",
+      "notes": "织物纹理、自然光影、杯内明暗和桌面接触关系整体可信。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "props",
+      "notes": "玻璃器皿、植物、托盘、小碟、糖粒和勺等道具位于边缘或虚化区域，未进入杯口内部。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "text",
+      "notes": "画面未出现文字、品牌、促销语或乱码。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "size_ratio",
+      "notes": "未见强比例误导或未确认尺寸、容量、重量宣称。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、左上自然光、边缘餐饮小物、透明器皿和植物虚化符合风格锚点。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "platform_spec",
+      "notes": "画布为 1:1，主体清楚，符合淘宝天猫主图交付比例和顶部识别用途。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_04.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品变形、边缘融化、悬空、道具穿模、文字漂浮或显著 AI 痕迹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯、圆形杯口、竖向条纹、深色杯口边缘和斑点把手均保留，未见新增杯盖、吸管、滤网或额外商品。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "product_color",
+      "notes": "杯身为浅暖色，杯口边缘和把手为焦糖棕或橘棕色，未见明显整体偏色或颜色分区丢失。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "product_angle",
+      "notes": "保持侧前方斜视关系，可见杯口内侧、杯身外壁和右侧把手，未见明显改变B槽位角度。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "page_task",
+      "notes": "呈现动态手持生活方式主图，手从右侧握住把手，杯子处于轻微拿起状态，未出现内容物或倾倒动作。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "composition",
+      "notes": "杯子本体在画面中占比明显偏小，约为画面高度三分之一，未达到本张要求的约58%至68%主体占比。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "realism",
+      "notes": "手部皮肤、关节、抓握和接触阴影整体自然，杯底下方有离桌阴影，光线方向基本统一。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "props",
+      "notes": "前景布面、小碟、小勺和背景玻璃器皿、植物等道具位于边缘或虚化区域，未遮挡杯口、条纹或把手接触点。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "text",
+      "notes": "画面未出现文字、品牌标识、促销语或乱码。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "size_ratio",
+      "notes": "手与杯子的相对大小未见明显失真，画面未额外宣称容量、重量、口径等未确认参数。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、柔和自然光、前后景虚化和生活化餐饮道具与风格复现型约束一致。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "platform_spec",
+      "notes": "输出为1:1方图，符合淘宝天猫主图画布比例要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品融化、手部畸形、文字漂浮、道具穿模或异常合成痕迹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_05.png",
+      "check_item": "handheld",
+      "notes": "手部握在把手侧，未包裹杯身，未遮挡杯口、内壁主要可见区域和杯身主要竖向条纹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手开口杯身份明确，圆形杯口、竖向条纹、深色杯口边缘、斑点把手和浅色内壁均可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "product_color",
+      "notes": "杯身浅暖色、杯口与把手焦糖棕色分区清楚，未见明显冷暖漂移或整体改色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "product_angle",
+      "notes": "杯子直立，呈侧前方斜视，可见杯口内侧、杯身外壁和侧面把手，符合B槽位可见关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "page_task",
+      "notes": "画面为柔和晨间餐桌氛围主图，产品清晰完整，场景辅助第一印象且未抢主体。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "composition",
+      "notes": "产品位于中下部偏右，上半部和左侧保留浅色背景与桌面留白，轮廓完整清晰。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "realism",
+      "notes": "自然光、接触阴影、桌布纹理和背景虚化关系较自然，未见漂浮或贴片感。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "props",
+      "notes": "前景和背景有低干扰餐饮与植物类道具，分布在边缘或虚化区域，未遮挡杯口、条纹、把手或主体轮廓。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "text",
+      "notes": "画面未出现文字、品牌标识、促销语或乱码。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "size_ratio",
+      "notes": "产品与桌面、背景器皿和道具的相对比例未见明显失真，未出现未确认尺寸、容量或重量宣称。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、柔和日光、绿色植物、玻璃器皿和前中后景层次符合风格复现型要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "platform_spec",
+      "notes": "输出为1:1方图，符合淘宝天猫主图画布比例要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "main_06.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品变形、边缘融化、材质发糊、虚假文字、道具穿模或异常景深。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯子成立，竖向凹凸条纹、深色杯口、浅暖内壁和斑点把手均可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "product_color",
+      "notes": "杯身浅暖米杏色、杯口和把手焦糖棕色分区清楚，未见明显整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "product_angle",
+      "notes": "杯口朝上、侧面把手可见、略俯视斜侧关系符合B槽位自然可见范围。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "page_task",
+      "notes": "能承接详情页首屏，第一眼可识别单个带把手竖纹杯和生活化桌面氛围。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "composition",
+      "notes": "主体位于中下部偏右且留白成立，但杯子约占画面高度不足50%至60%的要求。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "realism",
+      "notes": "自然日光、布面纹理、桌面接触阴影和前后景虚化整体可信。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "props",
+      "notes": "小碟、勺、玻璃器皿和绿植均为低干扰道具，未遮挡主体或造成商品配件误解。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "text",
+      "notes": "文字为“竖纹杯身，暖调日常”，清晰可读，无乱码错字，未遮挡杯口、杯身或把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "size_ratio",
+      "notes": "未出现手持或强尺寸标注，产品与桌面道具比例未见明显失真。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、柔和自然光、前中后景层次和绿植虚化符合风格复现型要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未见价格、促销、认证、容量、重量或流程说明误渲染。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_01.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品融化、文字漂浮、拼图分栏、道具穿模、漂浮或异常液体。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯子成立，圆形杯口、竖向纹理、深色杯口边缘和斑点把手均清楚。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "product_color",
+      "notes": "杯身浅暖色、杯口和把手焦糖棕色关系稳定，未见明显冷暖或饱和度漂移。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "product_angle",
+      "notes": "杯口朝上、把手位于侧面，杯身侧面和部分内壁可见，符合B槽位约束。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "page_task",
+      "notes": "画面能说明竖向纹理、深色杯口和把手呼应，符合核心卖点证明任务。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "composition",
+      "notes": "产品略偏左和右上文字区成立，但杯子约占画面高度不足60%至70%的近中景要求。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "realism",
+      "notes": "主体清晰、接触阴影自然，布面和背景虚化符合真实商业摄影感。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "props",
+      "notes": "前景勺和小碟、后景托盘玻璃器皿及绿植均靠边或虚化，未遮挡主体。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "text",
+      "notes": "两行中文文案清晰、位置在右上留白区，未遮挡杯身条纹、杯口或把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "size_ratio",
+      "notes": "未出现精确尺寸、容量或强手持比例暗示，道具比例无明显异常。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、左侧自然光、生活道具和绿植虚化均符合风格锚点。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未见未确认参数、促销、认证或售后承诺。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_02.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显边缘融化、结构错位、文字乱码、虚假拼图或物理关系错误。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯子身份清楚，圆形杯口、深色杯口边缘、竖向条纹、斑点把手和浅暖内壁均可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "product_color",
+      "notes": "商品本体保持浅暖杯身、深焦糖杯口边缘和斑点把手，未见明显整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "product_angle",
+      "notes": "呈B槽位侧前方微俯视关系，杯口、杯身外壁和侧面把手关系自然可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "page_task",
+      "notes": "画面明确展示单手自然握住把手的日常桌面互动关系，商品主体仍清楚。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "composition",
+      "notes": "竖版近中景成立，杯子为视觉中心，手部从把手侧进入且未抢走主体。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "realism",
+      "notes": "布面、手部、杯底与桌面的接触阴影较自然，整体接近真实商业摄影。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "props",
+      "notes": "前景小碟小勺、后景植物和餐桌物件低干扰虚化，未遮挡杯口、杯身条纹或把手关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "text",
+      "notes": "画面无文字，符合本张不设置文字信息的要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "size_ratio",
+      "notes": "本张使用手部强比例参照；仅凭图片无法确认与约8厘米高度边界是否完全一致。",
+      "status": "needs_review"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、左侧自然日光、前中后景层次和绿色植物虚化均有体现。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未出现价格、认证、容量、重量、品牌、型号等未确认信息。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品融化、手指畸形、穿模、漂浮、拼图或复杂信息图痕迹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_03.png",
+      "check_item": "handheld",
+      "notes": "单手握住把手，杯底仍接触桌面，手未包裹杯身，未遮挡杯口、杯内可见区或主要竖向条纹。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "product_identity",
+      "notes": "顶部视角下单个杯子身份清楚，圆形杯口、深色杯口边缘、浅暖内壁和把手上方局部可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "product_color",
+      "notes": "杯口边缘和把手保持焦糖橘棕色，内壁保持浅暖色，未见明显整体改色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "product_angle",
+      "notes": "符合C槽位顶部俯视，重点呈现杯口、内壁和把手上方局部关系。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "page_task",
+      "notes": "画面服务杯口与内壁细节说明，重点信息与模块04细节实拍任务匹配。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "composition",
+      "notes": "竖版顶部细节构图成立，杯口位于中部略偏下，上方保留文字留白。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "realism",
+      "notes": "杯口、内壁、布面纹理和柔和光影较自然，未见明显漂浮或贴片感。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "props",
+      "notes": "道具分布在边缘或后景虚化处，未进入杯口内部，也未遮挡杯口边缘和内壁。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "text",
+      "notes": "画面文字包含“卖点短语：”，而正式约束要求渲染的营销文案为“杯口与内壁细节可见”，不应把标签字段一起渲染。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "size_ratio",
+      "notes": "未出现手部或强尺寸标注，画面未宣称未确认尺寸、容量或重量。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、左上自然日光、边缘餐饮小物和后景绿植虚化均符合风格复现要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未出现价格、促销、认证、容量、重量、品牌或型号等未确认信息。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_04.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显杯口融化、文字乱码、道具穿模、虚假拼图或多画面分区。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "product_identity",
+      "notes": "单杯、圆口、竖条纹、深色口沿和斑点把手保留，但杯身被压成矮宽比例，偏离较高筒状比例。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "product_color",
+      "notes": "浅米杏杯身、焦糖棕口沿和斑点把手关系基本保持，未见整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "product_angle",
+      "notes": "产品直立，侧前方可见杯口内侧和侧面把手，未见明显改变 B 槽位角度。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "page_task",
+      "notes": "画面执行规格尺寸说明任务，只出现高度标注，未写容量、重量、材质等未确认参数。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "composition",
+      "notes": "产品落在画面下半部且主体过小，大面积留白削弱规格标注图的商品主体。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "realism",
+      "notes": "织物桌面、柔和光线和接触阴影基本可信，标注线未穿过产品主体。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "props",
+      "notes": "仅有织物和虚化叶片等低干扰元素，未见手、手机、书本等强比例参照道具。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "text",
+      "notes": "仅出现“高度约 8 厘米”，文字清晰可读，未见额外文字、乱码或错字。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "size_ratio",
+      "notes": "产品可见高度明显低于既定 58% 至 68% 画面高度范围。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物、柔和日光和少量虚化植物层次保留，未退化为纯白棚拍。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "platform_spec",
+      "notes": "画布为 936x1248，符合详情图 3:4；未见价格、认证、容量等平台风险文字。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_05.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显文字漂浮、穿模、边缘融化或阴影不贴地；比例问题已单独归类。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯、圆口、竖条纹、深色口沿和斑点把手均可识别。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "product_color",
+      "notes": "商品本体保持浅米杏杯身、焦糖棕口沿和斑点把手，未见整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "product_angle",
+      "notes": "当前图把手在左侧，需人工核对是否相对 B 槽位绑定图发生镜像；仅凭本批可见约束无法完全定案。",
+      "status": "needs_review"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "page_task",
+      "notes": "画面重点呈现杯口厚度、竖向条纹、把手连接和真实光影，符合质感可信视觉呈现任务。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "composition",
+      "notes": "近中景构图完整展示杯口、杯身和把手，背景层次不抢主体；占比问题另计入 size_ratio。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "realism",
+      "notes": "自然日光、织物纹理、接触阴影和景深过渡基本可信，未见明显漂浮。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "props",
+      "notes": "背景虚化器皿、植物和织物层次低干扰，未遮挡杯口、条纹或把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "text",
+      "notes": "本张要求无画面文字，当前未见新增文字、标题或参数。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "size_ratio",
+      "notes": "产品可见高度明显低于既定 62% 至 72% 画面高度范围。",
+      "status": "fail"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "style_consistency",
+      "notes": "浅米白织物桌面、柔和自然光、前中后景和虚化植物层次保留。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "platform_spec",
+      "notes": "画布为 1152x1536，符合详情图 3:4；未见虚假背书、促销或未确认规格文字。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_06.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显边缘融化、材质发糊、道具穿模、虚假文字或接触关系失真。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯子，圆形杯口、竖向条纹、深色杯口边缘和侧面把手均可识别。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "product_color",
+      "notes": "杯身为浅暖米杏色，杯口边缘与把手为焦糖棕色，未见明显整体偏色。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "product_angle",
+      "notes": "产品直立，镜头略高于杯口，呈侧前方斜视，可见杯口内侧、杯身外壁和侧面把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "page_task",
+      "notes": "生活桌面场景与小面积文案能服务决策辅助与场景想象。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "composition",
+      "notes": "竖版3:4，产品位于中下部偏右，左侧和上方留白充足，主体清晰。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "realism",
+      "notes": "自然日光、织物纹理、接触阴影和景深关系整体可信。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "props",
+      "notes": "前景餐饮小物、后景透明器皿与植物低干扰分布，未遮挡主体或造成商品组成误解。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "text",
+      "notes": "仅出现“放进日常桌面也自然”，清晰可读，未遮挡产品，未新增未确认参数或承诺。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "size_ratio",
+      "notes": "产品与桌面道具比例未见明显失真，未使用手部或强比例参照暗示精确尺寸。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "style_consistency",
+      "notes": "浅色织物桌面、自然褶皱、柔和日光、前中后景层次和植物虚化均符合风格复现要求。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未见价格、促销、认证、售后、FAQ或资料缺失提示。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_07.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显产品变形、边缘融化、漂浮、文字乱码、穿模或拼图分区问题。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "product_identity",
+      "notes": "单个带把手杯子，圆形杯口、竖向条纹、深色杯口边缘和焦糖棕把手完整可见。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "product_color",
+      "notes": "杯身与杯口、把手颜色分区稳定，符合绑定产品观感，未见整体冷暖漂移。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "product_angle",
+      "notes": "产品直立，保持B槽位侧前方斜视关系，未因场景改变朝向或俯仰。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "page_task",
+      "notes": "画面完整、安静、真实，符合收尾氛围与风险克制任务。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "composition",
+      "notes": "竖版3:4，产品位于中下部略偏右，周围保留浅色桌面和上方背景空间。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "realism",
+      "notes": "光线方向、接触阴影、桌布质感和空间层次自然，主体落点可信。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "props",
+      "notes": "道具位于前景边缘和背景，数量克制，未围堵或遮挡杯口、杯身条纹和把手。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "text",
+      "notes": "画面未出现文字，符合本张不设置文字信息的约束。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "size_ratio",
+      "notes": "未见明显比例失真，未通过手部或强比例道具暗示未确认尺寸。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "style_consistency",
+      "notes": "保留浅米白织物桌面、柔和自然日光、玻璃器皿和绿色植物虚化，未退化为纯色棚拍。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "platform_spec",
+      "notes": "画布为3:4详情图比例，未出现售后、退换、质保、FAQ、价格、促销或未确认商品信息。",
+      "status": "pass"
+    },
+    {
+      "affected_asset": "detail_08.png",
+      "check_item": "ai_artifacts",
+      "notes": "未见明显AI失真、产品融化、材质发糊、漂浮悬空、拼图或多画面分区。",
+      "status": "pass"
+    },
+    {
+      "check_item": "main_set_consistency",
+      "notes": "6张主图中产品身份和整体风格多数稳定，但main_02存在横向侧放、任务失效和真实感风险，main_01与main_05主体占比不足，主图组不能作为全通过集合交付。",
+      "status": "fail"
+    },
+    {
+      "check_item": "detail_module_chain",
+      "notes": "详情链路从首屏、卖点、手持、杯口、规格、质感到收尾的模块顺序基本完整，但detail_01、detail_02、detail_05、detail_06存在主体占比不足，detail_04有字段标签误入，detail_05还有杯身比例偏离。",
+      "status": "fail"
+    },
+    {
+      "check_item": "batch_style_consistency",
+      "notes": "全批均保持浅色织物桌面、柔和自然日光、低干扰餐饮道具、绿植或器皿虚化的生活化商业摄影风格，未出现棚拍风格或明显跨风格跳变。",
+      "status": "pass"
+    },
+    {
+      "check_item": "batch_platform_readiness",
+      "notes": "画布比例、未确认参数克制和平台禁用信息整体可控，但存在关键角度错误、主体占比不足、文字标签误入、规格图比例偏离和一项角度待人工核对，暂不具备全批直接上架就绪状态。",
+      "status": "fail"
+    }
+  ]
+}
