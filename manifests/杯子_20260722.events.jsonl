@@ -1,0 +1,104 @@
+{"ts": "2026-07-22T10:34:32", "event": "command_received", "request_id": "9_nUOWwPoH", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T10:34:32", "event": "requested_outputs_declared", "request_id": "9_nUOWwPoH", "requested_outputs": ["main", "detail", "final_prompts", "qc_reports"]}
+{"ts": "2026-07-22T10:34:32", "event": "step_started", "request_id": "9_nUOWwPoH", "step": "identity"}
+{"ts": "2026-07-22T10:36:27", "event": "step_succeeded", "request_id": "9_nUOWwPoH", "step": "identity", "detail": "产品身份档案已生成"}
+{"ts": "2026-07-22T10:36:27", "event": "step_started", "request_id": "9_nUOWwPoH", "step": "style_master"}
+{"ts": "2026-07-22T10:38:09", "event": "step_succeeded", "request_id": "9_nUOWwPoH", "step": "style_master", "detail": "风格母版已生成"}
+{"ts": "2026-07-22T10:38:09", "event": "step_started", "request_id": "9_nUOWwPoH", "step": "angle_inventory"}
+{"ts": "2026-07-22T10:39:08", "event": "step_succeeded", "request_id": "9_nUOWwPoH", "step": "angle_inventory", "detail": "角度槽位入库表已生成"}
+{"ts": "2026-07-22T10:39:09", "event": "step_started", "request_id": "9_nUOWwPoH", "step": "main_vc"}
+{"ts": "2026-07-22T10:42:33", "event": "step_failed", "request_id": "9_nUOWwPoH", "detail": "codex-dev 收到的主图变量配置包含未确认商品事实（22 处：configs/0/per_image_overrides/辅助参考图调用；configs/0/per_image_overrides/道具生成；configs/0/per_image_overrides/背景与光线；configs/1/per_image_overrides/辅助参考图调用；等 18 处）"}
+{"ts": "2026-07-22T13:41:58", "event": "command_received", "request_id": "HbDc90bzOl", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T13:41:58", "event": "step_started", "request_id": "HbDc90bzOl", "step": "main_vc"}
+{"ts": "2026-07-22T13:45:08", "event": "step_failed", "request_id": "HbDc90bzOl", "detail": "codex-dev 收到的主图变量配置包含未确认商品事实（12 处：configs/0/per_image_overrides/风格贴合锚点调用；configs/0/per_image_overrides/背景层次配置；configs/0/per_image_overrides/道具生成；configs/2/per_image_overrides/风格贴合锚点调用；等 8 处）"}
+{"ts": "2026-07-22T13:49:36", "event": "command_received", "request_id": "OUS7PRvn3C", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T13:49:36", "event": "step_started", "request_id": "OUS7PRvn3C", "step": "main_vc"}
+{"ts": "2026-07-22T13:49:36", "event": "step_failed", "request_id": "OUS7PRvn3C", "detail": "真实执行开关未开启，执行已停止，未自动重试"}
+{"ts": "2026-07-22T13:50:46", "event": "command_received", "request_id": "sKPW7Edq3j", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T13:50:46", "event": "step_started", "request_id": "sKPW7Edq3j", "step": "main_vc"}
+{"ts": "2026-07-22T13:54:34", "event": "step_succeeded", "request_id": "sKPW7Edq3j", "step": "main_vc", "detail": "主图变量配置已生成"}
+{"ts": "2026-07-22T13:54:34", "event": "step_started", "request_id": "sKPW7Edq3j", "step": "detail_vc"}
+{"ts": "2026-07-22T13:59:24", "event": "step_failed", "request_id": "sKPW7Edq3j", "detail": "codex-dev 收到的详情图变量配置包含未确认商品事实（1 处：configs/0/per_image_overrides/风格防退化检查）"}
+{"ts": "2026-07-22T15:12:27", "event": "command_received", "request_id": "KXUVLlkJou", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T15:12:27", "event": "step_started", "request_id": "KXUVLlkJou", "step": "detail_vc"}
+{"ts": "2026-07-22T15:19:04", "event": "step_failed", "request_id": "KXUVLlkJou", "detail": "codex-dev 收到的详情图变量配置违反用户确认场景边界"}
+{"ts": "2026-07-22T16:12:50", "event": "command_received", "request_id": "tRrwO3Y9x8", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T16:12:50", "event": "step_started", "request_id": "tRrwO3Y9x8", "step": "detail_vc"}
+{"ts": "2026-07-22T16:21:17", "event": "step_succeeded", "request_id": "tRrwO3Y9x8", "step": "detail_vc", "detail": "详情图变量配置已生成"}
+{"ts": "2026-07-22T16:21:17", "event": "step_started", "request_id": "tRrwO3Y9x8", "step": "final_prompts"}
+{"ts": "2026-07-22T16:27:31", "event": "step_failed", "request_id": "tRrwO3Y9x8", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T17:59:21", "event": "command_received", "request_id": "Nsjvrhuyti", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T17:59:21", "event": "step_started", "request_id": "Nsjvrhuyti", "step": "final_prompts"}
+{"ts": "2026-07-22T17:59:21", "event": "step_failed", "request_id": "Nsjvrhuyti", "detail": "真实执行开关未开启，执行已停止，未自动重试"}
+{"ts": "2026-07-22T18:00:33", "event": "command_received", "request_id": "JHW31DN6ap", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T18:00:33", "event": "step_started", "request_id": "JHW31DN6ap", "step": "final_prompts"}
+{"ts": "2026-07-22T18:00:33", "event": "step_failed", "request_id": "JHW31DN6ap", "detail": "真实执行开关未开启，执行已停止，未自动重试"}
+{"ts": "2026-07-22T18:05:22", "event": "command_received", "request_id": "Fez7vG6wHd", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T18:05:22", "event": "step_started", "request_id": "Fez7vG6wHd", "step": "final_prompts"}
+{"ts": "2026-07-22T18:05:22", "event": "step_failed", "request_id": "Fez7vG6wHd", "detail": "真实执行开关未开启，执行已停止，未自动重试"}
+{"ts": "2026-07-22T18:08:50", "event": "command_received", "request_id": "VjVhEQIWlE", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T18:08:50", "event": "step_started", "request_id": "VjVhEQIWlE", "step": "final_prompts"}
+{"ts": "2026-07-22T18:11:51", "event": "step_failed", "request_id": "VjVhEQIWlE", "detail": "codex-dev 收到的主图最终提示词违反用户确认场景边界"}
+{"ts": "2026-07-22T18:51:32", "event": "command_received", "request_id": "BgwnGx9oku", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T18:51:32", "event": "step_started", "request_id": "BgwnGx9oku", "step": "final_prompts"}
+{"ts": "2026-07-22T18:56:53", "event": "step_succeeded", "request_id": "BgwnGx9oku", "step": "final_prompts", "detail": "最终提示词已生成"}
+{"ts": "2026-07-22T18:56:53", "event": "production_paused", "request_id": "BgwnGx9oku", "produced_count": 0, "reason": "awaiting_render_gate"}
+{"ts": "2026-07-22T19:06:06", "event": "command_received", "request_id": "oR6hmNPYwa", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T19:06:06", "event": "step_failed", "request_id": "oR6hmNPYwa", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T19:07:22", "event": "command_received", "request_id": "g3KzYzd6LL", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T19:07:22", "event": "step_started", "request_id": "g3KzYzd6LL", "step": "integrity"}
+{"ts": "2026-07-22T19:07:23", "event": "step_failed", "request_id": "g3KzYzd6LL", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T20:23:00", "event": "command_received", "request_id": "di0IZkqb3c", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:23:00", "event": "step_started", "request_id": "di0IZkqb3c", "step": "renders"}
+{"ts": "2026-07-22T20:23:01", "event": "step_failed", "request_id": "di0IZkqb3c", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T20:24:20", "event": "command_received", "request_id": "vSTZJrJAqw", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:24:20", "event": "step_started", "request_id": "vSTZJrJAqw", "step": "renders"}
+{"ts": "2026-07-22T20:24:22", "event": "step_failed", "request_id": "vSTZJrJAqw", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T20:38:08", "event": "command_received", "request_id": "LLwe8vF9V7", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:38:08", "event": "production_paused", "request_id": "LLwe8vF9V7", "produced_count": 0, "reason": "awaiting_render_gate"}
+{"ts": "2026-07-22T20:39:18", "event": "command_received", "request_id": "PHtkf_RthE", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:39:18", "event": "step_failed", "request_id": "PHtkf_RthE", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T20:44:17", "event": "command_received", "request_id": "qCIzBQ9s6g", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:44:17", "event": "production_paused", "request_id": "qCIzBQ9s6g", "produced_count": 0, "reason": "awaiting_render_gate"}
+{"ts": "2026-07-22T20:48:48", "event": "command_received", "request_id": "G5R9syr2OD", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:48:48", "event": "step_failed", "request_id": "G5R9syr2OD", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-22T20:49:53", "event": "command_received", "request_id": "B7-s8HFMB9", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-22T20:49:53", "event": "step_started", "request_id": "B7-s8HFMB9", "step": "renders"}
+{"ts": "2026-07-22T20:51:53", "event": "step_failed", "request_id": "B7-s8HFMB9", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T09:09:18", "event": "command_received", "request_id": "SIqZMm_-s1", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T09:09:18", "event": "step_failed", "request_id": "SIqZMm_-s1", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T09:10:57", "event": "command_received", "request_id": "QYjeaCVJ93", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T09:10:57", "event": "step_failed", "request_id": "QYjeaCVJ93", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T09:45:02", "event": "command_received", "request_id": "qMl2hkj9Tt", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T09:45:02", "event": "step_started", "request_id": "qMl2hkj9Tt", "step": "renders"}
+{"ts": "2026-07-23T09:46:40", "event": "image_persisted", "request_id": "qMl2hkj9Tt", "config_id": "main_02", "sha256": "c3870b36f4a7f18c22cdf407298e26ec767276d388c7eef407574d9b4c5e1c78", "byte_count": 1325985, "width": 1024, "height": 1024}
+{"ts": "2026-07-23T09:47:43", "event": "image_persisted", "request_id": "qMl2hkj9Tt", "config_id": "main_03", "sha256": "d211c01f4ac9ba92fbc093d5ccc0b84d0a80a50b2f82c99bca17ffde15cabe2a", "byte_count": 1309777, "width": 1024, "height": 1024}
+{"ts": "2026-07-23T09:48:59", "event": "image_persisted", "request_id": "qMl2hkj9Tt", "config_id": "main_04", "sha256": "551966fa43e9471a371857ad33c3bd7df91da04ecb46d1976f569303b239f0db", "byte_count": 1667979, "width": 1024, "height": 1024}
+{"ts": "2026-07-23T09:50:19", "event": "image_persisted", "request_id": "qMl2hkj9Tt", "config_id": "main_05", "sha256": "7627c57142456419c00a7e87afac35b67e9190985890f81041ce25c07477d95d", "byte_count": 1359409, "width": 1024, "height": 1024}
+{"ts": "2026-07-23T09:51:13", "event": "image_persisted", "request_id": "qMl2hkj9Tt", "config_id": "main_06", "sha256": "c45bcf93b2937bef9c6590dd9ff0cf16cef3e9a8f5a658ad6a7ce4631a209b0c", "byte_count": 1246653, "width": 1024, "height": 1024}
+{"ts": "2026-07-23T09:52:33", "event": "step_failed", "request_id": "qMl2hkj9Tt", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T10:23:24", "event": "command_received", "request_id": "Nre7FRhwVe", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T10:23:24", "event": "image_persisted", "request_id": "Nre7FRhwVe", "config_id": "detail_01", "sha256": "f20e1402bb60831f5d30c4a000550a41088cb79ecdd010c73e885dfa74d99cb8", "byte_count": 1754126, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T10:23:24", "event": "step_started", "request_id": "Nre7FRhwVe", "step": "renders"}
+{"ts": "2026-07-23T10:24:43", "event": "step_failed", "request_id": "Nre7FRhwVe", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T11:18:44", "event": "command_received", "request_id": "HZg52sdZP-", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T11:18:44", "event": "step_started", "request_id": "HZg52sdZP-", "step": "renders"}
+{"ts": "2026-07-23T11:18:45", "event": "render_auto_padded", "request_id": "HZg52sdZP-", "config_id": "detail_02", "original_sha256": "f38399ea3e5a8be9221839300a668131ad72266eef6da3977dcf28d32503c2e4", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:18:45", "event": "image_persisted", "request_id": "HZg52sdZP-", "config_id": "detail_02", "sha256": "de4cef7fb3e01ae03d5738bccb7e5568d89e3a66b143d5639ef1e7ed6278a9c2", "byte_count": 1854683, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:20:20", "event": "render_auto_padded", "request_id": "HZg52sdZP-", "config_id": "detail_03", "original_sha256": "9b2c7636d6bcd53996a853d1a81e670bdd192b5092dd1066f40dd3fd652dee3d", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:20:21", "event": "image_persisted", "request_id": "HZg52sdZP-", "config_id": "detail_03", "sha256": "b41bad55dda837c08af04eaf5e7e8496ed2e8640ebc95bdec23fd5bfb0510237", "byte_count": 1995333, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:21:57", "event": "render_auto_padded", "request_id": "HZg52sdZP-", "config_id": "detail_04", "original_sha256": "4e3bfcddb69a65a860f6e1eb396054a7f8c60030b2dfcb573c70b35d29db6fbf", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:21:58", "event": "image_persisted", "request_id": "HZg52sdZP-", "config_id": "detail_04", "sha256": "7098410b99933a2585985d431f037e81cbee62a2fcff488d434f12a0eca9be05", "byte_count": 1933112, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:24:15", "event": "step_failed", "request_id": "HZg52sdZP-", "detail": "执行已停止，未自动重试"}
+{"ts": "2026-07-23T11:26:58", "event": "command_received", "request_id": "fWJxuklNy2", "command": "workflow-production", "machine_id": "workflow-1784686985082-r6jrh"}
+{"ts": "2026-07-23T11:26:58", "event": "step_started", "request_id": "fWJxuklNy2", "step": "renders"}
+{"ts": "2026-07-23T11:28:34", "event": "render_auto_padded", "request_id": "fWJxuklNy2", "config_id": "detail_05", "original_sha256": "dac091d0b994d24e8d58767feb542d771fc135c30094a60c6cc87e78476934ea", "original_width": 832, "original_height": 1248, "padded_width": 936, "padded_height": 1248}
+{"ts": "2026-07-23T11:28:35", "event": "image_persisted", "request_id": "fWJxuklNy2", "config_id": "detail_05", "sha256": "49d0e074efc86bfa05be33baa6e1a5413c0c5ffd4ad4202737293b82439b62b7", "byte_count": 1004049, "width": 936, "height": 1248}
+{"ts": "2026-07-23T11:29:56", "event": "render_auto_padded", "request_id": "fWJxuklNy2", "config_id": "detail_06", "original_sha256": "cb89730ce4ba9197491c7b1fc41e6ecd9300efe78d6a63607fd71dce1e105ecf", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:29:56", "event": "image_persisted", "request_id": "fWJxuklNy2", "config_id": "detail_06", "sha256": "618c2c28b826f31085a7e901d6898f9cd67e6141ee80c83bad0f63172586a79f", "byte_count": 1845244, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:30:40", "event": "render_auto_padded", "request_id": "fWJxuklNy2", "config_id": "detail_07", "original_sha256": "9d62e661707f047d4449397a68c669e507f0a47b24a7b3f722f28ca90fe50660", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:30:40", "event": "image_persisted", "request_id": "fWJxuklNy2", "config_id": "detail_07", "sha256": "b38e08e681a469675937a7878eb61da112ab3c109d796cbeacbdb206077d6ded", "byte_count": 1741789, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:31:20", "event": "render_auto_padded", "request_id": "fWJxuklNy2", "config_id": "detail_08", "original_sha256": "cea5cf49a87dd2391d2bd866f68b36a3e25b598ad143629310e03027b929ce9b", "original_width": 1024, "original_height": 1536, "padded_width": 1152, "padded_height": 1536}
+{"ts": "2026-07-23T11:31:21", "event": "image_persisted", "request_id": "fWJxuklNy2", "config_id": "detail_08", "sha256": "224183b53cf4f05526fc5e282f1314089e6e431083544c79fa719311583f24ec", "byte_count": 1719786, "width": 1152, "height": 1536}
+{"ts": "2026-07-23T11:31:21", "event": "step_succeeded", "request_id": "fWJxuklNy2", "step": "renders", "detail": "成功 4/计划 4（跳过 10）"}
+{"ts": "2026-07-23T11:31:22", "event": "production_completed", "request_id": "fWJxuklNy2", "produced_count": 14}
