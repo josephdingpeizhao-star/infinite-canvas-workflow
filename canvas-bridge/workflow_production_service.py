@@ -127,6 +127,7 @@ class WorkflowProductionService:
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.client = client
+        self._uses_default_executor_builder = executor_builder is None
         self.executor_builder = executor_builder or self._build_executor
         self.route_reader = route_reader
         self.integrity_reader = integrity_reader
@@ -305,6 +306,7 @@ class WorkflowProductionService:
         manifest: Mapping[str, Any],
         manifest_path: Path,
         on_output: Callable[[WorkflowProductionArtifact], None],
+        on_auto_padded: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> Executor:
         if step in UPSTREAM_STEPS:
             return executor_factory.build_executor("codex-dev", manifest, manifest_path)
@@ -313,17 +315,44 @@ class WorkflowProductionService:
             return ImageProductionExecutor(context)
         if step == "renders":
             workspace = Path(str((manifest.get("workspace") or {}).get("root") or ""))
+            outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), Mapping) else {}
+            render_roots = _path_values(outputs.get("renders"))
+            if not render_roots or not _inside(render_roots[0], workspace):
+                raise ProductionGateError("正式渲染目录不在批次工作区内。")
 
-            def image_factory(inner_context: ExecutorContext) -> Executor:
-                return ProductionRenderObserverExecutor(
-                    OpenAIImageExecutor(inner_context),
-                    batch_id=str(manifest.get("product_id") or ""),
-                    audit_root=workspace / "artifacts" / "audit",
-                    on_output=on_output,
-                )
+            image_observer = ProductionRenderObserverExecutor(
+                OpenAIImageExecutor(context),
+                batch_id=str(manifest.get("product_id") or ""),
+                audit_root=workspace / "artifacts" / "audit",
+                on_output=on_output,
+                renders_root=render_roots[0],
+                on_auto_padded=on_auto_padded,
+            )
+            image_observer.prepare()
+
+            def image_factory(_inner_context: ExecutorContext) -> Executor:
+                return image_observer
 
             return ImageProductionExecutor(context, image_executor_factory=image_factory)
         raise ProductionGateError("M2-b 不允许执行这个步骤。")
+
+    @staticmethod
+    def _record_auto_padding(
+        journal: Path,
+        request_id: str,
+        record: Mapping[str, Any],
+    ) -> None:
+        run_controller.append_event(
+            journal,
+            "render_auto_padded",
+            request_id=request_id,
+            config_id=str(record["config_id"]),
+            original_sha256=str(record["original_sha256"]),
+            original_width=int(record["original_width"]),
+            original_height=int(record["original_height"]),
+            padded_width=int(record["padded_width"]),
+            padded_height=int(record["padded_height"]),
+        )
 
     @staticmethod
     def _controlled_failure(exc: BaseException) -> tuple[str, str] | None:
@@ -540,7 +569,19 @@ class WorkflowProductionService:
                     ]
                 )
 
-            executor = self.executor_builder(step, manifest, manifest_path, on_output)
+            def on_auto_padded(record: Mapping[str, Any]) -> None:
+                self._record_auto_padding(journal, request_id, record)
+
+            if self._uses_default_executor_builder:
+                executor = self._build_executor(
+                    step,
+                    manifest,
+                    manifest_path,
+                    on_output,
+                    on_auto_padded,
+                )
+            else:
+                executor = self.executor_builder(step, manifest, manifest_path, on_output)
             try:
                 result = run_controller.execute_step(executor, step)
             except ExecutorExecutionError as exc:

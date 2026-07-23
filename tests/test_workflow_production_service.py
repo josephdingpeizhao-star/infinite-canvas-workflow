@@ -568,6 +568,62 @@ class ProductionServiceTest(unittest.TestCase):
         events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertIn("image_persisted", [event["event"] for event in events])
 
+    def test_auto_padding_event_is_safe_and_precedes_image_persisted(self) -> None:
+        image = self.workspace / "outputs" / "renders" / "detail_02.png"
+        write_placeholder_png(image, width=128, height=192, kind="detail", ordinal=2)
+        client = FakeCanvasClient(command="run: renders")
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            clock_ms=lambda: 1_100,
+            sleep=lambda _seconds: None,
+            persistence_timeout_ms=50,
+        )
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+
+        def on_auto_padded(record):
+            unsafe_record = {**record, "path": r"C:\private\detail_02.png"}
+            service._record_auto_padding(journal, "req-001", unsafe_record)
+
+        service._build_executor(
+            "renders",
+            manifest,
+            self.manifest,
+            lambda artifact: service._project_artifact(
+                client.state["nodes"][0],
+                artifact,
+                journal,
+                "req-001",
+            ),
+            on_auto_padded,
+        )
+
+        events = [
+            json.loads(line)
+            for line in journal.read_text(encoding="utf-8").splitlines()
+        ]
+        padded = artifact_from_path("cup", image)
+        self.assertEqual((144, 192), (padded.width, padded.height))
+        self.assertEqual(["render_auto_padded", "image_persisted"], [event["event"] for event in events])
+        auto_padded = events[0]
+        self.assertEqual("req-001", auto_padded["request_id"])
+        self.assertEqual(
+            {
+                "config_id",
+                "event",
+                "original_height",
+                "original_sha256",
+                "original_width",
+                "padded_height",
+                "padded_width",
+                "request_id",
+                "ts",
+            },
+            set(auto_padded),
+        )
+        self.assertNotIn("sha256", auto_padded)
+
     def test_gate_one_pauses_before_integrity_when_image_gate_is_closed(self) -> None:
         client = FakeCanvasClient()
         executed: list[str] = []

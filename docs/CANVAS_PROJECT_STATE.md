@@ -2,7 +2,7 @@
 
 > **本文件是画布子项目的唯一权威状态账本。**任何智能体（Codex、Claude 或其他）在触碰画布相关代码前必须先读完本文件；任何改变画布子项目状态的会话，结束前必须更新本文件（见文末"维护协议"）。本文件取代任何工具私有的会话记忆。
 >
-> 最后更新：2026-07-23（第三批 `杯子_20260722` 的 `main_01.png` 已在用户重开画布后自动补导入成功，完成 CORS 修复的真实浏览器验收；随后两次“重新开始”在未启动任何步骤时停止，根因是 1/14 部分渲染被旧路由误判为待质检。主仓已以最终提示词索引的逐项覆盖取代“任意一张即完成”判断，0/14、1/14、13/14 继续渲染，14/14 才进入质检，全仓 491 项全部通过；真实路由已纯只读验为 `needs_generated_images_before_qc`，事件账本保持 71 行）。
+> 最后更新：2026-07-23（第三批 `杯子_20260722` 已完成 6 张主图和 `detail_01` 的持久化；`detail_02` 再次返回 1024×1536 的 2:3 原图后按旧政策停机，事件账本停在 83 行。用户同日拍板以“审计留档 + 自动无损扩边 + 继续渲染”取代“停机等人工扩边”；纯离线 TDD 已完成存量清扫、逐张自动扩边、脱敏事件与 Pillow 缺失回退，全仓 500 项通过。真实 `detail_02` 与审计副本保持原字节，实盘清扫及后续续渲仍由用户重开工作台后触发）。
 
 ## 1. 定位与目标
 
@@ -60,7 +60,7 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 | M1-b | 真机器、假图片 | ✅ 后台 demo 链路完成；命令经既有三段门禁，14 个真实占位 PNG 先落盘后流式上桌；模型、真实费用与真实批次仍未接入 | 本次主仓与 fork 提交 | 主仓 297 项、fork 17 项 + TypeScript + 构建；隔离画布两轮各 14 张、28 节点/28 回连，首轮约 33 秒，取消零新增，离线提示通过；真实账本 72 行与冻结区 70 文件指纹不变 |
 | M1-c | 用户亲手验收 M1 全剧本 | ✅ 用户验收通过，M1 整体闭环 | — | 2026-07-18 用户亲手走完 M1-c 全剧本，反馈“全部顺利，没有卡点” |
 | M2-a | 信息卡画布直填 + 受控建批/本机原图通道（NC-01） | ✅ 实现、全量回归与隔离现场验收完成；测试批次已剔除；真实第二批次 `杯子_20260719` 已由用户于 2026-07-19 亲手登记 | 本轮主仓与 fork 独立提交 | 主仓 360/360；fork 36 项/272 断言 + TypeScript + 构建；`验收餐具_20260719` 中文路径往返和两张原图全链路 SHA-256 一致；工作台/旧入口各完成 6+8 张；零模型、零费用 |
-| M2-b | 真图流式上桌 + 真实费用闸门（NC-02） | ✅ 第三批 `杯子_20260722` 六道上游与完整性门禁均已通过，首张 `main_01.png` 已完好落盘并经真实浏览器自动补导入成功；渲染完成度已改为按最终提示词清单逐张核对；⏸️ 剩余 13 张仍须另获闸门批准并由用户亲手续渲 | 主仓 `af9af3e`、`fd20a2c` 及后续本次提交；fork `d30f3dc` | 全仓 491/491；真实路由 1/14 = `needs_generated_images_before_qc`；首张 1,337,277 字节、1024×1024且 SHA-256 已复核；事件账本 71 行；两份 manifest、正式产物、reports 与 fork 未改 |
+| M2-b | 真图流式上桌 + 真实费用闸门（NC-02） | ✅ 第三批 `杯子_20260722` 六道上游与完整性门禁均已通过，6 张主图及 `detail_01` 已持久化；2:3 详情图自动扩边政策与代码已完成；⏸️ `detail_02` 实盘清扫和其余详情续渲待用户重开工作台后触发 | 主仓 `af9af3e`、`fd20a2c` 及后续本次提交；fork `d30f3dc` | 全仓 500/500；`detail_02` 的 renders/audit 原件均为 2,025,068 字节、1024×1536、SHA-256 `f38399ea…c2e4` 且逐字节一致；事件账本 83 行；两份 manifest、正式产物、reports 与 fork 未改 |
 
 2026-07-19 完成 M2-a 隔离现场验收。隔离画布 `oLQVWAip2nFC4FdAePNZa` 中，漏填品类以“请填写产品品类”拒绝且零写入；正确填写七字段后建立测试批次 `验收餐具_20260719`，仓库 manifest、外部工作区和路由读取均完整保留中文。两张原图的浏览器 Blob、上传暂存、回执和最终文件 SHA-256 分别保持 `3c022d02ef29f003abdc8fc0b0f378597f36eb6a936e753b2e3027b1b61bc97b`、`a0a0c54e3a4b089c67d25a0c3ab8136eedc1b906c7ff3b7f0991de0df978b22f`；重复建批在上传前拒绝，既有 manifest 和 5 个工作区文件指纹不变，只追加一行不含令牌或图片内容的门禁审计记录。首次 M1 回归因旧 demo 工作区已有 56 张历史结果、路由只允许 QC 而被门禁拒绝，现场按规则暂停；用户批准恢复后，改用两个带 `.canvas_demo` 标记、输出为空的独立验收工作区和两个初始 0/0 的工作流节点。画布工作台 run `28XHbtoooA` 与旧入口 run `nDm3XNZaKx` 均约 33 秒完成 6 张 `720x720` 主图和 8 张 `720x960` 详情图，各有 14 个结果节点与 14 条回连；两边 14 个同名 PNG 的 SHA-256 逐项一致。验收后测试 manifest、测试工作区、建批状态目录、隔离浏览器配置和两套 demo 根均送入 Windows 回收站，17372、9223、工作台与旧入口进程归零；原 demo 工作区未改，用户画布 `hPbkNXg3WA0p2i46VOh3s` 未进入。首批仍为 72 行账本、70 文件、73,579,807 bytes，三份仓库清单指纹不变。
 
@@ -187,14 +187,14 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 - `canvas-bridge/batch_creator.py`——M2-a 建批事务：按 `<中文品类>_<YYYYMMDD>` 推导批次号，先做建批脚本只读预检，再把原图写入受保护工作区；最终逐文件复核哈希后才把仓库 manifest 作为最后一步发布，既有批次或同名文件一律不覆盖。
 - `canvas-bridge/workflow_batch_intake_service.py`——M2-a 常驻建批服务与原图上传监听器。监听器固定 `127.0.0.1:17372`，复用现有 canvas-agent 令牌，只接受本机画布来源；日志不记录令牌或图片内容，完整性不一致时进入不可重试的硬停止状态。一字节锁载体不删除，持有者说明只在取得系统锁后覆盖，异常退出后由操作系统释放锁。
 - `canvas-bridge/workflow_production_controller.py` / `workflow_production_service.py`——M2-b 真实模式和后台编排：信息卡与批次素材唯一连线、费用确认后的四项目标受控声明、人话进度、失败停机与部分图片续跑；所有可执行步骤仍只走 `run_controller` 三段门禁，14 张后停在 QC 前。
-- `canvas-bridge/workflow_production_projection.py` / `workflow_production_render_observer.py`——M2-b 正式 PNG 逐张上桌、稳定节点 id、自动连线、避让与浏览器持久化等待；主图正方形、详情精确 3:4，2:3 只审计原图并停机。
+- `canvas-bridge/workflow_production_projection.py` / `workflow_production_render_observer.py`——M2-b 正式 PNG 逐张上桌、稳定节点 id、自动连线、避让与浏览器持久化等待；主图只收正方形，详情精确 3:4 直接放行。精确 2:3 先逐字节审计原图，再按 24px 外缘镜像、LANCZOS 拉伸与 radius=18 虚化自动补足左右背景并原子替换为精确 3:4；renders 开始时先清扫存量详情 PNG。审计同名不同 SHA、主图非正方形及详情其他比例仍硬停止；Pillow 缺失时回退原 2:3 停机文案。
 - `canvas-bridge/workflow_production_http_server.py`——M2-b 固定 `127.0.0.1:17373` 的费用/正式 PNG 只读端点与风格补登上传入口，复用 canvas-agent 令牌和本机来源白名单，支持 GET/POST CORS 预检并在停止时释放监听；`/workbench-health` 只返回工人状态与最后时间。
 - `canvas-bridge/workflow_style_reference_intake.py`——信息卡“画布补登 A”：核对直连磁盘图片凭证、类型、文件头、大小和 SHA-256；全部通过后才写批准的风格目录与新回执，既有建批证据不改写，失败不自动重试；画布断连时工人保持在岗等待。
 - `canvas-bridge/canvas_workbench_service.py`——画布工作台入口：同一进程、四个线程承载 M1 演示、M2-a 建批、M2-b 真实制作和风格补登，并管理 17372/17373 两个回环监听。建批、真实制作、风格补登为关键工人，任一死亡整机停止；demo 保持隔离。工人状态写入脱敏追加账本并供 17373 健康接口读取。旧 `--serve-workflow-demo` 入口继续保留用于对照。
 - `design/stage5_ui_prototype/`——阶段 5A 的旧线性页面设计稿；该承载形态已被用户否决，仅保留作信息架构与文案参考，不连接现有后台、画布、模型或真实批次。
 - `design/stage5_canvas_native/`——阶段 5A-R 的现行画布原生交互设计稿：覆盖 F1—F6 完整 demo 旅程、K01—K09 九类节点卡片、14 张图片结果卡、19 条 QC 问题卡、49 项既有动作契约差异与 fork 实施落点；未经 TDD 不得直接固化上线，不连接任何后台或真实批次。
 - `manifests/workflow_graph.template.json`——工作流图模板（唯一图定义，schema 校验 + 与 route_batch 一致性测试）。
-- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_*`、`tests/test_workflow_batch_intake_service.py`、`tests/test_workflow_production_*`、`tests/test_workflow_style_reference_intake.py`、`tests/test_canvas_workbench_service.py` 及各执行器测试——画布子项目测试。M2-b 覆盖模式判定、原三段门禁唯一放行、费用估算、逐张上桌/持久化、2:3 审计停机、风格补登、失败防重、闸门①暂停、CORS、17373 监听释放、关键工人分级/监督、健康脱敏和锁异常退出竞态；2026-07-20 本轮全仓实测为 398/398。
+- `tests/test_canvas_*.py`、`tests/test_batch_editor.py`、`tests/test_run_controller.py`、`tests/test_workflow_graph_projection.py`、`tests/test_workflow_demo_*`、`tests/test_workflow_batch_intake_service.py`、`tests/test_workflow_production_*`、`tests/test_workflow_style_reference_intake.py`、`tests/test_canvas_workbench_service.py` 及各执行器测试——画布子项目测试。M2-b 覆盖模式判定、原三段门禁唯一放行、费用估算、逐张上桌/持久化、2:3 审计与自动扩边、存量清扫、Pillow 缺失回退、其他比例停机、风格补登、失败防重、闸门①暂停、CORS、17373 监听释放、关键工人分级/监督、健康脱敏和锁异常退出竞态；2026-07-23 本轮全仓实测为 500/500。
 
 **fork 仓库（独立 Git 仓库，不在本仓库内）**：
 
@@ -359,6 +359,14 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 纯离线 TDD 修复后，路由以 `artifacts/final_prompts/final_prompt_index.json` 的唯一 `config_id` 清单为目标集，逐项核对 `outputs/renders/<config_id>.png` 与 `outputs/repaired/<config_id>.png`；两个目录可合并覆盖，任一目标缺失都保持 `needs_generated_images_before_qc`，全部齐全才进入 `needs_qc_reports`。`state_reader.py` 直接复用同一 `route_batch()`，无复制逻辑和 fork 变更。新增 6 项独立测试：0/14、1/14、13/14 继续渲染，14/14 进入质检，renders + repaired 混合覆盖也可判齐，并锁定 `state_reader` 与主路由一致；既有测试零修改，全仓由 485 项增至 491 项并全部通过。
 
 第三批真实路径的纯只读现场验证从修复前 `needs_qc_reports` 改为 `needs_generated_images_before_qc`：权威目标 14 项，已有 `main_01`，缺口 13 项，`next_required_skill=null`。验证直接调用只读 `state_reader.read_batch_route()`，未运行任何会刷新 `reports/current_state.*` 的入口；两份 manifest、71 行事件账本、`main_01.png`、两份现有 state report、启动器与 fork 均未改，未启动或停止服务，未联网、调用模型、设置开关/密钥或触发剩余 13 张续渲。
+
+### 2026-07-23 详情图 2:3 自动无损扩边政策升级
+
+第三批 `杯子_20260722` 在路由修复后的真实续渲中已完成 `main_01` 至 `main_06` 六张主图；`detail_01` 首次返回 1024×1536 的 2:3 后按旧政策停机，由顾问按镜像虚化法人工扩至 1152×1536，用户续跑后于 10:23:24 以 SHA-256 `f20e1402bb60831f5d30c4a000550a41088cb79ecdd010c73e885dfa74d99cb8` 持久化。随后 `detail_02` 再次返回 1024×1536，10:24:43 按旧政策停止；事件账本停在 83 行。其 renders 与 `artifacts/audit/render_originals` 副本均为 2,025,068 字节，SHA-256 `f38399ea3e5a8be9221839300a668131ad72266eef6da3977dcf28d32503c2e4`，且逐字节一致。两张详情中连续两张触发证明供应端比例不稳是系统性问题，用户于 07-23 明确拍板：精确 2:3 从“审计 + 停机等人工”升级为“审计留档 + 自动无损扩边 + 继续渲染”；审计原件永久保留，QC 终审不变，主图及详情其他异常比例的停机行为不变。
+
+纯离线 TDD 后，观察器对新返回和 renders 启动前的存量 2:3 详情图复用同一例程：先按既有 SHA 规则建立或复核审计副本，再取原图左右最外 24px 条带，水平镜像后以 LANCZOS 拉伸至补边宽并执行 GaussianBlur(radius=18)，最后把原图完整粘回中央并原子替换 renders 文件。1024×1536 固定左右各补 64px，得到精确 1152×1536；测试逐像素锁定中央原图区域不变，并锁定相同输入输出逐字节确定。存量审计副本同 SHA 时不重复写入；同名不同 SHA 时在任何新图片请求前硬停止。Pillow 采用模块内延迟导入，缺失时审计仍保留、renders 原件不变并回退旧停机文案，不让工作台进程崩溃。
+
+自动扩边会先追加脱敏 `render_auto_padded`，字段固定为 `request_id`、`config_id`、`original_sha256`、原宽高及扩边后宽高；不记录路径或图片内容，扩边后 SHA 继续只由随后的 `image_persisted` 记录。唯一修改的既有测试是原“2:3 必停机”断言，改为审计、自动扩边并继续；另新增 9 项覆盖 3:4 零改动、两条旧异常停机、三种存量清扫、Pillow 缺失、确定性和事件顺序，全仓由 491 项增至 500 项并全部通过。全过程未启动服务、联网、调用模型、设置开关/密钥或产生费用，未修改 fork、两份 manifest、83 行真实事件账本、真实 renders/audit 文件、`reports/current_state.*` 或启动器；真实 `detail_02` 清扫及后续续渲由用户重开工作台后触发。
 
 ## 9. 维护协议（交接纪律）
 
