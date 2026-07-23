@@ -128,7 +128,7 @@ def build_qc_summary_prompt(
     if repair:
         return (
             "上一条第 8 批全批总结疑似在传输中截断或出现 U+FFFD。"
-            "请在同一线程中重新发送完整 JSON 对象，不要解释、不要 Markdown，业务判断不得改变。"
+            "请重新发送完整 JSON 对象，不要解释、不要 Markdown，业务判断不得改变。"
             f"chunk_index 必须为 8，chunk_count 必须为 8，checked_assets 必须严格为 "
             f"{json.dumps(checked_assets, ensure_ascii=False)}。"
         )
@@ -149,7 +149,7 @@ def build_qc_summary_prompt(
         "repair_targets": [],
     }
     return f"""这是单品批次 {plan.product_id} 的第 8/8 批全批总结，不附加图片。
-只基于同一线程已通过结构校验的前 7 批结果复核全批一致性，不得推翻逐图结论，不得新增生成方向。
+只基于下方已通过结构校验的前 7 批结果复核全批一致性，不得推翻逐图结论，不得新增生成方向。
 必须且只返回这些总结检查项，各一次：{json.dumps(SUMMARY_CHECK_ITEMS, ensure_ascii=False)}。
 status 只允许 {json.dumps(sorted(QC_STATUSES), ensure_ascii=False)}；severity 只允许 {json.dumps(sorted(QC_SEVERITIES), ensure_ascii=False)}。
 只返回一个 JSON 对象，不要 Markdown、代码围栏或解释。顶层只允许 chunk_index、chunk_count、checked_assets、results、issues、repair_targets。

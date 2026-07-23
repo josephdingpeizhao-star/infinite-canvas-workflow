@@ -1085,19 +1085,13 @@ class CodexDevExecutor:
 
         chunks: list[Mapping[str, Any]] = []
         recovery_attempts = 0
-        thread_id = ""
+        thread_ids: list[str] = []
         for batch in plan.batches:
             attachments = self._qc_attachments(qc_batch_attachment_paths(batch))
             prompt = build_qc_batch_prompt(plan, batch)
-            turn = (
-                self._run_transport(prompt, attachments)
-                if batch.index == 1
-                else self._continue_transport(thread_id, prompt, attachments)
-            )
-            if batch.index == 1:
-                thread_id = turn.thread_id
-            elif turn.thread_id != thread_id:
-                raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+            turn = self._run_transport(prompt, attachments)
+            batch_thread_id = turn.thread_id
+            thread_ids.append(batch_thread_id)
 
             while True:
                 try:
@@ -1112,21 +1106,22 @@ class CodexDevExecutor:
                         raise ExecutorExecutionError("codex-dev QC 传输恢复已达到上限") from None
                     recovery_attempts += 1
                     turn = self._continue_transport(
-                        thread_id,
+                        batch_thread_id,
                         build_qc_batch_prompt(plan, batch, repair=True),
                         (),
                     )
-                    if turn.thread_id != thread_id:
-                        raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+                    if turn.thread_id != batch_thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的 QC 组内线程返回"
+                        )
             chunks.append(chunk)
 
-        summary_turn = self._continue_transport(
-            thread_id,
+        summary_turn = self._run_transport(
             build_qc_summary_prompt(plan, tuple(chunks)),
             (),
         )
-        if summary_turn.thread_id != thread_id:
-            raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+        summary_thread_id = summary_turn.thread_id
+        thread_ids.append(summary_thread_id)
         while True:
             try:
                 summary = parse_qc_summary_response(
@@ -1140,12 +1135,14 @@ class CodexDevExecutor:
                     raise ExecutorExecutionError("codex-dev QC 传输恢复已达到上限") from None
                 recovery_attempts += 1
                 summary_turn = self._continue_transport(
-                    thread_id,
+                    summary_thread_id,
                     build_qc_summary_prompt(plan, tuple(chunks), repair=True),
                     (),
                 )
-                if summary_turn.thread_id != thread_id:
-                    raise ExecutorExecutionError("codex-dev 收到无效的 QC 线程返回")
+                if summary_turn.thread_id != summary_thread_id:
+                    raise ExecutorExecutionError(
+                        "codex-dev 收到无效的 QC 组内线程返回"
+                    )
 
         report = assemble_qc_report(plan, tuple(chunks), summary)
         output_path = write_qc_report_exclusive(plan, report)
@@ -1157,7 +1154,7 @@ class CodexDevExecutor:
             outputs=(output_path,),
             provider=self.name,
             metadata={
-                "thread_id": thread_id,
+                "thread_ids": thread_ids,
                 "batch_count": 8,
                 "recovery_attempts": recovery_attempts,
             },

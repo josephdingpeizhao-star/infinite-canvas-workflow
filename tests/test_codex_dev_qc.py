@@ -49,6 +49,18 @@ class FakeQcTransport:
         return self.results.pop(0)
 
 
+class ContextBudgetQcTransport(FakeQcTransport):
+    def continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        if attachments:
+            raise RuntimeError("simulated thread context budget exhausted")
+        return super().continue_turn(thread_id, prompt, attachments)
+
+
 class CodexDevQcTest(unittest.TestCase):
     @staticmethod
     def valid_batch_response(batch: object) -> dict[str, object]:
@@ -498,7 +510,25 @@ class CodexDevQcTest(unittest.TestCase):
             with self.assertRaisesRegex(ExecutorExecutionError, "正式 QC 报告已存在"):
                 qc.write_qc_report_exclusive(plan, report)
 
-    def test_qc_executor_runs_eight_same_thread_fake_turns_and_writes_after_summary(self) -> None:
+    def test_qc_summary_prompt_embeds_seven_chunks_without_cross_thread_wording(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, _output_path = self.make_qc_fixture(root)
+            plan = load_qc_plan(manifest, root)
+            chunks = tuple(self.valid_batch_response(batch) for batch in plan.batches)
+
+            prompt = qc.build_qc_summary_prompt(plan, chunks)
+            repair_prompt = qc.build_qc_summary_prompt(plan, chunks, repair=True)
+
+            self.assertIn("【前 7 批已校验结果】", prompt)
+            self.assertIn(
+                json.dumps(chunks, ensure_ascii=False, sort_keys=True),
+                prompt,
+            )
+            self.assertNotIn("同一线程", prompt)
+            self.assertNotIn("同一线程", repair_prompt)
+
+    def test_qc_executor_runs_seven_batch_threads_and_one_summary_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest, output_path = self.make_qc_fixture(root)
@@ -512,13 +542,17 @@ class CodexDevQcTest(unittest.TestCase):
             plan = load_qc_plan(manifest, root)
             values = [self.valid_batch_response(batch) for batch in plan.batches]
             values.append(self.valid_summary_response(plan))
+            thread_ids = [
+                *(f"qc-batch-{index}" for index in range(1, 8)),
+                "qc-summary",
+            ]
             transport = FakeQcTransport(
                 [
                     CodexTurnResult(
                         text=json.dumps(value, ensure_ascii=False),
-                        thread_id="qc-thread",
+                        thread_id=thread_id,
                     )
-                    for value in values
+                    for value, thread_id in zip(values, thread_ids)
                 ]
             )
 
@@ -529,16 +563,21 @@ class CodexDevQcTest(unittest.TestCase):
             ).execute(ExecutionRequest(step="qc"))
 
             self.assertEqual((output_path,), result.outputs)
-            self.assertEqual("qc-thread", result.metadata["thread_id"])
+            self.assertNotIn("thread_id", result.metadata)
+            self.assertEqual(thread_ids, result.metadata["thread_ids"])
+            self.assertEqual(8, result.metadata["batch_count"])
             self.assertEqual(0, result.metadata["recovery_attempts"])
-            self.assertEqual(1, len(transport.calls))
-            self.assertEqual(7, len(transport.continuation_calls))
+            self.assertEqual(8, len(transport.calls))
+            self.assertEqual(0, len(transport.continuation_calls))
             self.assertEqual(4, len(transport.calls[0][1]))
-            self.assertEqual((4, 4, 4, 4, 4, 4, 0), tuple(len(call[2]) for call in transport.continuation_calls))
+            self.assertEqual(
+                (4, 4, 4, 4, 4, 4, 4, 0),
+                tuple(len(call[1]) for call in transport.calls),
+            )
             self.assertEqual(("main_01.png", "front.jpg", "main_02.png", "side.jpg"), tuple(item.name for item in transport.calls[0][1]))
             self.assertTrue(output_path.is_file())
 
-    def test_qc_executor_recovers_unicode_and_truncation_twice_in_same_thread(self) -> None:
+    def test_qc_executor_recovers_unicode_and_truncation_within_each_batch_thread(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest, output_path = self.make_qc_fixture(root)
@@ -549,29 +588,125 @@ class CodexDevQcTest(unittest.TestCase):
             )
             plan = load_qc_plan(manifest, root)
             valid_chunks = [self.valid_batch_response(batch) for batch in plan.batches]
-            texts = [
-                '{"chunk_index":1,"damaged":"\ufffd"',
-                json.dumps(valid_chunks[0], ensure_ascii=False),
-                '{"chunk_index":2,"chunk_count":8,"checked_assets":["main_03.png"',
-                json.dumps(valid_chunks[1], ensure_ascii=False),
-                *(json.dumps(chunk, ensure_ascii=False) for chunk in valid_chunks[2:]),
-                json.dumps(self.valid_summary_response(plan), ensure_ascii=False),
+            turns = [
+                CodexTurnResult(
+                    text='{"chunk_index":1,"damaged":"\ufffd"',
+                    thread_id="qc-batch-1",
+                ),
+                CodexTurnResult(
+                    text=json.dumps(valid_chunks[0], ensure_ascii=False),
+                    thread_id="qc-batch-1",
+                ),
+                CodexTurnResult(
+                    text='{"chunk_index":2,"chunk_count":8,"checked_assets":["main_03.png"',
+                    thread_id="qc-batch-2",
+                ),
+                CodexTurnResult(
+                    text=json.dumps(valid_chunks[1], ensure_ascii=False),
+                    thread_id="qc-batch-2",
+                ),
+                *(
+                    CodexTurnResult(
+                        text=json.dumps(chunk, ensure_ascii=False),
+                        thread_id=f"qc-batch-{index}",
+                    )
+                    for index, chunk in enumerate(valid_chunks[2:], start=3)
+                ),
+                CodexTurnResult(
+                    text=json.dumps(self.valid_summary_response(plan), ensure_ascii=False),
+                    thread_id="qc-summary",
+                ),
             ]
-            transport = FakeQcTransport(
-                [CodexTurnResult(text=text, thread_id="qc-thread") for text in texts]
-            )
+            transport = FakeQcTransport(turns)
 
             result = CodexDevExecutor(
                 context, transport=transport, repository_root=root
             ).execute(ExecutionRequest(step="qc"))
 
             self.assertEqual(2, result.metadata["recovery_attempts"])
-            self.assertEqual(1, len(transport.calls))
-            self.assertEqual(9, len(transport.continuation_calls))
+            self.assertEqual(8, len(transport.calls))
+            self.assertEqual(2, len(transport.continuation_calls))
             repair_calls = [call for call in transport.continuation_calls if "重新发送完整 JSON" in call[1]]
             self.assertEqual(2, len(repair_calls))
-            self.assertTrue(all(call[0] == "qc-thread" and not call[2] for call in repair_calls))
+            self.assertEqual(
+                ("qc-batch-1", "qc-batch-2"),
+                tuple(call[0] for call in repair_calls),
+            )
+            self.assertTrue(all(not call[2] for call in repair_calls))
             self.assertTrue(output_path.is_file())
+
+    def test_qc_executor_rejects_mismatched_repair_thread_within_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, output_path = self.make_qc_fixture(root)
+            context = ExecutorContext(
+                manifest=manifest,
+                manifest_path=root / "manifests" / "p1.batch_manifest.json",
+                environment={"CODEX_DEV_ALLOW_REAL_EXECUTION": "1"},
+            )
+            plan = load_qc_plan(manifest, root)
+            transport = FakeQcTransport(
+                [
+                    CodexTurnResult(
+                        text='{"chunk_index":1,"damaged":"\ufffd"',
+                        thread_id="qc-batch-1",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(
+                            self.valid_batch_response(plan.batches[0]),
+                            ensure_ascii=False,
+                        ),
+                        thread_id="qc-wrong-thread",
+                    ),
+                ]
+            )
+
+            with self.assertRaisesRegex(
+                ExecutorExecutionError,
+                "QC 组内线程返回",
+            ):
+                CodexDevExecutor(
+                    context, transport=transport, repository_root=root
+                ).execute(ExecutionRequest(step="qc"))
+
+            self.assertEqual(1, len(transport.calls))
+            self.assertEqual(1, len(transport.continuation_calls))
+            self.assertFalse(output_path.exists())
+
+    def test_qc_executor_starts_next_batch_after_previous_thread_context_budget_is_spent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, output_path = self.make_qc_fixture(root)
+            context = ExecutorContext(
+                manifest=manifest,
+                manifest_path=root / "manifests" / "p1.batch_manifest.json",
+                environment={"CODEX_DEV_ALLOW_REAL_EXECUTION": "1"},
+            )
+            plan = load_qc_plan(manifest, root)
+            values = [self.valid_batch_response(batch) for batch in plan.batches]
+            values.append(self.valid_summary_response(plan))
+            thread_ids = [
+                *(f"qc-budget-{index}" for index in range(1, 8)),
+                "qc-budget-summary",
+            ]
+            transport = ContextBudgetQcTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(value, ensure_ascii=False),
+                        thread_id=thread_id,
+                    )
+                    for value, thread_id in zip(values, thread_ids)
+                ]
+            )
+
+            result = CodexDevExecutor(
+                context, transport=transport, repository_root=root
+            ).execute(ExecutionRequest(step="qc"))
+
+            self.assertEqual((output_path,), result.outputs)
+            self.assertEqual(thread_ids, result.metadata["thread_ids"])
+            self.assertEqual(8, len(transport.calls))
+            self.assertEqual(0, len(transport.continuation_calls))
 
     def test_qc_executor_stops_after_two_recoveries_without_output_or_temp_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
