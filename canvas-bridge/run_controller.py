@@ -216,6 +216,38 @@ def resolve_command(
     return target
 
 
+def resolve_repair_command(
+    command: tuple[str, str],
+    route: dict[str, Any],
+    repair_gate: dict[str, Any],
+) -> str:
+    """CLI-only gate 2 for one QC-driven repair run.
+
+    The existing Canvas command resolver deliberately remains unaware of this
+    step.  Callers must still obtain ``command`` from ``parse_run_content``.
+    """
+
+    if command != ("run", "repair"):
+        raise RunValidationError("返修入口只接受 run: repair")
+    if str(route.get("current_stage") or "") != "ready" or route.get("blocked_reasons"):
+        raise RunValidationError("当前批次尚未处于可返修的 ready 状态")
+    if repair_gate.get("report_found") is not True:
+        raise RunValidationError("未找到 QC 报告，返修保持阻断")
+    if repair_gate.get("report_valid") is not True:
+        raise RunValidationError("QC 报告无效，返修保持阻断")
+    target_count = repair_gate.get("target_count")
+    if type(target_count) is not int or target_count <= 0:
+        raise RunValidationError("QC 报告没有 repair_targets，返修保持阻断")
+    actionable_count = repair_gate.get("actionable_target_count")
+    if type(actionable_count) is not int or actionable_count <= 0:
+        raise RunValidationError("QC 报告只有人工核对项，没有可自动执行的返修目标")
+    if repair_gate.get("render_enabled") is not True:
+        raise RunValidationError("真实渲染未开启：RENDER_ALLOW_REAL_EXECUTION 必须为 1")
+    if repair_gate.get("api_key_configured") is not True:
+        raise RunValidationError("服务器未配置图片服务凭据")
+    return "repair"
+
+
 def render_run_content(route: dict[str, Any], integrity: dict[str, Any], note: str = "") -> str:
     runnable = runnable_steps(route, integrity)
     retryable = retryable_steps(route, integrity)

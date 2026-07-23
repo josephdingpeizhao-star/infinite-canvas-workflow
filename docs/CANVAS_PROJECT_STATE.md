@@ -420,9 +420,21 @@ canvas-agent (bun, 端口 17371)  ←── SSE ──→  浏览器画布页 (w
 2. 渲染类闸门由仓库外本地启动器按单次批准承载；该文件不入 Git。
 3. 经用户拍板，必要的本地敏感运行信息由顾问直接写入本地运维脚本；本状态账本、Git 提交和汇报均不记录其实际内容。
 
+### 2026-07-23 M2-d 第一段：QC 入账 + 后端单图返修链
+
+第三批第二次真实 QC 于 16:20:43 收到 request `6awPEsy1XB` 并进入 `qc`，16:38:02 成功生成唯一正式报告；连同 15:28:30—15:41:16 的首次失败，事件账本现为 110 行。报告为 52,403 字节、SHA-256 `E53E756F0BF843E27775F486A943640C778F90ED3F8127A381652EEB9CB62AB6`，共 175 项检查（153 pass / 18 fail / 4 needs_review）、18 个 issues 和 18 个 repair_targets，覆盖 `main_01`、`main_02`、`main_05`、`detail_01`、`detail_02`、`detail_04`、`detail_05`、`detail_06` 八张图；`adds_new_generation_direction=false`。账本与报告已由独立提交 `61b9455` 入账，报告副本与批次原件逐字节一致。
+
+本段新增服务外 CLI 单图返修链，不接入画布工作台。命令先复用既有 `parse_run_content()`，再由 `run_controller.resolve_repair_command()` 的纯新增分支检查 `ready` 路由、合法且非空的 QC 报告、至少一条可自动执行目标、图片执行开关与环境凭据，最后仍经 `run_controller.execute_step()` 进入统一执行器。`RUN_VERBS`、`parse_run_content()`、既有 `resolve_command()` 及画布可运行/可重试清单保持原样；qc/CODEX 开关与本步无关。
+
+18 条原始目标按最终提示词索引顺序聚合为 8 个工单；17 条 critical/major 进入自动返修增补段，`detail_06` 的 1 条镜像 needs_review 只保留记录、不进入自动提示词。机器不使用 `return_stage` 路由。每个工单逐字保留原 `final_prompt` 与原 `negative_prompt`，只在两者之间增加本图全部可执行 repair goals 及“产品身份、绑定角度、画布比例不变”的约束；绑定参考图直接复用原 renders 任务使用的同一白底源图。
+
+每个工单通过现役 `image-production / renders` 单任务计划调用 `openai-image`，输出只允许进入 `outputs/repaired/<原文件名>.png`。`outputs/renders` 在执行前后按 SHA-256 快照保护，既有合法 repaired 自动跳过且不覆盖；同批排他锁阻止并发重复费用。详情图精确 2:3 时复用既有自动无损扩边，供应端原件单独保存在 `artifacts/audit/repaired/render_originals/`。单张失败只记固定脱敏事件并继续下一张，不自动重试；部分失败以 `step_completed_with_failures` 和失败 ID 清单收尾，全部成功才记 `step_succeeded`，两种结果都不会自动触发 QC。
+
+本段新增 26 项独立测试且既有测试零修改。红灯先确认模块和门禁缺失，最小实现后 repair 专项 26/26、既有 run controller / image-production / renders assembler / 扩边观察器专项以及全仓 538/538 均通过。测试逐工单在组装层和实际 image-production 调用层双重核对参考图与原 renders 同源，并覆盖 18→8 聚合、`main_02` 六条聚一单、`detail_06` 人工项隔离、提示词不依赖 `return_stage`、renders 零写入、失败续跑且零自动重试、2:3 审计扩边、并发锁、门禁拒绝、零 QC 调用和敏感信息不入账本/日志。全过程未运行真实返修、未访问网络、未调用模型或产生费用；第三批工作区、14 张正式图、110 行账本、fork 和启动器均未被功能测试触碰。
+
 ### 待裁项
 
-`detail_05` 的正式分辨率为 936×1248，与其他 7 张详情图的 1152×1536 不一致。该差异不在 M2-b 收官阶段自行修改，挂入 M2-c QC 与用户终审裁决。
+`detail_05` 的正式分辨率为 936×1248，与其他 7 张详情图的 1152×1536 不一致。QC 已把较高筒状比例、主体占比和规格说明构图列入返修目标；本轮只实现返修能力，不改变既有 2:3 无损扩边政策，也不代替后续真实返修、复检与人工采纳。
 
 ## 9. 维护协议（交接纪律）
 
