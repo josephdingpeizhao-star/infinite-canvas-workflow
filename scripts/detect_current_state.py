@@ -1053,6 +1053,45 @@ def variable_config_present(summary: dict[str, Any], output_type: str) -> bool:
     return False
 
 
+def final_prompt_config_ids(summary: dict[str, Any], product_id: str) -> set[str] | None:
+    has_materialized_files = False
+    for entry in summary["paths"]:
+        for file_item in entry["files"]:
+            has_materialized_files = True
+            if file_item.get("artifact_type") != "final_prompt_index":
+                continue
+            index_path = Path(str(file_item.get("path") or ""))
+            if not index_path.is_absolute():
+                index_path = project_root() / index_path
+            index = load_json(index_path)
+            if not isinstance(index, dict) or index.get("product_id") != product_id:
+                continue
+            items = index.get("items")
+            if not isinstance(items, list) or index.get("prompt_count") != len(items) or not items:
+                continue
+            config_ids = [
+                item.get("config_id")
+                for item in items
+                if isinstance(item, dict) and isinstance(item.get("config_id"), str) and item.get("config_id")
+            ]
+            if len(config_ids) == len(items) and len(set(config_ids)) == len(config_ids):
+                return set(config_ids)
+    # Older pure route-contract tests provide typed counts without filesystem
+    # entries. Real summarized artifacts always include their materialized files.
+    return set() if has_materialized_files else None
+
+
+def generated_image_config_ids(outputs: dict[str, Any]) -> set[str]:
+    config_ids: set[str] = set()
+    for output_type in ("renders", "repaired"):
+        for entry in outputs[output_type]["paths"]:
+            for file_item in entry["files"]:
+                file_path = Path(str(file_item.get("path") or ""))
+                if file_path.suffix.lower() == ".png":
+                    config_ids.add(file_path.stem)
+    return config_ids
+
+
 def route_batch(
     product_id: str,
     manifest_path: Path,
@@ -1159,8 +1198,15 @@ def route_batch(
         next_skill = "final-prompt-compiler"
         missing_required_artifacts.append("final_prompts")
     elif "qc_reports" in requested_outputs and "qc_reports" not in available_artifacts:
+        render_targets = final_prompt_config_ids(artifacts["final_prompts"], product_id)
         generated_image_count = outputs["renders"]["file_count"] + outputs["repaired"]["file_count"]
-        if generated_image_count:
+        if render_targets is None:
+            render_coverage_complete = bool(generated_image_count)
+        else:
+            render_coverage_complete = bool(render_targets) and render_targets.issubset(
+                generated_image_config_ids(outputs)
+            )
+        if render_coverage_complete:
             current_stage = "needs_qc_reports"
             next_skill = "qc-inspector"
             missing_required_artifacts.append("qc_reports")
@@ -1168,7 +1214,14 @@ def route_batch(
             current_stage = "needs_generated_images_before_qc"
             next_skill = None
             missing_required_artifacts.append("generated_images")
-            blocked_reasons.append("QC is post-generation only; no generated images were detected in manifest-declared outputs.")
+            if generated_image_count:
+                blocked_reasons.append(
+                    "QC is post-generation only; generated image coverage is incomplete for the final prompt config list."
+                )
+            else:
+                blocked_reasons.append(
+                    "QC is post-generation only; no generated images were detected in manifest-declared outputs."
+                )
     elif not requested_outputs:
         current_stage = "awaiting_requested_outputs"
         next_skill = None
