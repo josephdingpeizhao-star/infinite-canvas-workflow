@@ -5,6 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,6 +170,29 @@ class IntegrityFailureExecutor:
         return ExecutionResult(detail="ok", provider=self.name)
 
 
+class QcReportExecutor:
+    name = "fake-qc-report"
+
+    def __init__(self, executed: list[str], report_path: Path):
+        self.executed = executed
+        self.report_path = report_path
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        if request.step != "qc":
+            raise AssertionError(request.step)
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.report_path.write_text(
+            json.dumps({"product_id": "cup", "artifact_type": "qc_report"}),
+            encoding="utf-8",
+        )
+        return ExecutionResult(
+            detail="QC 报告已生成",
+            outputs=(self.report_path,),
+            provider=self.name,
+        )
+
+
 class ProductionServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -236,6 +260,24 @@ class ProductionServiceTest(unittest.TestCase):
     @staticmethod
     def _integrity_reader(executed: list[str]):
         return lambda _route: {"found": "integrity" in executed, "status": "pass" if "integrity" in executed else "", "render_blocked": False}
+
+    def _fourteen_artifacts(self):
+        artifacts = []
+        for prefix, count, width, height in (
+            ("main", 6, 96, 96),
+            ("detail", 8, 96, 128),
+        ):
+            for ordinal in range(1, count + 1):
+                path = self.workspace / "outputs" / "renders" / f"{prefix}_{ordinal:02d}.png"
+                write_placeholder_png(
+                    path,
+                    width=width,
+                    height=height,
+                    kind=prefix,
+                    ordinal=ordinal,
+                )
+                artifacts.append(artifact_from_path("cup", path))
+        return tuple(artifacts)
 
     def test_failure_stops_pipeline_without_retry_and_hides_provider_detail(self) -> None:
         client = FakeCanvasClient()
@@ -679,6 +721,251 @@ class ProductionServiceTest(unittest.TestCase):
         )
         service.poll_once()
         self.assertEqual(["renders"], executed)
+
+    def test_qc_step_uses_codex_dev_executor_without_image_executor(self) -> None:
+        client = FakeCanvasClient()
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            environment={},
+        )
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        expected = object()
+
+        with mock.patch.object(
+            production_service.executor_factory,
+            "build_executor",
+            return_value=expected,
+        ) as build:
+            actual = service._build_executor(
+                "qc",
+                manifest,
+                self.manifest,
+                lambda _artifact: None,
+            )
+
+        self.assertIs(expected, actual)
+        build.assert_called_once_with("codex-dev", manifest, self.manifest)
+
+    def test_existing_fourteen_images_run_qc_and_complete_without_duplicate_production_event(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        production_service.run_controller.append_event(
+            journal,
+            "production_completed",
+            request_id="req-rendered",
+            produced_count=14,
+        )
+        client = FakeCanvasClient()
+        executed: list[str] = []
+
+        def route_reader(_path):
+            ready = report_path.is_file()
+            return {
+                "current_stage": "ready" if ready else "needs_qc_reports",
+                "next_required_skill": None if ready else "qc-inspector",
+                "blocked_reasons": [],
+                "available_artifacts": ["final_prompts", *(["qc_reports"] if ready else [])],
+                "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+                "inputs": {"style_reference_images": {"file_count": 1}},
+            }
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: QcReportExecutor(
+                executed,
+                report_path,
+            ),
+            route_reader=route_reader,
+            integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+            artifact_reader=lambda _manifest: artifacts,
+            clock_ms=lambda: 1_100,
+            environment={},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(["qc"], executed)
+        self.assertTrue(report_path.is_file())
+        production = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        self.assertEqual("completed", production["status"])
+        self.assertEqual("质检完成，QC 报告已生成。", production["message"])
+        events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
+
+    def test_render_completion_records_once_then_continues_to_qc(self) -> None:
+        report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        client = FakeCanvasClient(command="run: renders")
+        executed: list[str] = []
+
+        def route_reader(_path):
+            if report_path.is_file():
+                stage, skill = "ready", None
+            elif "renders" in executed:
+                stage, skill = "needs_qc_reports", "qc-inspector"
+            else:
+                stage, skill = "needs_generated_images_before_qc", None
+            return {
+                "current_stage": stage,
+                "next_required_skill": skill,
+                "blocked_reasons": [],
+                "available_artifacts": ["final_prompts", *(["qc_reports"] if stage == "ready" else [])],
+                "outputs": {
+                    "renders": {"file_count": 14 if "renders" in executed else 0},
+                    "repaired": {"file_count": 0},
+                },
+                "inputs": {"style_reference_images": {"file_count": 1}},
+            }
+
+        def executor_builder(step, _manifest, _path, _on_output):
+            if step == "qc":
+                return QcReportExecutor(executed, report_path)
+            return FakeExecutor(step, executed)
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=executor_builder,
+            route_reader=route_reader,
+            integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+            artifact_reader=lambda _manifest: tuple(range(14)) if "renders" in executed else (),
+            clock_ms=lambda: 1_100,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(["renders", "qc"], executed)
+        production = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        self.assertEqual("completed", production["status"])
+        self.assertEqual("质检完成，QC 报告已生成。", production["message"])
+        events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
+
+    def test_ready_repeated_click_is_idempotent_and_keeps_production_event_count(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text("{}", encoding="utf-8")
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        production_service.run_controller.append_event(
+            journal,
+            "production_completed",
+            request_id="req-rendered",
+            produced_count=14,
+        )
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        ready_route = {
+            "current_stage": "ready",
+            "next_required_skill": None,
+            "blocked_reasons": [],
+            "available_artifacts": ["final_prompts", "qc_reports"],
+            "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+            "inputs": {"style_reference_images": {"file_count": 1}},
+        }
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda step, _manifest, _path, _on_output: FakeExecutor(step, executed),
+            route_reader=lambda _path: ready_route,
+            integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+            artifact_reader=lambda _manifest: artifacts,
+            clock_ms=lambda: 1_100,
+            environment={},
+        )
+
+        service.poll_once()
+        machine = client.state["nodes"][0]
+        machine["metadata"]["content"] = "# workflow-production\n# request-id: req-002\nrun: next"
+        machine["metadata"]["workflowProduction"].update(
+            {"status": "queued", "requestId": "req-002", "requestedAt": 1_000}
+        )
+        service.poll_once()
+
+        self.assertEqual([], executed)
+        self.assertEqual("completed", machine["metadata"]["workflowProduction"]["status"])
+        self.assertEqual("质检完成，QC 报告已生成。", machine["metadata"]["workflowProduction"]["message"])
+        events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
+
+    def test_ready_rejects_post_qc_render_repair_and_comfyui_commands(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        route = {
+            "current_stage": "ready",
+            "next_required_skill": None,
+            "blocked_reasons": [],
+            "available_artifacts": ["final_prompts", "qc_reports"],
+            "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+            "inputs": {"style_reference_images": {"file_count": 1}},
+        }
+        for command in ("retry: renders", "run: repaired", "run: comfyui"):
+            with self.subTest(command=command):
+                client = FakeCanvasClient(command=command)
+                executed: list[str] = []
+                service = production_service.WorkflowProductionService(
+                    self.repo,
+                    client=client,
+                    executor_builder=lambda step, _manifest, _path, _on_output: FakeExecutor(step, executed),
+                    route_reader=lambda _path: route,
+                    integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+                    artifact_reader=lambda _manifest: artifacts,
+                    clock_ms=lambda: 1_100,
+                    environment={},
+                )
+
+                service.poll_once()
+
+                self.assertEqual([], executed)
+                self.assertEqual(
+                    "failed",
+                    client.state["nodes"][0]["metadata"]["workflowProduction"]["status"],
+                )
+
+    def test_qc_without_codex_execution_switch_stops_with_existing_safe_copy(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        production_service.run_controller.append_event(
+            journal,
+            "production_completed",
+            request_id="req-rendered",
+            produced_count=14,
+        )
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        route = {
+            "current_stage": "needs_qc_reports",
+            "next_required_skill": "qc-inspector",
+            "blocked_reasons": [],
+            "available_artifacts": ["final_prompts"],
+            "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+            "inputs": {"style_reference_images": {"file_count": 1}},
+        }
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: RealExecutionDisabledExecutor(executed),
+            route_reader=lambda _path: route,
+            integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+            artifact_reader=lambda _manifest: artifacts,
+            clock_ms=lambda: 1_100,
+            environment={},
+        )
+
+        service.poll_once()
+
+        self.assertEqual(["qc"], executed)
+        production = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        self.assertEqual("failed", production["status"])
+        self.assertEqual(
+            production_service._REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE,
+            production["errorMessage"],
+        )
+        events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
+        self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
 
     def test_missing_style_reference_stops_before_manifest_write_or_executor(self) -> None:
         (self.workspace / "inputs" / "style_refs" / "style.jpg").unlink()

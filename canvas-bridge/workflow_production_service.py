@@ -1,4 +1,4 @@
-"""M2-b daemon: consume real workflow commands without projecting an engine room."""
+"""M2-c daemon: consume real workflow commands without projecting an engine room."""
 
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ from workflow_production_render_observer import ProductionRenderObserverExecutor
 
 COMMAND_MAX_AGE_MS = 8_000
 UPSTREAM_STEPS = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc", "final_prompts"}
-M2B_STEPS = UPSTREAM_STEPS | {"integrity", "renders"}
+M2C_STEPS = UPSTREAM_STEPS | {"integrity", "renders", "qc"}
+_M2C_BOUNDARY_MESSAGE = "M2-c 已停在质检完成，返修与交付属后续里程碑。"
 _REAL_EXECUTION_DISABLED_CODE = "real_execution_disabled"
 _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
     "本机真实执行开关未开启，本次没有调用模型、没有产生费用。"
@@ -190,6 +191,19 @@ class WorkflowProductionService:
         return False
 
     @staticmethod
+    def _journal_has_event(path: Path, event_name: str) -> bool:
+        if not path.is_file():
+            return False
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(entry, dict) and entry.get("event") == event_name:
+                return True
+        return False
+
+    @staticmethod
     def _journal_path(manifest_path: Path, batch_id: str) -> Path:
         return run_controller.journal_path(manifest_path, batch_id)
 
@@ -308,7 +322,7 @@ class WorkflowProductionService:
         on_output: Callable[[WorkflowProductionArtifact], None],
         on_auto_padded: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> Executor:
-        if step in UPSTREAM_STEPS:
+        if step in UPSTREAM_STEPS or step == "qc":
             return executor_factory.build_executor("codex-dev", manifest, manifest_path)
         context = ExecutorContext(manifest=manifest, manifest_path=manifest_path, environment=self.environment)
         if step == "integrity":
@@ -334,7 +348,7 @@ class WorkflowProductionService:
                 return image_observer
 
             return ImageProductionExecutor(context, image_executor_factory=image_factory)
-        raise ProductionGateError("M2-b 不允许执行这个步骤。")
+        raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
 
     @staticmethod
     def _record_auto_padding(
@@ -500,7 +514,11 @@ class WorkflowProductionService:
         while not self.stopping:
             route = self.route_reader(manifest_path)
             integrity = self.integrity_reader(route)
-            if produced_count >= PRODUCTION_TOTAL_IMAGES and route.get("current_stage") == "needs_qc_reports":
+            stage = str(route.get("current_stage") or "")
+            if stage == "ready":
+                parsed = run_controller.parse_run_content(command_text) if command_text else ("run", "next")
+                if parsed != ("run", "next"):
+                    raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
                 self._apply_with_reconnect(
                     [
                         self._machine_update(
@@ -508,14 +526,25 @@ class WorkflowProductionService:
                             status="completed",
                             content=f"# request-id: {request_id}\n# completed",
                             produced_count=PRODUCTION_TOTAL_IMAGES,
+                            message="质检完成，QC 报告已生成。",
                         )
                     ]
                 )
-                run_controller.append_event(journal, "production_completed", request_id=request_id, produced_count=PRODUCTION_TOTAL_IMAGES)
                 return
+            if (
+                produced_count >= PRODUCTION_TOTAL_IMAGES
+                and stage == "needs_qc_reports"
+                and not self._journal_has_event(journal, "production_completed")
+            ):
+                run_controller.append_event(
+                    journal,
+                    "production_completed",
+                    request_id=request_id,
+                    produced_count=PRODUCTION_TOTAL_IMAGES,
+                )
             step = resolve_gated_step(command_text, route, integrity)
-            if step not in M2B_STEPS:
-                raise ProductionGateError("M2-b 已停在待质检，不会越界执行 QC。")
+            if step not in M2C_STEPS:
+                raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
             # This is a deny-only phase boundary, not an execution route.  The
             # existing run controller has already parsed and resolved the next
             # step above; when the image gate is closed we stop before gate 3,
@@ -616,19 +645,10 @@ class WorkflowProductionService:
             if step == "renders":
                 produced_count = len(self.artifact_reader(manifest))
                 route = self.route_reader(manifest_path)
-                if produced_count >= PRODUCTION_TOTAL_IMAGES and route.get("current_stage") == "needs_qc_reports":
-                    self._apply_with_reconnect(
-                        [
-                            self._machine_update(
-                                machine,
-                                status="completed",
-                                content=f"# request-id: {request_id}\n# completed",
-                                produced_count=PRODUCTION_TOTAL_IMAGES,
-                            )
-                        ]
-                    )
-                    run_controller.append_event(journal, "production_completed", request_id=request_id, produced_count=PRODUCTION_TOTAL_IMAGES)
-                else:
+                if (
+                    produced_count < PRODUCTION_TOTAL_IMAGES
+                    or route.get("current_stage") != "needs_qc_reports"
+                ):
                     self._apply_with_reconnect(
                         [
                             self._machine_update(
@@ -640,12 +660,10 @@ class WorkflowProductionService:
                         ]
                     )
                     run_controller.append_event(journal, "production_paused", request_id=request_id, produced_count=produced_count)
-                return
+                    return
             produced_count = len(self.artifact_reader(manifest))
             route = self.route_reader(manifest_path)
             command_text = next_gated_command(route, accepted_render_count=produced_count) or ""
-            if not command_text:
-                continue
 
     def poll_once(self) -> None:
         state = self.client.call_tool("canvas_get_state")

@@ -399,6 +399,35 @@ class CodexDevQcTest(unittest.TestCase):
             with self.assertRaisesRegex(ExecutorExecutionError, "QC 附件大小超过单批限制"):
                 load_qc_plan(manifest, root)
 
+    def test_qc_plan_accepts_total_over_twenty_mebibytes_when_each_pair_is_below_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, _output = self.make_qc_fixture(root)
+            renders = Path(manifest["workspace"]["outputs_root"]) / "renders"
+            for path in renders.glob("*.png"):
+                header = path.read_bytes()[:24]
+                with path.open("wb") as handle:
+                    handle.truncate(2 * 1024 * 1024)
+                    handle.seek(0)
+                    handle.write(header)
+
+            plan = load_qc_plan(manifest, root)
+            estimated_batches = tuple(
+                sum(
+                    qc._estimated_attachment_payload_bytes(path)
+                    for path in qc.qc_batch_attachment_paths(batch)
+                )
+                for batch in plan.batches
+            )
+
+            self.assertGreater(sum(estimated_batches), qc.ATTACHMENT_BATCH_LIMIT_BYTES)
+            self.assertTrue(
+                all(
+                    estimated <= qc.ATTACHMENT_BATCH_LIMIT_BYTES
+                    for estimated in estimated_batches
+                )
+            )
+
     def test_qc_domain_module_exposes_batch_response_parser(self) -> None:
         self.assertTrue(callable(getattr(qc, "parse_qc_batch_response", None)))
 

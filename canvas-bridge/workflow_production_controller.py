@@ -1,8 +1,8 @@
-"""Pure gates and selection rules for the M2-b real workflow machine.
+"""Pure gates and selection rules for the M2-c real workflow machine.
 
 This module deliberately does not invent a workflow route.  Every executable
 step is parsed and authorised by :mod:`run_controller`; this layer only selects
-the existing ``run``/``retry`` command text and enforces the M2-b stop before
+the existing ``run``/``retry`` command text and enforces the M2-c stop after
 QC.
 """
 
@@ -131,8 +131,10 @@ def next_gated_command(route: Mapping[str, Any], *, accepted_render_count: int) 
     stage = str(route.get("current_stage") or "")
     if stage == "needs_qc_reports":
         if accepted_render_count >= PRODUCTION_TOTAL_IMAGES:
-            return None  # M2-b terminal; QC belongs to M2-c.
+            return "run: qc"
         return "retry: renders"
+    if stage == "ready":
+        return None
     return "run: next"
 
 
@@ -161,4 +163,6 @@ def human_step_message(step: str, *, produced_count: int = 0) -> str:
         return "正在做出图前的最后检查…"
     if step == "renders":
         return f"正在制作第 {min(PRODUCTION_TOTAL_IMAGES, produced_count + 1)}/{PRODUCTION_TOTAL_IMAGES} 张…"
+    if step == "qc":
+        return "正在逐张质检 14 张成图…"
     return "机器正在继续处理…"

@@ -66,14 +66,20 @@ class RunControllerDelegationTest(unittest.TestCase):
         parse.assert_called_once_with("run: next")
         resolve.assert_called_once_with(("run", "next"), route, integrity)
 
-    def test_partial_render_uses_existing_retry_semantics_and_complete_batch_stops_before_qc(self) -> None:
+    def test_partial_render_uses_existing_retry_semantics_and_complete_batch_runs_qc(self) -> None:
         route = {"current_stage": "needs_qc_reports"}
         self.assertEqual("retry: renders", controller.next_gated_command(route, accepted_render_count=1))
-        self.assertIsNone(controller.next_gated_command(route, accepted_render_count=14))
+        self.assertEqual("run: qc", controller.next_gated_command(route, accepted_render_count=14))
 
     def test_pre_qc_route_uses_run_next_for_integrity_and_initial_render(self) -> None:
         route = {"current_stage": "needs_generated_images_before_qc"}
         self.assertEqual("run: next", controller.next_gated_command(route, accepted_render_count=0))
+
+    def test_ready_route_is_terminal(self) -> None:
+        self.assertIsNone(controller.next_gated_command({"current_stage": "ready"}, accepted_render_count=14))
+
+    def test_qc_has_human_progress_message(self) -> None:
+        self.assertEqual("正在逐张质检 14 张成图…", controller.human_step_message("qc", produced_count=14))
 
 
 class SelectionTest(unittest.TestCase):
