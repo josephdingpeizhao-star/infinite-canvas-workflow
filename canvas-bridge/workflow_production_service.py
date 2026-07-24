@@ -30,6 +30,7 @@ from workflow_production_controller import (
 from workflow_production_projection import (
     WorkflowProductionArtifact,
     artifact_from_path,
+    build_render_source_backfill_op,
     build_output_projection_ops,
     output_node_id,
 )
@@ -87,7 +88,12 @@ def _path_values(value: Any) -> tuple[Path, ...]:
     return tuple(Path(item) for item in values if isinstance(item, str) and item)
 
 
-def discover_accepted_artifacts(manifest: Mapping[str, Any]) -> tuple[WorkflowProductionArtifact, ...]:
+def discover_source_artifacts(
+    manifest: Mapping[str, Any],
+    source: str,
+) -> tuple[WorkflowProductionArtifact, ...]:
+    if source not in {"renders", "repaired"}:
+        return ()
     batch_id = str(manifest.get("product_id") or "")
     workspace_value = (manifest.get("workspace") or {}).get("root") if isinstance(manifest.get("workspace"), Mapping) else None
     if not batch_id or not isinstance(workspace_value, str) or not workspace_value:
@@ -95,22 +101,29 @@ def discover_accepted_artifacts(manifest: Mapping[str, Any]) -> tuple[WorkflowPr
     workspace = Path(workspace_value)
     outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), Mapping) else {}
     found: dict[str, WorkflowProductionArtifact] = {}
-    for key in ("renders", "repaired"):
-        for root in _path_values(outputs.get(key)):
-            if not _inside(root, workspace) or not root.is_dir():
+    for root in _path_values(outputs.get(source)):
+        if not _inside(root, workspace) or not root.is_dir():
+            continue
+        for path in sorted(root.glob("*.png")):
+            try:
+                artifact = artifact_from_path(batch_id, path, source=source)
+            except (OSError, ValueError):
                 continue
-            for path in sorted(root.glob("*.png")):
-                try:
-                    artifact = artifact_from_path(batch_id, path)
-                except (OSError, ValueError):
-                    continue
-                accepted = (
-                    artifact.width == artifact.height
-                    if artifact.kind == "main"
-                    else artifact.width * 4 == artifact.height * 3
-                )
-                if accepted and artifact.config_id not in found:
-                    found[artifact.config_id] = artifact
+            accepted = (
+                artifact.width == artifact.height
+                if artifact.kind == "main"
+                else artifact.width * 4 == artifact.height * 3
+            )
+            if accepted and artifact.config_id not in found:
+                found[artifact.config_id] = artifact
+    return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
+
+
+def discover_accepted_artifacts(manifest: Mapping[str, Any]) -> tuple[WorkflowProductionArtifact, ...]:
+    found: dict[str, WorkflowProductionArtifact] = {}
+    for source in ("renders", "repaired"):
+        for artifact in discover_source_artifacts(manifest, source):
+            found.setdefault(artifact.config_id, artifact)
     return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
 
 
@@ -177,6 +190,8 @@ class WorkflowProductionService:
         route_reader: Callable[[Path], dict[str, Any]] = state_reader.read_batch_route,
         integrity_reader: Callable[[dict[str, Any]], dict[str, Any]] = state_reader.integrity_report_status,
         artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] = discover_accepted_artifacts,
+        render_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
+        repaired_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         clock_ms: Callable[[], int] | None = None,
         sleep: Callable[[float], None] = time.sleep,
         interval: float = 2.0,
@@ -192,6 +207,12 @@ class WorkflowProductionService:
         self.route_reader = route_reader
         self.integrity_reader = integrity_reader
         self.artifact_reader = artifact_reader
+        self.render_artifact_reader = render_artifact_reader or (
+            lambda manifest: discover_source_artifacts(manifest, "renders")
+        )
+        self.repaired_artifact_reader = repaired_artifact_reader or (
+            lambda manifest: discover_source_artifacts(manifest, "repaired")
+        )
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self.sleep = sleep
         self.interval = interval
@@ -207,6 +228,16 @@ class WorkflowProductionService:
     def _production_state(node: Mapping[str, Any]) -> dict[str, Any]:
         metadata = node.get("metadata") if isinstance(node.get("metadata"), Mapping) else {}
         value = metadata.get("workflowProduction") if isinstance(metadata.get("workflowProduction"), Mapping) else {}
+        return dict(value)
+
+    @staticmethod
+    def _repaired_projection_state(node: Mapping[str, Any]) -> dict[str, Any]:
+        metadata = node.get("metadata") if isinstance(node.get("metadata"), Mapping) else {}
+        value = (
+            metadata.get("workflowRepairedProjection")
+            if isinstance(metadata.get("workflowRepairedProjection"), Mapping)
+            else {}
+        )
         return dict(value)
 
     def _manifest_path(self, batch_id: str) -> Path:
@@ -365,21 +396,25 @@ class WorkflowProductionService:
 
         return report
 
-    def _persisted(self, node_id: str, sha256: str) -> bool:
+    def _persisted(self, node_id: str, sha256: str, source: str | None = None) -> bool:
         state = self.client.call_tool("canvas_get_state")
         for node in state.get("nodes") or []:
             if node.get("id") != node_id:
                 continue
             metadata = node.get("metadata") if isinstance(node.get("metadata"), Mapping) else {}
             output = metadata.get("workflowProductionOutput") if isinstance(metadata.get("workflowProductionOutput"), Mapping) else {}
-            return bool(metadata.get("storageKey")) and output.get("sha256") == sha256
+            return (
+                bool(metadata.get("storageKey"))
+                and output.get("sha256") == sha256
+                and (source is None or output.get("source", "renders") == source)
+            )
         return False
 
     def _wait_for_persistence(self, artifact: WorkflowProductionArtifact) -> None:
-        node_id = output_node_id(artifact.batch_id, artifact.config_id)
+        node_id = output_node_id(artifact.batch_id, artifact.config_id, artifact.source)
         deadline = time.monotonic() + self.persistence_timeout_ms / 1000
         while True:
-            if self._persisted(node_id, artifact.sha256):
+            if self._persisted(node_id, artifact.sha256, artifact.source):
                 return
             if time.monotonic() >= deadline or self.stopping:
                 raise ExecutorExecutionError(_PERSISTENCE_TIMEOUT_DETAIL)
@@ -391,6 +426,8 @@ class WorkflowProductionService:
         artifact: WorkflowProductionArtifact,
         journal: Path,
         request_id: str,
+        *,
+        event_name: str = "image_persisted",
     ) -> None:
         state = self.client.call_tool("canvas_get_state")
         current_machine = next(
@@ -407,9 +444,10 @@ class WorkflowProductionService:
         self._wait_for_persistence(artifact)
         run_controller.append_event(
             journal,
-            "image_persisted",
+            event_name,
             request_id=request_id,
             config_id=artifact.config_id,
+            source=artifact.source,
             sha256=artifact.sha256,
             byte_count=artifact.byte_count,
             width=artifact.width,
@@ -425,9 +463,156 @@ class WorkflowProductionService:
     ) -> tuple[WorkflowProductionArtifact, ...]:
         artifacts = self.artifact_reader(manifest)
         for artifact in artifacts:
-            if not self._persisted(output_node_id(artifact.batch_id, artifact.config_id), artifact.sha256):
+            if not self._persisted(
+                output_node_id(artifact.batch_id, artifact.config_id, artifact.source),
+                artifact.sha256,
+                artifact.source,
+            ):
                 self._project_artifact(machine, artifact, journal, request_id)
         return artifacts
+
+    def _backfill_render_sources(
+        self,
+        machine: Mapping[str, Any],
+        canvas_state: Mapping[str, Any],
+    ) -> None:
+        try:
+            selection = resolve_production_selection(
+                str(machine.get("id") or ""),
+                canvas_state,
+            )
+            manifest_path = self._manifest_path(selection.batch_id)
+            manifest = self._load_manifest(manifest_path, selection.batch_id)
+        except ProductionGateError:
+            return
+        by_id = {
+            output_node_id(artifact.batch_id, artifact.config_id): artifact
+            for artifact in self.render_artifact_reader(manifest)
+        }
+        ops: list[dict[str, Any]] = []
+        for node in canvas_state.get("nodes") or []:
+            artifact = by_id.get(str(node.get("id") or ""))
+            if artifact is None:
+                continue
+            metadata = node.get("metadata") if isinstance(node.get("metadata"), Mapping) else {}
+            proof = (
+                metadata.get("workflowProductionOutput")
+                if isinstance(metadata.get("workflowProductionOutput"), Mapping)
+                else {}
+            )
+            if proof.get("source") == "renders" or proof.get("sourceBackfillCode"):
+                continue
+            ops.append(
+                build_render_source_backfill_op(
+                    dict(node),
+                    artifact,
+                    self.production_base_url,
+                )
+            )
+        if ops:
+            self._apply_with_reconnect(ops)
+
+    def _repaired_projection_update(
+        self,
+        node: Mapping[str, Any],
+        *,
+        state: Mapping[str, Any],
+        status: str,
+        message: str,
+        projected_count: int,
+    ) -> dict[str, Any]:
+        updated = dict(state)
+        updated.update(
+            {
+                "status": status,
+                "message": message,
+                "projectedCount": projected_count,
+                "updatedAt": self.clock_ms(),
+            }
+        )
+        return {
+            "type": "update_node",
+            "id": str(node.get("id") or ""),
+            "metadata": {"workflowRepairedProjection": updated},
+        }
+
+    def _process_repaired_projection(
+        self,
+        machine: Mapping[str, Any],
+        canvas_state: Mapping[str, Any],
+    ) -> None:
+        projection_state = self._repaired_projection_state(machine)
+        request_id = str(projection_state.get("requestId") or "")
+        requested_at = projection_state.get("requestedAt")
+        if not request_id or not isinstance(requested_at, (int, float)):
+            raise ProductionGateError("返修图上桌请求格式不正确，没有执行。")
+        if self.clock_ms() - int(requested_at) >= COMMAND_MAX_AGE_MS:
+            raise ProductionGateError("本机工作台没有及时接到返修图上桌请求，请重新点击一次。")
+        selection = resolve_production_selection(
+            str(machine.get("id") or ""),
+            canvas_state,
+        )
+        if projection_state.get("batchId") != selection.batch_id:
+            raise ProductionGateError("返修图上桌请求与信息卡批次不一致。")
+        manifest_path = self._manifest_path(selection.batch_id)
+        manifest = self._load_manifest(manifest_path, selection.batch_id)
+        journal = self._journal_path(manifest_path, selection.batch_id)
+        if self._journal_seen(journal, request_id):
+            raise ProductionGateError("这次返修图上桌请求已经处理，不会重复投影。")
+        route = self.route_reader(manifest_path)
+        if route.get("current_stage") != "ready":
+            raise ProductionGateError("本批次尚未完成质检，暂不能上桌返修图。")
+        artifacts = self.repaired_artifact_reader(manifest)
+        self._apply_with_reconnect(
+            [
+                self._repaired_projection_update(
+                    machine,
+                    state=projection_state,
+                    status="running",
+                    message="正在把返修图放到画布上…",
+                    projected_count=0,
+                )
+            ]
+        )
+        run_controller.append_event(
+            journal,
+            "repaired_projection_requested",
+            request_id=request_id,
+            count=len(artifacts),
+        )
+        projected_count = 0
+        for artifact in artifacts:
+            node_id = output_node_id(
+                artifact.batch_id,
+                artifact.config_id,
+                artifact.source,
+            )
+            if not self._persisted(node_id, artifact.sha256, artifact.source):
+                self._project_artifact(
+                    machine,
+                    artifact,
+                    journal,
+                    request_id,
+                    event_name="repaired_image_persisted",
+                )
+            projected_count += 1
+        run_controller.append_event(
+            journal,
+            "repaired_projection_completed",
+            request_id=request_id,
+            count=projected_count,
+        )
+        self._apply_with_reconnect(
+            [
+                self._repaired_projection_update(
+                    machine,
+                    state=projection_state,
+                    status="completed",
+                    message=f"{projected_count} 张返修图已上桌。",
+                    projected_count=projected_count,
+                )
+            ]
+        )
 
     def _build_executor(
         self,
@@ -804,6 +989,24 @@ class WorkflowProductionService:
         state = self.client.call_tool("canvas_get_state")
         for node in list(state.get("nodes") or []):
             if node.get("type") != "workflow":
+                continue
+            self._backfill_render_sources(node, state)
+            repaired_projection = self._repaired_projection_state(node)
+            if repaired_projection.get("status") == "queued":
+                try:
+                    self._process_repaired_projection(node, state)
+                except ProductionGateError as exc:
+                    self._apply_with_reconnect(
+                        [
+                            self._repaired_projection_update(
+                                node,
+                                state=repaired_projection,
+                                status="failed",
+                                message=str(exc),
+                                projected_count=0,
+                            )
+                        ]
+                    )
                 continue
             production = self._production_state(node)
             if production.get("status") != "queued":

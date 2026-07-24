@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from workflow_production_projection import artifact_from_path
+from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_style_reference_intake import MAX_STYLE_UPLOAD_BYTES, StyleReferenceUploadRejected
 
 
@@ -121,19 +122,20 @@ class WorkflowProductionHttpApplication:
             raise ProductionHttpError(409, "workspace marker mismatch")
         return value, path, workspace
 
-    def _output(self, batch_id: str, config_id: str) -> Path:
+    def _output(self, batch_id: str, config_id: str, source: str = "renders") -> Path:
         if config_id not in CONFIG_IDS:
+            raise ProductionHttpError(404, "output not found")
+        if source not in {"renders", "repaired"}:
             raise ProductionHttpError(404, "output not found")
         manifest, _manifest_path, workspace = self._manifest(batch_id)
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
         matches: list[Path] = []
-        for key in ("renders", "repaired"):
-            for root in _first_paths(outputs.get(key)):
-                target = root / f"{config_id}.png" if root.suffix.lower() != ".png" else root
-                if not _inside(target, workspace):
-                    raise ProductionHttpError(409, "output boundary mismatch")
-                if target.is_file() and target.stem == config_id:
-                    matches.append(target)
+        for root in _first_paths(outputs.get(source)):
+            target = root / f"{config_id}.png" if root.suffix.lower() != ".png" else root
+            if not _inside(target, workspace):
+                raise ProductionHttpError(409, "output boundary mismatch")
+            if target.is_file() and target.stem == config_id:
+                matches.append(target)
         unique = {item.resolve(): item for item in matches}
         if len(unique) != 1:
             raise ProductionHttpError(404 if not unique else 409, "output not found")
@@ -171,12 +173,25 @@ class WorkflowProductionHttpApplication:
             "estimatedMinutes": (30 if not ready else 0) + round(remaining * 1.8),
         }
 
-    def output_bytes(self, batch_id: str, config_id: str) -> tuple[bytes, str]:
-        path = self._output(batch_id, config_id)
+    def output_bytes(
+        self,
+        batch_id: str,
+        config_id: str,
+        source: str = "renders",
+    ) -> tuple[bytes, str]:
+        path = self._output(batch_id, config_id, source)
         if not self._accepted(path):
             raise ProductionHttpError(409, "output not accepted")
         data = path.read_bytes()
         return data, hashlib.sha256(data).hexdigest()
+
+    def qc_summary(self, batch_id: str) -> dict[str, Any]:
+        try:
+            return build_qc_summary(self.repository_root, batch_id)
+        except QcSummaryNotFound:
+            raise ProductionHttpError(404, "qc summary not found") from None
+        except QcSummaryInvalid:
+            raise ProductionHttpError(409, "qc summary invalid") from None
 
     def style_upload(self, batch_id: str, request_id: str, node_id: str, data: bytes) -> dict[str, Any]:
         if self.style_acceptor is None:
@@ -285,8 +300,30 @@ class WorkflowProductionHttpServer:
                         self.end_headers()
                         self.wfile.write(payload)
                         return
+                    if len(segments) == 3 and segments[0] == "workflow-production" and segments[2] == "qc-summary":
+                        payload = json.dumps(application.qc_summary(segments[1]), ensure_ascii=False).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("content-type", "application/json; charset=utf-8")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", str(len(payload)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
                     if len(segments) == 4 and segments[0] == "workflow-production" and segments[2] == "outputs":
-                        data, sha256 = application.output_bytes(segments[1], segments[3])
+                        data, sha256 = application.output_bytes(segments[1], segments[3], "renders")
+                        self.send_response(200)
+                        self.send_header("content-type", "image/png")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("x-content-sha256", sha256)
+                        self.send_header("Access-Control-Expose-Headers", "x-content-sha256")
+                        self.send_header("content-length", str(len(data)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(data)
+                        return
+                    if len(segments) == 5 and segments[0] == "workflow-production" and segments[2] == "outputs":
+                        data, sha256 = application.output_bytes(segments[1], segments[4], segments[3])
                         self.send_response(200)
                         self.send_header("content-type", "image/png")
                         self.send_header("cache-control", "no-store")

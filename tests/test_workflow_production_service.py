@@ -1267,6 +1267,142 @@ class ProductionServiceTest(unittest.TestCase):
                     client.state["nodes"][0]["metadata"]["workflowProduction"]["errorMessage"],
                 )
 
+    def test_source_discovery_keeps_renders_and_repaired_distinct(self) -> None:
+        repaired_root = self.workspace / "outputs" / "repaired"
+        repaired_root.mkdir()
+        render_path = self.workspace / "outputs" / "renders" / "main_01.png"
+        repaired_path = repaired_root / "main_01.png"
+        write_placeholder_png(render_path, width=96, height=96, kind="main", ordinal=1)
+        write_placeholder_png(repaired_path, width=96, height=96, kind="main", ordinal=9)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["outputs"]["repaired"] = [str(repaired_root)]
+
+        renders = production_service.discover_source_artifacts(manifest, "renders")
+        repaired = production_service.discover_source_artifacts(manifest, "repaired")
+        combined = production_service.discover_accepted_artifacts(manifest)
+
+        self.assertEqual(["renders"], [item.source for item in renders])
+        self.assertEqual(["repaired"], [item.source for item in repaired])
+        self.assertEqual(render_path, combined[0].path)
+
+    def test_repaired_projection_is_pure_and_never_builds_an_executor(self) -> None:
+        repaired_root = self.workspace / "outputs" / "repaired"
+        repaired_root.mkdir()
+        repaired_path = repaired_root / "main_01.png"
+        write_placeholder_png(repaired_path, width=96, height=96, kind="main", ordinal=9)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["outputs"]["repaired"] = [str(repaired_root)]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        client = FakeCanvasClient()
+        machine = client.state["nodes"][0]
+        machine["metadata"]["workflowProduction"]["status"] = "completed"
+        machine["metadata"]["workflowRepairedProjection"] = {
+            "status": "queued",
+            "requestId": "repair-projection-1",
+            "requestedAt": 1_000,
+            "batchId": "cup",
+        }
+
+        def forbidden_builder(*_args, **_kwargs):
+            raise AssertionError("projection must never build an executor")
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=forbidden_builder,
+            route_reader=lambda _path: {"current_stage": "ready"},
+            clock_ms=lambda: 1_100,
+        )
+        service.poll_once()
+
+        repaired_node = next(
+            node for node in client.state["nodes"] if node["id"] == "wfprod-repaired:cup:main_01"
+        )
+        self.assertEqual(
+            "repaired",
+            repaired_node["metadata"]["workflowProductionOutput"]["source"],
+        )
+        self.assertEqual(
+            "completed",
+            machine["metadata"]["workflowRepairedProjection"]["status"],
+        )
+
+    def test_repaired_projection_retrigger_is_idempotent_by_source_and_sha(self) -> None:
+        repaired_root = self.workspace / "outputs" / "repaired"
+        repaired_root.mkdir()
+        repaired_path = repaired_root / "detail_01.png"
+        write_placeholder_png(repaired_path, width=96, height=128, kind="detail", ordinal=1)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["outputs"]["repaired"] = [str(repaired_root)]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        client = FakeCanvasClient()
+        machine = client.state["nodes"][0]
+        machine["metadata"]["workflowProduction"]["status"] = "completed"
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda *_args: (_ for _ in ()).throw(AssertionError("executor")),
+            route_reader=lambda _path: {"current_stage": "ready"},
+            clock_ms=lambda: 1_100,
+        )
+        for request_id in ("repair-projection-a", "repair-projection-b"):
+            machine["metadata"]["workflowRepairedProjection"] = {
+                "status": "queued",
+                "requestId": request_id,
+                "requestedAt": 1_000,
+                "batchId": "cup",
+            }
+            service.poll_once()
+
+        nodes = [
+            node
+            for node in client.state["nodes"]
+            if node["id"] == "wfprod-repaired:cup:detail_01"
+        ]
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(1, len(nodes))
+        self.assertEqual(
+            1,
+            len([event for event in events if event["event"] == "repaired_image_persisted"]),
+        )
+
+    def test_failed_source_backfill_records_evidence_and_remains_unreceivable(self) -> None:
+        render_path = self.workspace / "outputs" / "renders" / "main_01.png"
+        write_placeholder_png(render_path, width=96, height=96, kind="main", ordinal=1)
+        client = FakeCanvasClient()
+        machine = client.state["nodes"][0]
+        machine["metadata"]["workflowProduction"]["status"] = "completed"
+        client.state["nodes"].append(
+            {
+                "id": "wfprod-output:cup:main_01",
+                "type": "image",
+                "metadata": {
+                    "storageKey": "image:legacy",
+                    "workflowProductionOutput": {
+                        "batchId": "cup",
+                        "configId": "main_01",
+                        "sha256": "0" * 64,
+                    },
+                },
+            }
+        )
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            route_reader=lambda _path: {"current_stage": "ready"},
+            clock_ms=lambda: 1_100,
+        )
+        service.poll_once()
+
+        proof = client.state["nodes"][-1]["metadata"]["workflowProductionOutput"]
+        self.assertNotIn("source", proof)
+        self.assertEqual("source_proof_mismatch", proof["sourceBackfillCode"])
+
 
 if __name__ == "__main__":
     unittest.main()

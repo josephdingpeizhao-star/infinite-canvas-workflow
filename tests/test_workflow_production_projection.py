@@ -70,6 +70,104 @@ class ProductionProjectionTest(unittest.TestCase):
             _ops, node = projection.build_output_projection_ops(machine, [machine, blocker], artifact, "http://127.0.0.1:17373")
         self.assertGreater(node["position"]["x"], blocker["position"]["x"])
 
+    def test_repaired_projection_has_distinct_id_label_source_and_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canvas_demo").write_text("safe\n", encoding="utf-8")
+            path = root / "main_02.png"
+            write_placeholder_png(path, width=1024, height=1024, kind="main", ordinal=2)
+            artifact = projection.artifact_from_path("cup", path, source="repaired")
+            machine = {"id": "machine", "type": "workflow", "position": {"x": 0, "y": 0}, "width": 420, "height": 300}
+            _ops, node = projection.build_output_projection_ops(
+                machine,
+                [machine],
+                artifact,
+                "http://127.0.0.1:17373",
+            )
+
+        self.assertEqual("wfprod-repaired:cup:main_02", node["id"])
+        self.assertEqual("返修·主图 2", node["title"])
+        proof = node["metadata"]["workflowProductionOutput"]
+        self.assertEqual("repaired", proof["source"])
+        self.assertTrue(proof["downloadUrl"].endswith("/outputs/repaired/main_02"))
+
+    def test_repaired_layout_starts_beyond_original_output_fan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canvas_demo").write_text("safe\n", encoding="utf-8")
+            path = root / "detail_06.png"
+            write_placeholder_png(path, width=96, height=128, kind="detail", ordinal=6)
+            artifact = projection.artifact_from_path("cup", path, source="repaired")
+            machine = {"id": "machine", "type": "workflow", "position": {"x": 0, "y": 0}, "width": 420, "height": 300}
+            _ops, node = projection.build_output_projection_ops(
+                machine,
+                [machine],
+                artifact,
+                "http://127.0.0.1:17373",
+            )
+        self.assertGreaterEqual(node["position"]["x"], 1_650)
+
+    def test_matching_legacy_render_gets_source_backfill_without_storage_reset(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canvas_demo").write_text("safe\n", encoding="utf-8")
+            path = root / "main_01.png"
+            write_placeholder_png(path, width=96, height=96, kind="main", ordinal=1)
+            artifact = projection.artifact_from_path("cup", path, source="renders")
+            node = {
+                "id": projection.output_node_id("cup", "main_01"),
+                "type": "image",
+                "metadata": {
+                    "content": "blob:kept",
+                    "storageKey": "image:kept",
+                    "workflowProductionOutput": {
+                        "batchId": "cup",
+                        "configId": "main_01",
+                        "sha256": artifact.sha256,
+                        "downloadUrl": "http://127.0.0.1:17373/workflow-production/cup/outputs/main_01",
+                    },
+                },
+            }
+            op = projection.build_render_source_backfill_op(
+                node,
+                artifact,
+                "http://127.0.0.1:17373",
+            )
+
+        self.assertEqual("update_node", op["type"])
+        self.assertEqual("renders", op["metadata"]["workflowProductionOutput"]["source"])
+        self.assertNotIn("storageKey", op["metadata"])
+        self.assertNotIn("content", op["metadata"])
+
+    def test_mismatched_render_proof_records_safe_rejection_without_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".canvas_demo").write_text("safe\n", encoding="utf-8")
+            path = root / "main_01.png"
+            write_placeholder_png(path, width=96, height=96, kind="main", ordinal=1)
+            artifact = projection.artifact_from_path("cup", path, source="renders")
+            node = {
+                "id": projection.output_node_id("cup", "main_01"),
+                "type": "image",
+                "metadata": {
+                    "workflowProductionOutput": {
+                        "batchId": "cup",
+                        "configId": "main_01",
+                        "sha256": "0" * 64,
+                    }
+                },
+            }
+            op = projection.build_render_source_backfill_op(
+                node,
+                artifact,
+                "http://127.0.0.1:17373",
+            )
+
+        proof = op["metadata"]["workflowProductionOutput"]
+        self.assertNotIn("source", proof)
+        self.assertEqual("source_proof_mismatch", proof["sourceBackfillCode"])
+        self.assertNotIn(str(path.parent), str(op))
+
 
 if __name__ == "__main__":
     unittest.main()

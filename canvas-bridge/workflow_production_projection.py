@@ -11,6 +11,8 @@ from typing import Any
 
 
 OUTPUT_NODE_PREFIX = "wfprod-output:"
+REPAIRED_NODE_PREFIX = "wfprod-repaired:"
+OUTPUT_SOURCES = frozenset({"renders", "repaired"})
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,7 @@ class WorkflowProductionArtifact:
     width: int
     height: int
     byte_count: int
+    source: str = "renders"
 
     @property
     def kind(self) -> str:
@@ -42,7 +45,14 @@ def read_png_dimensions(path: Path) -> tuple[int, int]:
     return width, height
 
 
-def artifact_from_path(batch_id: str, path: Path) -> WorkflowProductionArtifact:
+def artifact_from_path(
+    batch_id: str,
+    path: Path,
+    *,
+    source: str = "renders",
+) -> WorkflowProductionArtifact:
+    if source not in OUTPUT_SOURCES:
+        raise ValueError("图片来源不在白名单")
     config_id = path.stem
     if not (
         config_id in {f"main_{index:02d}" for index in range(1, 7)}
@@ -59,11 +69,15 @@ def artifact_from_path(batch_id: str, path: Path) -> WorkflowProductionArtifact:
         width=width,
         height=height,
         byte_count=len(data),
+        source=source,
     )
 
 
-def output_node_id(batch_id: str, config_id: str) -> str:
-    return f"{OUTPUT_NODE_PREFIX}{batch_id}:{config_id}"
+def output_node_id(batch_id: str, config_id: str, source: str = "renders") -> str:
+    if source not in OUTPUT_SOURCES:
+        raise ValueError("图片来源不在白名单")
+    prefix = OUTPUT_NODE_PREFIX if source == "renders" else REPAIRED_NODE_PREFIX
+    return f"{prefix}{batch_id}:{config_id}"
 
 
 def _rect(node: dict[str, Any]) -> tuple[float, float, float, float] | None:
@@ -113,8 +127,9 @@ def _base_position(machine: dict[str, Any], artifact: WorkflowProductionArtifact
         row = artifact.ordinal - 1
         offset_x = 635 + (row // 4) * 195
         offset_y = (-430, -150, 150, 430)[row % 4]
+    source_offset_x = 1_090 if artifact.source == "repaired" else 0
     return (
-        machine_x + machine_width + 140 + offset_x,
+        machine_x + machine_width + 140 + offset_x + source_offset_x,
         machine_y + machine_height / 2 + offset_y - height / 2,
     )
 
@@ -141,7 +156,61 @@ def find_output_position(
 def _download_url(base_url: str, artifact: WorkflowProductionArtifact) -> str:
     batch = urllib.parse.quote(artifact.batch_id, safe="")
     config = urllib.parse.quote(artifact.config_id, safe="")
-    return f"{base_url.rstrip('/')}/workflow-production/{batch}/outputs/{config}"
+    source = urllib.parse.quote(artifact.source, safe="")
+    return f"{base_url.rstrip('/')}/workflow-production/{batch}/outputs/{source}/{config}"
+
+
+def _output_proof(
+    artifact: WorkflowProductionArtifact,
+    base_url: str,
+    machine_id: str | None = None,
+) -> dict[str, Any]:
+    proof: dict[str, Any] = {
+        "batchId": artifact.batch_id,
+        "configId": artifact.config_id,
+        "index": artifact.ordinal if artifact.kind == "main" else artifact.ordinal + 6,
+        "source": artifact.source,
+        "sha256": artifact.sha256,
+        "downloadUrl": _download_url(base_url, artifact),
+        "byteCount": artifact.byte_count,
+    }
+    if machine_id:
+        proof["workflowNodeId"] = machine_id
+    return proof
+
+
+def build_render_source_backfill_op(
+    node: dict[str, Any],
+    artifact: WorkflowProductionArtifact,
+    base_url: str,
+) -> dict[str, Any]:
+    if artifact.source != "renders":
+        raise ValueError("仅允许为正式图补齐来源")
+    metadata = node.get("metadata")
+    proof = metadata.get("workflowProductionOutput") if isinstance(metadata, dict) else None
+    expected_id = output_node_id(artifact.batch_id, artifact.config_id)
+    valid = (
+        node.get("id") == expected_id
+        and isinstance(proof, dict)
+        and proof.get("batchId") == artifact.batch_id
+        and proof.get("configId") == artifact.config_id
+        and proof.get("sha256") == artifact.sha256
+    )
+    if valid:
+        updated = dict(proof)
+        updated.update(_output_proof(artifact, base_url))
+        updated.pop("sourceBackfillStatus", None)
+        updated.pop("sourceBackfillCode", None)
+    else:
+        updated = dict(proof) if isinstance(proof, dict) else {}
+        updated.pop("source", None)
+        updated["sourceBackfillStatus"] = "rejected"
+        updated["sourceBackfillCode"] = "source_proof_mismatch"
+    return {
+        "type": "update_node",
+        "id": str(node.get("id") or expected_id),
+        "metadata": {"workflowProductionOutput": updated},
+    }
 
 
 def build_output_projection_ops(
@@ -153,7 +222,7 @@ def build_output_projection_ops(
     machine_id = str(machine.get("id") or "")
     if not machine_id:
         raise ValueError("工作流机器缺少 id")
-    node_id = output_node_id(artifact.batch_id, artifact.config_id)
+    node_id = output_node_id(artifact.batch_id, artifact.config_id, artifact.source)
     existing = next((node for node in existing_nodes if node.get("id") == node_id), None)
     width, height = _display_size(artifact)
     position = (
@@ -161,16 +230,9 @@ def build_output_projection_ops(
         if existing
         else find_output_position(machine, existing_nodes, artifact)
     )
-    label = f"真实 · {'主图' if artifact.kind == 'main' else '详情'} {artifact.ordinal}"
-    output_metadata = {
-        "workflowNodeId": machine_id,
-        "batchId": artifact.batch_id,
-        "configId": artifact.config_id,
-        "index": artifact.ordinal if artifact.kind == "main" else artifact.ordinal + 6,
-        "sha256": artifact.sha256,
-        "downloadUrl": _download_url(base_url, artifact),
-        "byteCount": artifact.byte_count,
-    }
+    label_prefix = "返修·" if artifact.source == "repaired" else "真实 · "
+    label = f"{label_prefix}{'主图' if artifact.kind == 'main' else '详情'} {artifact.ordinal}"
+    output_metadata = _output_proof(artifact, base_url, machine_id)
     metadata = {
         "content": "",
         "status": "loading",
@@ -197,7 +259,11 @@ def build_output_projection_ops(
         and isinstance(existing_metadata.get("workflowProductionOutput"), dict)
         else {}
     )
-    persisted = bool(existing_metadata.get("storageKey")) and existing_output.get("sha256") == artifact.sha256
+    persisted = (
+        bool(existing_metadata.get("storageKey"))
+        and existing_output.get("sha256") == artifact.sha256
+        and existing_output.get("source", "renders") == artifact.source
+    )
     if existing is None:
         ops.append(
             {

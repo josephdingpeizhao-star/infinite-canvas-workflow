@@ -242,6 +242,82 @@ class ProductionHttpServerTest(unittest.TestCase):
             headers["Access-Control-Expose-Headers"],
         )
 
+    def test_qc_summary_requires_token_and_returns_only_safe_shape(self) -> None:
+        (self.repo / "reports").mkdir()
+        config_ids = [f"main_{index:02d}" for index in range(1, 7)] + [
+            f"detail_{index:02d}" for index in range(1, 9)
+        ]
+        (self.repo / "reports" / "cup_qc_report.json").write_text(
+            json.dumps(
+                {
+                    "product_id": "cup",
+                    "artifact_type": "qc_report",
+                    "checked_assets": [f"{item}.png" for item in config_ids],
+                    "results": [
+                        {
+                            "affected_asset": f"{item}.png",
+                            "check_item": "identity",
+                            "status": "pass",
+                            "notes": "private",
+                        }
+                        for item in config_ids
+                    ],
+                    "issues": [],
+                    "repair_targets": [],
+                    "notes": "private report body",
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._get("/workflow-production/cup/qc-summary", token=None)
+        self.assertEqual(401, ctx.exception.code)
+
+        with self._get("/workflow-production/cup/qc-summary") as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual(14, len(payload["images"]))
+        self.assertEqual(
+            {"configId", "status", "issueCount", "topCategories"},
+            set(payload["images"][0]),
+        )
+        self.assertNotIn("private", json.dumps(payload, ensure_ascii=False))
+
+    def test_missing_qc_summary_returns_404(self) -> None:
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._get("/workflow-production/cup/qc-summary")
+        self.assertEqual(404, ctx.exception.code)
+
+    def test_legacy_output_stays_on_renders_when_repaired_has_same_config(self) -> None:
+        repaired_root = self.workspace / "outputs" / "repaired"
+        repaired_root.mkdir()
+        repaired = repaired_root / "main_01.png"
+        write_placeholder_png(repaired, width=1024, height=1024, kind="main", ordinal=9)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["outputs"]["repaired"] = [str(repaired_root)]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+        with self._get("/workflow-production/cup/outputs/main_01") as response:
+            legacy = response.read()
+        with self._get("/workflow-production/cup/outputs/renders/main_01") as response:
+            render_body = response.read()
+        with self._get("/workflow-production/cup/outputs/repaired/main_01") as response:
+            repaired_body = response.read()
+
+        self.assertEqual(self.image.read_bytes(), legacy)
+        self.assertEqual(self.image.read_bytes(), render_body)
+        self.assertEqual(repaired.read_bytes(), repaired_body)
+        self.assertNotEqual(render_body, repaired_body)
+
+    def test_source_output_rejects_unknown_source_and_path_escape(self) -> None:
+        for path in (
+            "/workflow-production/cup/outputs/unknown/main_01",
+            "/workflow-production/cup/outputs/repaired/%2e%2e%2fmain_01",
+        ):
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                self._get(path)
+            self.assertIn(ctx.exception.code, {400, 404})
+
 
 if __name__ == "__main__":
     unittest.main()
