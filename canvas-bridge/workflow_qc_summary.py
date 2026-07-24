@@ -75,6 +75,8 @@ def build_qc_summary(repository_root: Path, batch_id: str) -> dict[str, Any]:
     for result in results:
         if not isinstance(result, dict):
             raise QcSummaryInvalid("QC 检查项无效")
+        if result.get("affected_asset") is None:
+            continue
         config_id = _asset_config_id(result.get("affected_asset"))
         if config_id is None:
             raise QcSummaryInvalid("QC 检查项图位无效")

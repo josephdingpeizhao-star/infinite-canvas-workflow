@@ -1403,6 +1403,119 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertNotIn("source", proof)
         self.assertEqual("source_proof_mismatch", proof["sourceBackfillCode"])
 
+    def _mark_batch_closed(self) -> bytes:
+        before = self.manifest.read_bytes()
+        (self.repo / "manifests" / "cup.events.jsonl").write_text(
+            json.dumps(
+                {
+                    "ts": "2026-07-24T12:00:00",
+                    "event": "batch_acceptance_closed",
+                    "selection_count": 14,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return before
+
+    def test_closed_batch_rejects_before_manifest_edit_or_executor(self) -> None:
+        before = self._mark_batch_closed()
+        client = FakeCanvasClient()
+        built: list[str] = []
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda step, *_args: built.append(step),
+            route_reader=lambda _path: {
+                "current_stage": "ready",
+                "inputs": {"style_reference_images": {"file_count": 1}},
+            },
+            clock_ms=lambda: 1_100,
+        )
+        service.poll_once()
+
+        machine = client.state["nodes"][0]
+        self.assertEqual([], built)
+        self.assertEqual(before, self.manifest.read_bytes())
+        self.assertEqual(
+            production_service.BATCH_CLOSED_MESSAGE,
+            machine["metadata"]["workflowProduction"]["errorMessage"],
+        )
+
+    def test_closed_batch_refuses_qc_render_and_repair_commands_with_same_copy(self) -> None:
+        for index, command in enumerate(
+            ("run: next", "run: qc", "run: renders", "run: repair"),
+            start=1,
+        ):
+            with self.subTest(command=command):
+                self._mark_batch_closed()
+                client = FakeCanvasClient(command)
+                client.state["nodes"][0]["metadata"]["workflowProduction"]["requestId"] = (
+                    f"closed-{index}"
+                )
+                service = production_service.WorkflowProductionService(
+                    self.repo,
+                    client=client,
+                    executor_builder=lambda *_args: (_ for _ in ()).throw(
+                        AssertionError("closed batch must not build executor")
+                    ),
+                    route_reader=lambda _path: {
+                        "current_stage": "ready",
+                        "inputs": {"style_reference_images": {"file_count": 1}},
+                    },
+                    clock_ms=lambda: 1_100,
+                )
+                service.poll_once()
+                self.assertEqual(
+                    production_service.BATCH_CLOSED_MESSAGE,
+                    client.state["nodes"][0]["metadata"]["workflowProduction"][
+                        "errorMessage"
+                    ],
+                )
+
+    def test_closed_batch_refuses_repaired_projection_without_adding_image(self) -> None:
+        self._mark_batch_closed()
+        client = FakeCanvasClient()
+        machine = client.state["nodes"][0]
+        machine["metadata"]["workflowProduction"]["status"] = "completed"
+        machine["metadata"]["workflowRepairedProjection"] = {
+            "status": "queued",
+            "requestId": "closed-repaired",
+            "requestedAt": 1_000,
+            "batchId": "cup",
+        }
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            route_reader=lambda _path: {"current_stage": "ready"},
+            clock_ms=lambda: 1_100,
+        )
+        service.poll_once()
+
+        self.assertFalse(
+            any(node["id"].startswith("wfprod-repaired:") for node in client.state["nodes"])
+        )
+        self.assertEqual(
+            production_service.BATCH_CLOSED_MESSAGE,
+            machine["metadata"]["workflowRepairedProjection"]["message"],
+        )
+
+    def test_closed_refusal_does_not_append_any_post_close_event(self) -> None:
+        self._mark_batch_closed()
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        before = journal.read_bytes()
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=FakeCanvasClient(),
+            route_reader=lambda _path: {
+                "current_stage": "ready",
+                "inputs": {"style_reference_images": {"file_count": 1}},
+            },
+            clock_ms=lambda: 1_100,
+        )
+        service.poll_once()
+        self.assertEqual(before, journal.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
+from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
 from workflow_style_reference_intake import MAX_STYLE_UPLOAD_BYTES, StyleReferenceUploadRejected
 
 
@@ -20,6 +21,7 @@ DEFAULT_PRODUCTION_HOST = "127.0.0.1"
 DEFAULT_PRODUCTION_PORT = 17373
 UNIT_PRICE_USD = 0.06
 TOTAL_IMAGES = 14
+MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
 WORKBENCH_WORKERS = (
@@ -64,6 +66,7 @@ class WorkflowProductionHttpApplication:
         self.token = token
         self.style_acceptor = style_acceptor
         self.health_provider = health_provider
+        self.acceptance = BatchAcceptanceService(self.repository_root)
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
 
@@ -193,6 +196,18 @@ class WorkflowProductionHttpApplication:
         except QcSummaryInvalid:
             raise ProductionHttpError(409, "qc summary invalid") from None
 
+    def acceptance_status(self, batch_id: str) -> dict[str, Any]:
+        try:
+            return self.acceptance.status(batch_id)
+        except AcceptanceRejected as exc:
+            raise ProductionHttpError(exc.status, "acceptance status rejected") from None
+
+    def acceptance_closeout(self, batch_id: str, payload: Any) -> dict[str, Any]:
+        try:
+            return self.acceptance.close(batch_id, payload)
+        except AcceptanceRejected as exc:
+            raise ProductionHttpError(exc.status, "acceptance closeout rejected") from None
+
     def style_upload(self, batch_id: str, request_id: str, node_id: str, data: bytes) -> dict[str, Any]:
         if self.style_acceptor is None:
             raise ProductionHttpError(404, "style intake unavailable")
@@ -310,6 +325,16 @@ class WorkflowProductionHttpServer:
                         self.end_headers()
                         self.wfile.write(payload)
                         return
+                    if len(segments) == 3 and segments[0] == "workflow-production" and segments[2] == "acceptance-closeout":
+                        payload = json.dumps(application.acceptance_status(segments[1]), ensure_ascii=False).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("content-type", "application/json; charset=utf-8")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", str(len(payload)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
                     if len(segments) == 4 and segments[0] == "workflow-production" and segments[2] == "outputs":
                         data, sha256 = application.output_bytes(segments[1], segments[3], "renders")
                         self.send_response(200)
@@ -371,17 +396,45 @@ class WorkflowProductionHttpServer:
                         length = int(length_values[0])
                     except ValueError:
                         raise ProductionHttpError(400, "bad length") from None
-                    if not 0 < length <= MAX_STYLE_UPLOAD_BYTES:
-                        raise ProductionHttpError(413, "body too large")
                     path = urllib.parse.urlsplit(self.path)
                     segments = [urllib.parse.unquote(item) for item in path.path.split("/") if item]
-                    if len(segments) != 5 or segments[0] != "style-reference-intake" or segments[3] != "files":
-                        raise ProductionHttpError(404, "not found")
-                    if any(not item or any(char in item for char in ("/", "\\", "\0")) for item in segments[1:]):
-                        raise ProductionHttpError(400, "bad route")
+                    is_acceptance = (
+                        len(segments) == 3
+                        and segments[0] == "workflow-production"
+                        and segments[2] == "acceptance-closeout"
+                    )
+                    if is_acceptance:
+                        if not 0 < length <= MAX_ACCEPTANCE_BODY_BYTES:
+                            raise ProductionHttpError(413, "body too large")
+                    else:
+                        if not 0 < length <= MAX_STYLE_UPLOAD_BYTES:
+                            raise ProductionHttpError(413, "body too large")
+                        if len(segments) != 5 or segments[0] != "style-reference-intake" or segments[3] != "files":
+                            raise ProductionHttpError(404, "not found")
+                        if any(not item or any(char in item for char in ("/", "\\", "\0")) for item in segments[1:]):
+                            raise ProductionHttpError(400, "bad route")
                     data = self.rfile.read(length)
                     if len(data) != length:
                         raise ProductionHttpError(400, "short body")
+                    if is_acceptance:
+                        if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
+                            raise ProductionHttpError(415, "json required")
+                        try:
+                            request_payload = json.loads(data.decode("utf-8"))
+                        except (UnicodeError, json.JSONDecodeError):
+                            raise ProductionHttpError(400, "bad json") from None
+                        payload = json.dumps(
+                            application.acceptance_closeout(segments[1], request_payload),
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("content-type", "application/json; charset=utf-8")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", str(len(payload)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
                     payload = json.dumps(
                         application.style_upload(segments[1], segments[2], segments[4], data),
                         ensure_ascii=False,

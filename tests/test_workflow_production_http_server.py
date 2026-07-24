@@ -318,6 +318,93 @@ class ProductionHttpServerTest(unittest.TestCase):
                 self._get(path)
             self.assertIn(ctx.exception.code, {400, 404})
 
+    def _prepare_acceptance_payload(self) -> dict:
+        config_ids = [f"main_{index:02d}" for index in range(1, 7)] + [
+            f"detail_{index:02d}" for index in range(1, 9)
+        ]
+        selections = []
+        for index, config_id in enumerate(config_ids, start=1):
+            kind = "main" if config_id.startswith("main_") else "detail"
+            path = self.workspace / "outputs" / "renders" / f"{config_id}.png"
+            if not path.exists():
+                write_placeholder_png(
+                    path,
+                    width=96,
+                    height=96 if kind == "main" else 128,
+                    kind=kind,
+                    ordinal=index,
+                )
+            import hashlib
+
+            selections.append(
+                {
+                    "configId": config_id,
+                    "source": "renders",
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            )
+        return {
+            "requestId": "acceptance-http-001",
+            "machineId": "machine",
+            "selections": selections,
+        }
+
+    def _post_closeout(
+        self,
+        payload: dict,
+        *,
+        token: str | None = "canvas-token",
+        origin: str | None = "http://localhost:3000",
+    ):
+        headers = {"content-type": "application/json"}
+        if token is not None:
+            headers["x-canvas-agent-token"] = token
+        if origin is not None:
+            headers["Origin"] = origin
+        request = urllib.request.Request(
+            self.base + "/workflow-production/cup/acceptance-closeout",
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers=headers,
+        )
+        return urllib.request.urlopen(request, timeout=2)
+
+    def test_acceptance_closeout_requires_token_and_canvas_origin(self) -> None:
+        payload = self._prepare_acceptance_payload()
+        for token, origin, expected in (
+            (None, "http://localhost:3000", 401),
+            ("canvas-token", "https://example.com", 403),
+        ):
+            with self.subTest(expected=expected):
+                with self.assertRaises(urllib.error.HTTPError) as ctx:
+                    self._post_closeout(payload, token=token, origin=origin)
+                self.assertEqual(expected, ctx.exception.code)
+
+    def test_acceptance_closeout_posts_json_and_returns_closed(self) -> None:
+        with self._post_closeout(self._prepare_acceptance_payload()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        self.assertEqual("closed", payload["status"])
+        self.assertEqual(14, payload["selectionCount"])
+        self.assertEqual("http://localhost:3000", response.headers["Access-Control-Allow-Origin"])
+
+    def test_acceptance_status_is_read_only_and_reflects_closeout(self) -> None:
+        with self._get("/workflow-production/cup/acceptance-closeout") as response:
+            before = json.loads(response.read().decode("utf-8"))
+        with self._post_closeout(self._prepare_acceptance_payload()):
+            pass
+        with self._get("/workflow-production/cup/acceptance-closeout") as response:
+            after = json.loads(response.read().decode("utf-8"))
+        self.assertEqual("open", before["status"])
+        self.assertEqual("closed", after["status"])
+
+    def test_acceptance_closeout_rejects_incomplete_selection(self) -> None:
+        payload = self._prepare_acceptance_payload()
+        payload["selections"].pop()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            self._post_closeout(payload)
+        self.assertEqual(400, ctx.exception.code)
+
+
 
 if __name__ == "__main__":
     unittest.main()

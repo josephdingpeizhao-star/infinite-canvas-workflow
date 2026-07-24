@@ -62,6 +62,7 @@ class WorkflowQcSummaryTest(unittest.TestCase):
             + [
                 {"affected_asset": "detail_03.png", "check_item": "size_ratio", "status": "needs_review", "notes": "private"},
                 {"affected_asset": "detail_06.png", "check_item": "product_angle", "status": "needs_review", "notes": "private"},
+                {"check_item": "batch_platform_readiness", "status": "fail", "notes": "batch-only"},
             ],
             issues=[
                 {
@@ -110,4 +111,3 @@ class WorkflowQcSummaryTest(unittest.TestCase):
         self._write_report(product_id="other")
         with self.assertRaises(workflow_qc_summary.QcSummaryInvalid):
             workflow_qc_summary.build_qc_summary(self.repo, "cup")
-

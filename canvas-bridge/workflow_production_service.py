@@ -53,6 +53,11 @@ _QC_HEARTBEAT_TOTAL = 8
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
 _QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
 _QC_HEARTBEAT_STOP = object()
+BATCH_CLOSED_MESSAGE = "本批次已关账，不能再发起制作、质检、返修或上桌操作。"
+
+
+class BatchClosedGateError(ProductionGateError):
+    pass
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
@@ -485,6 +490,9 @@ class WorkflowProductionService:
             manifest = self._load_manifest(manifest_path, selection.batch_id)
         except ProductionGateError:
             return
+        journal = self._journal_path(manifest_path, selection.batch_id)
+        if self._journal_has_event(journal, "batch_acceptance_closed"):
+            return
         by_id = {
             output_node_id(artifact.batch_id, artifact.config_id): artifact
             for artifact in self.render_artifact_reader(manifest)
@@ -557,6 +565,8 @@ class WorkflowProductionService:
         manifest_path = self._manifest_path(selection.batch_id)
         manifest = self._load_manifest(manifest_path, selection.batch_id)
         journal = self._journal_path(manifest_path, selection.batch_id)
+        if self._journal_has_event(journal, "batch_acceptance_closed"):
+            raise BatchClosedGateError(BATCH_CLOSED_MESSAGE)
         if self._journal_seen(journal, request_id):
             raise ProductionGateError("这次返修图上桌请求已经处理，不会重复投影。")
         route = self.route_reader(manifest_path)
@@ -779,6 +789,8 @@ class WorkflowProductionService:
         manifest_path = self._manifest_path(selection.batch_id)
         manifest = self._load_manifest(manifest_path, selection.batch_id)
         journal = self._journal_path(manifest_path, selection.batch_id)
+        if self._journal_has_event(journal, "batch_acceptance_closed"):
+            raise BatchClosedGateError(BATCH_CLOSED_MESSAGE)
         if self._journal_seen(journal, request_id):
             self._reject(machine, request_id, "这次请求已经处理，不会重复执行。")
             return
@@ -1022,16 +1034,17 @@ class WorkflowProductionService:
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
                 controlled = self._controlled_failure(exc)
-                try:
-                    manifest_path = self._manifest_path(batch_id)
-                    run_controller.append_event(
-                        self._journal_path(manifest_path, batch_id),
-                        "step_failed",
-                        request_id=request_id,
-                        detail=controlled[0] if controlled is not None else "执行已停止，未自动重试",
-                    )
-                except ProductionGateError:
-                    pass
+                if not isinstance(exc, BatchClosedGateError):
+                    try:
+                        manifest_path = self._manifest_path(batch_id)
+                        run_controller.append_event(
+                            self._journal_path(manifest_path, batch_id),
+                            "step_failed",
+                            request_id=request_id,
+                            detail=controlled[0] if controlled is not None else "执行已停止，未自动重试",
+                        )
+                    except ProductionGateError:
+                        pass
                 self._reject(node, request_id, self._safe_failure(exc))
 
     def serve_forever(self) -> None:

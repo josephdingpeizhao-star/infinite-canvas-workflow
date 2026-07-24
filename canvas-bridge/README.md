@@ -152,6 +152,13 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - 每次 QC 使用独立的短生命周期 daemon 心跳工作线程。QC 主线程只投递；画布更新只尝试一次、使用短超时、不进入 `_apply_with_reconnect`。成功时排空后关闭，失败或未预期异常时取消待发项并在终态前关闭，避免迟到 running 覆盖 completed/failed，也不让工作线程在 QC 结束或服务退出后悬挂。
 - 心跳不写 QC 中间产物、不改变报告 schema、检查结论、恢复上限或 12 分钟前端保险丝。离线回归为主仓 542/542、fork 52 项/344 断言；真实显示效果留待下次用户批准的 QC/重跑观察。
 
+### M2-c 第二段：桌面收货与关账
+
+- `GET /workflow-production/{batch}/qc-summary` 只返回逐图 `configId/status/issueCount/topCategories`；有 issues 优先为问题态，无 issues 且任一检查为 needs_review 才是待核对，其余为通过。报告缺失返回 404，前端静默不显示角标。
+- 图片下载保留旧的 renders-only 地址，并新增 `/outputs/renders/{config}` 与 `/outputs/repaired/{config}`。两类路径分别受 manifest 白名单和批次工作区边界约束；返修图使用独立节点 ID 与明确 `source=repaired`，复用浏览器 SHA 和字节数持久化合同。
+- 返修图入口只做磁盘成品投影，不构造工作流命令、不调用执行器。旧正式图只有在稳定节点 ID、批次、图位和磁盘 SHA 全部吻合时才安全补齐 `source=renders`；失败节点保留脱敏证据且不参与角标或收货。
+- `GET/POST /workflow-production/{batch}/acceptance-closeout` 使用同一回环、令牌和浏览器来源保护。POST 必须提交 14 个不同图位的 `configId/source/sha256`；服务逐项核对磁盘实物后追加唯一 `batch_acceptance_closed`。已有关账事件时，制作、QC、返修和返修投影均在改清单、记新事件或调用执行器前拒绝。
+
 ## 可替换执行器边界
 
 - 业务路由负责判断“现在能不能运行”；适配器只负责“如何执行”，不得绕过门禁。
