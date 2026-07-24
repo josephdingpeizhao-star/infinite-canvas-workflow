@@ -143,7 +143,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - CLI 形态为 `python canvas-bridge/qc_repair_cli.py --batch-manifest <manifest> --command "run: repair"`。它不接画布；现有 `RUN_VERBS`、`parse_run_content()` 和 `resolve_command()` 原样保留，repair 只使用 `run_controller` 新增的 CLI 专用门禁。
 - 每图提示词只由原 final prompt、该图全部可执行 repair goals 和原 negative prompt组成；产品身份、绑定角度与画布比例保持不变。`detail_06` 镜像 needs_review 不进入自动目标，`return_stage` 不参与机器分流。
 - 每图通过既有 image-production/openai-image 链生成到 `outputs/repaired/`，参考图与原 renders 同源；renders 不覆盖。单张失败继续但不重试，部分失败清单收尾后停机，不自动复检。2:3 原件审计在 `artifacts/audit/repaired/render_originals/`。
-- 离线实现完成后，第三批于 2026-07-24 真实执行 8/8 返修成功；25 行运行事件已独立入账，135 行账本现已冻结。用户终审已采纳全部 8 张返修图，本批定位为流程验证批，`detail_06` needs_review 关闭；这不自动触发复检或交付。
+- 离线实现完成后，第三批于 2026-07-24 真实执行 8/8 返修成功；25 行运行事件已独立入账。用户曾确认 8 张返修均可接受，本批定位为流程验证批，`detail_06` needs_review 关闭；随后更晚的正式关账事件成为交付选图的唯一依据，最终选择为 6 张 repaired 与 8 张 renders，不再用“是否存在返修图”自行推断。
 
 ### M2-c 第二段前置：completed 续行与 QC 进度心跳
 
@@ -158,6 +158,13 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - 图片下载保留旧的 renders-only 地址，并新增 `/outputs/renders/{config}` 与 `/outputs/repaired/{config}`。两类路径分别受 manifest 白名单和批次工作区边界约束；返修图使用独立节点 ID 与明确 `source=repaired`，复用浏览器 SHA 和字节数持久化合同。
 - 返修图入口只做磁盘成品投影，不构造工作流命令、不调用执行器。旧正式图只有在稳定节点 ID、批次、图位和磁盘 SHA 全部吻合时才安全补齐 `source=renders`；失败节点保留脱敏证据且不参与角标或收货。
 - `GET/POST /workflow-production/{batch}/acceptance-closeout` 使用同一回环、令牌和浏览器来源保护。POST 必须提交 14 个不同图位的 `configId/source/sha256`；服务逐项核对磁盘实物后追加唯一 `batch_acceptance_closed`。已有关账事件时，制作、QC、返修和返修投影均在改清单、记新事件或调用执行器前拒绝。
+
+### M2-e：关账后交付打包（NC-04）
+
+- `python canvas-bridge/delivery_cli.py --batch-manifest <主仓库批次清单> --command "run: delivery"` 是独立的纯本地导出入口，不接画布、不进入生产路由、不需要执行开关、密钥或任何模型服务。它复用现有命令解析确认唯一命令，但不修改 `run_controller.py` 的生产步骤与冻结逻辑。
+- 唯一 `batch_acceptance_closed` 是选图权威。CLI 要求批次号、安全标记、账本、14 个不重复图位和来源白名单全部一致，并在创建正式交付目录前逐张重算磁盘 SHA-256；任一不符即停止且零正式产物。`杯子_20260722` 的最终选择为 repaired 6 张（`main_01`、`main_02`、`detail_01`、`detail_02`、`detail_05`、`detail_06`）与 renders 8 张。
+- 交付物固定为 `deliveries/<批次>/images/`、JSON/Markdown 两份清单、`deliveries/<批次>.zip` 和标准 `.zip.sha256` 旁车。ZIP 条目顺序、时间、权限与 Deflate 9 参数固定，包内文件与交付目录逐字节一致；旁车避免让包内清单自我引用 ZIP 哈希。
+- 账本已有 `delivery_packaged`、完整交付物已存在、残留目录或排他锁存在时均拒绝重复运行。残留现场不自动删除、不覆盖；成功事件只记录关账请求、来源计数、选择摘要以及 ZIP/清单哈希和字节数，不记录路径或异常正文。
 
 ## 可替换执行器边界
 
@@ -190,10 +197,10 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。连接、正常响应读取或错误响应读取超时均统一为不含密钥、提示词和原始响应的中文失败；超时永不自动重试，也不留下半成品。
 4. 主图请求固定 `1024x1024`，详情图请求继续使用既有 `1024x1536` 映射，最终统一要求精确 3:4。供应端原图已是 3:4 时保持原文件；精确 2:3 时先保留审计原件，再自动扩展不足方向的镜像虚化背景，1024×1536 固定左右各补 64px 为 1152×1536，原商品与文字区域不裁剪、不缩放、不拉伸；其他异常比例仍停机。首批历史上的 `detail_02` 与 `detail_05` 已按相同参数人工扩边并保留原件；2026-07-23 起该参数由观察器自动执行，扩边事实以 `render_auto_padded` 记录，扩边后 SHA 仍由 `image_persisted` 记录。
 5. `shuiping_20260712` 已完成 prompts-only 门禁、模型探测、全部真实出图和真实 QC。六张主图均为有效 `1254x1254` PNG；八张详情图均为有效且精确 3:4 的 PNG。正式 renders 恰好 14 个文件，QC 后字节数不变；事件账本 72 行，唯一 `qc_report.json` 已生成，真实路由为 `ready`。ComfyUI 作业与 repaired 均为 0；返修决策见 `docs/CANVAS_PROJECT_STATE.md` §8。
-6. `杯子_20260722` 已完成 14/14 出图、第二次真实 QC 与 8/8 真实返修；唯一 QC 报告和 135 行事件账本已归档。用户已采纳全部 8 张返修图并关闭 `detail_06` needs_review；未自动复检或交付。
+6. `杯子_20260722` 已完成 14/14 出图、第二次真实 QC、8/8 真实返修与 NC-03 正式关账；146 行事件账本已归档。交付权威选择为 6 张 repaired 与 8 张 renders；NC-04 离线打包能力已实现，但真实交付包和 `delivery_packaged` 事件留给用户后续主动运行 CLI 生成。
 
 ## 状态
 
 阶段 1（只读实时投影）、阶段 2（布局持久化）、阶段 3（受控编辑，`--apply-edits`）、阶段 4（执行接入，`--serve` 运行台）均已跑通并有测试与现场验证。M1-a、M1-b 已完成，用户于 2026-07-18 亲手走完 M1-c 全剧本并确认“全部顺利，没有卡点”，M1 正式闭环。
 
-2026-07-24 最新状态：第三批 `杯子_20260722` 已完成 14/14 正式出图、第二次真实 QC 和 8/8 真实返修，事件账本 135 行并冻结。用户终审采纳全部返修图，本批定位为流程验证批，`detail_06` needs_review 关闭。QC 机器现有 7+1 组进度心跳，completed 可经费用确认发送 `run: next`；主仓 542/542、fork 52 项/344 断言及 TypeScript 检查通过。真实心跳和 completed 点击效果留待下次获批运行观察。
+2026-07-24 最新状态：第三批 `杯子_20260722` 已完成 14/14 正式出图、第二次真实 QC、8/8 真实返修和 NC-03 关账，146 行账本已入账冻结；最终交付选择为 6 张 repaired 与 8 张 renders。NC-04 纯本地交付打包已完成离线实现，真实出包与成功事件留给用户主动运行；主仓 586/586 测试通过，fork 保持 `ac8923c`、56 个登记锚点且零触碰。
