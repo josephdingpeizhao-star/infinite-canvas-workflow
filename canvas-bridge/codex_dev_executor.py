@@ -626,6 +626,22 @@ class CodexDevExecutor:
         self.context = context
         self.transport = transport or CanvasAgentCodexTransport()
         self.repository_root = repository_root or self._default_repository_root(context.manifest_path)
+        self._qc_progress_callback: Callable[[int, int], None] | None = None
+
+    def set_qc_progress_callback(
+        self,
+        callback: Callable[[int, int], None] | None,
+    ) -> None:
+        self._qc_progress_callback = callback
+
+    def _emit_qc_progress(self, completed: int, total: int) -> None:
+        callback = self._qc_progress_callback
+        if callback is None:
+            return
+        try:
+            callback(completed, total)
+        except Exception:
+            pass
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         safe_message = ""
@@ -1115,6 +1131,7 @@ class CodexDevExecutor:
                             "codex-dev 收到无效的 QC 组内线程返回"
                         )
             chunks.append(chunk)
+            self._emit_qc_progress(len(chunks), 8)
 
         summary_turn = self._run_transport(
             build_qc_summary_prompt(plan, tuple(chunks)),
@@ -1144,6 +1161,7 @@ class CodexDevExecutor:
                         "codex-dev 收到无效的 QC 组内线程返回"
                     )
 
+        self._emit_qc_progress(8, 8)
         report = assemble_qc_report(plan, tuple(chunks), summary)
         output_path = write_qc_report_exclusive(plan, report)
         detail = "QC 报告已生成"

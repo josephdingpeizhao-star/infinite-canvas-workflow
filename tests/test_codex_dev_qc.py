@@ -27,6 +27,7 @@ from executor_contract import (  # noqa: E402
 )
 import codex_dev_qc as qc  # noqa: E402
 from codex_dev_qc import load_qc_plan  # noqa: E402
+import workflow_production_service as production_service  # noqa: E402
 
 
 class FakeQcTransport:
@@ -59,6 +60,15 @@ class ContextBudgetQcTransport(FakeQcTransport):
         if attachments:
             raise RuntimeError("simulated thread context budget exhausted")
         return super().continue_turn(thread_id, prompt, attachments)
+
+
+class FakeHeartbeatCanvasClient:
+    def __init__(self) -> None:
+        self.ops: list[list[dict[str, object]]] = []
+
+    def apply_ops(self, ops: list[dict[str, object]]) -> int:
+        self.ops.append(ops)
+        return len(ops)
 
 
 class CodexDevQcTest(unittest.TestCase):
@@ -575,6 +585,124 @@ class CodexDevQcTest(unittest.TestCase):
                 tuple(len(call[1]) for call in transport.calls),
             )
             self.assertEqual(("main_01.png", "front.jpg", "main_02.png", "side.jpg"), tuple(item.name for item in transport.calls[0][1]))
+            self.assertTrue(output_path.is_file())
+
+    def test_qc_executor_emits_eight_progress_signals_without_changing_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, output_path = self.make_qc_fixture(root)
+            context = ExecutorContext(
+                manifest=manifest,
+                manifest_path=root / "manifests" / "p1.batch_manifest.json",
+                environment={"CODEX_DEV_ALLOW_REAL_EXECUTION": "1"},
+            )
+            plan = load_qc_plan(manifest, root)
+            chunks = [self.valid_batch_response(batch) for batch in plan.batches]
+            summary = self.valid_summary_response(plan)
+            values = [*chunks, summary]
+            transport = FakeQcTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(value, ensure_ascii=False),
+                        thread_id=f"qc-progress-{index}",
+                    )
+                    for index, value in enumerate(values, start=1)
+                ]
+            )
+            client = FakeHeartbeatCanvasClient()
+            ticks = iter(range(1_000, 1_100))
+            service = production_service.WorkflowProductionService(
+                root,
+                client=client,
+                clock_ms=lambda: next(ticks),
+            )
+            worker = service._start_qc_heartbeat_worker("request-progress")
+            machine = {
+                "id": "machine",
+                "metadata": {
+                    "workflowProduction": {
+                        "status": "running",
+                        "requestId": "request-progress",
+                        "batchId": "p1",
+                        "producedCount": 14,
+                    }
+                },
+            }
+            executor = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            )
+            executor.set_qc_progress_callback(
+                service._qc_progress_callback(
+                    worker,
+                    machine,
+                    "# request-id: request-progress\n# accepted",
+                )
+            )
+
+            try:
+                executor.execute(ExecutionRequest(step="qc"))
+            finally:
+                service._close_qc_heartbeat_worker(worker, drain=True)
+
+            heartbeat_states = [
+                op["metadata"]["workflowProduction"]
+                for operation_batch in client.ops
+                for op in operation_batch
+            ]
+            self.assertEqual(8, len(heartbeat_states))
+            self.assertEqual(
+                [f"正在逐张质检 14 张成图…（第 {index}/8 组完成）" for index in range(1, 8)]
+                + ["14 张成图质检汇总已完成，正在生成 QC 报告…（第 8/8 组完成）"],
+                [state["message"] for state in heartbeat_states],
+            )
+            self.assertEqual(["running"] * 8, [state["status"] for state in heartbeat_states])
+            self.assertEqual(set(), service._qc_heartbeat_workers)
+            self.assertEqual(
+                qc.assemble_qc_report(plan, tuple(chunks), summary),
+                json.loads(output_path.read_text(encoding="utf-8")),
+            )
+
+    def test_qc_progress_callback_exception_does_not_interrupt_report(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            manifest, output_path = self.make_qc_fixture(root)
+            context = ExecutorContext(
+                manifest=manifest,
+                manifest_path=root / "manifests" / "p1.batch_manifest.json",
+                environment={"CODEX_DEV_ALLOW_REAL_EXECUTION": "1"},
+            )
+            plan = load_qc_plan(manifest, root)
+            values = [self.valid_batch_response(batch) for batch in plan.batches]
+            values.append(self.valid_summary_response(plan))
+            transport = FakeQcTransport(
+                [
+                    CodexTurnResult(
+                        text=json.dumps(value, ensure_ascii=False),
+                        thread_id=f"qc-callback-failure-{index}",
+                    )
+                    for index, value in enumerate(values, start=1)
+                ]
+            )
+            callback_count = 0
+
+            def failing_callback(_completed: int, _total: int) -> None:
+                nonlocal callback_count
+                callback_count += 1
+                raise RuntimeError("simulated canvas heartbeat failure")
+
+            executor = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            )
+            executor.set_qc_progress_callback(failing_callback)
+
+            result = executor.execute(ExecutionRequest(step="qc"))
+
+            self.assertEqual(8, callback_count)
+            self.assertEqual((output_path,), result.outputs)
             self.assertTrue(output_path.is_file())
 
     def test_qc_executor_recovers_unicode_and_truncation_within_each_batch_thread(self) -> None:

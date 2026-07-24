@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -181,6 +182,46 @@ class QcReportExecutor:
         self.executed.append(request.step)
         if request.step != "qc":
             raise AssertionError(request.step)
+        self.report_path.parent.mkdir(parents=True, exist_ok=True)
+        self.report_path.write_text(
+            json.dumps({"product_id": "cup", "artifact_type": "qc_report"}),
+            encoding="utf-8",
+        )
+        return ExecutionResult(
+            detail="QC 报告已生成",
+            outputs=(self.report_path,),
+            provider=self.name,
+        )
+
+
+class ProgressQcReportExecutor:
+    name = "fake-progress-qc-report"
+
+    def __init__(
+        self,
+        executed: list[str],
+        report_path: Path,
+        *,
+        failure: BaseException | None = None,
+    ):
+        self.executed = executed
+        self.report_path = report_path
+        self.failure = failure
+        self.progress_callback = None
+
+    def set_qc_progress_callback(self, callback) -> None:
+        self.progress_callback = callback
+
+    def execute(self, request):
+        self.executed.append(request.step)
+        if request.step != "qc":
+            raise AssertionError(request.step)
+        progress_count = 2 if self.failure is not None else 8
+        for completed in range(1, progress_count + 1):
+            if self.progress_callback is not None:
+                self.progress_callback(completed, 8)
+        if self.failure is not None:
+            raise self.failure
         self.report_path.parent.mkdir(parents=True, exist_ok=True)
         self.report_path.write_text(
             json.dumps({"product_id": "cup", "artifact_type": "qc_report"}),
@@ -794,6 +835,128 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual("质检完成，QC 报告已生成。", production["message"])
         events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
+
+    def test_qc_progress_updates_machine_eight_times_and_closes_worker(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
+        client = FakeCanvasClient()
+        executed: list[str] = []
+        ticks = iter(range(1_100, 1_200))
+
+        def route_reader(_path):
+            ready = report_path.is_file()
+            return {
+                "current_stage": "ready" if ready else "needs_qc_reports",
+                "next_required_skill": None if ready else "qc-inspector",
+                "blocked_reasons": [],
+                "available_artifacts": ["final_prompts", *(["qc_reports"] if ready else [])],
+                "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+                "inputs": {"style_reference_images": {"file_count": 1}},
+            }
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: ProgressQcReportExecutor(
+                executed,
+                report_path,
+            ),
+            route_reader=route_reader,
+            integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+            artifact_reader=lambda _manifest: artifacts,
+            clock_ms=lambda: next(ticks),
+            environment={},
+            persistence_timeout_ms=0,
+        )
+
+        service.poll_once()
+
+        heartbeat_states = [
+            op["metadata"]["workflowProduction"]
+            for operation_batch in client.ops
+            for op in operation_batch
+            if op.get("type") == "update_node"
+            and "组完成" in str((op.get("metadata") or {}).get("workflowProduction", {}).get("message") or "")
+        ]
+        self.assertEqual(8, len(heartbeat_states))
+        self.assertEqual(["running"] * 8, [state["status"] for state in heartbeat_states])
+        self.assertEqual(["qc"] * 8, [state["step"] for state in heartbeat_states])
+        self.assertEqual([14] * 8, [state["producedCount"] for state in heartbeat_states])
+        self.assertEqual(
+            sorted(state["updatedAt"] for state in heartbeat_states),
+            [state["updatedAt"] for state in heartbeat_states],
+        )
+        self.assertEqual(
+            "completed",
+            client.state["nodes"][0]["metadata"]["workflowProduction"]["status"],
+        )
+        self.assertEqual(set(), service._qc_heartbeat_workers)
+        self.assertFalse(
+            any(
+                thread.is_alive() and thread.name.startswith("qc-heartbeat-")
+                for thread in threading.enumerate()
+            )
+        )
+
+    def test_qc_terminal_paths_close_workers_before_failed_or_exceptional_exit(self) -> None:
+        artifacts = self._fourteen_artifacts()
+        route = {
+            "current_stage": "needs_qc_reports",
+            "next_required_skill": "qc-inspector",
+            "blocked_reasons": [],
+            "available_artifacts": ["final_prompts"],
+            "outputs": {"renders": {"file_count": 14}, "repaired": {"file_count": 0}},
+            "inputs": {"style_reference_images": {"file_count": 1}},
+        }
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        cases = (
+            ("failed", ExecutorExecutionError("simulated qc failure")),
+            ("exception", RuntimeError("simulated unexpected qc exception")),
+        )
+        for case_name, failure in cases:
+            with self.subTest(case=case_name):
+                if journal.exists():
+                    journal.unlink()
+                client = FakeCanvasClient()
+                executed: list[str] = []
+                service = production_service.WorkflowProductionService(
+                    self.repo,
+                    client=client,
+                    executor_builder=lambda _step, _manifest, _path, _on_output, failure=failure: ProgressQcReportExecutor(
+                        executed,
+                        self.workspace / "artifacts" / "qc_reports" / f"{case_name}.json",
+                        failure=failure,
+                    ),
+                    route_reader=lambda _path: route,
+                    integrity_reader=lambda _route: {"found": True, "status": "pass", "render_blocked": False},
+                    artifact_reader=lambda _manifest: artifacts,
+                    clock_ms=lambda: 1_100,
+                    environment={},
+                    persistence_timeout_ms=0,
+                )
+
+                if case_name == "exception":
+                    with self.assertRaisesRegex(RuntimeError, "unexpected qc exception"):
+                        service.poll_once()
+                else:
+                    service.poll_once()
+                    terminal_states = [
+                        op["metadata"]["workflowProduction"]["status"]
+                        for operation_batch in client.ops
+                        for op in operation_batch
+                        if op.get("type") == "update_node"
+                        and "workflowProduction" in (op.get("metadata") or {})
+                    ]
+                    self.assertEqual("failed", terminal_states[-1])
+                    self.assertNotIn("running", terminal_states[terminal_states.index("failed") + 1 :])
+
+                self.assertEqual(set(), service._qc_heartbeat_workers)
+                self.assertFalse(
+                    any(
+                        thread.is_alive() and thread.name.startswith("qc-heartbeat-")
+                        for thread in threading.enumerate()
+                    )
+                )
 
     def test_render_completion_records_once_then_continues_to_qc(self) -> None:
         report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"

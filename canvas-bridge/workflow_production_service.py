@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -46,6 +48,10 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
+_QC_HEARTBEAT_TOTAL = 8
+_QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
+_QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
+_QC_HEARTBEAT_STOP = object()
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
@@ -108,6 +114,59 @@ def discover_accepted_artifacts(manifest: Mapping[str, Any]) -> tuple[WorkflowPr
     return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
 
 
+class _QcHeartbeatWorker:
+    def __init__(
+        self,
+        request_id: str,
+        sender: Callable[[list[dict[str, Any]]], None],
+    ) -> None:
+        self.request_id = request_id
+        self.sender = sender
+        self._queue: queue.Queue[object] = queue.Queue()
+        self._state_lock = threading.Lock()
+        self._accepting = True
+        self._cancel_pending = False
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"qc-heartbeat-{request_id[:12] or 'unknown'}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def alive(self) -> bool:
+        return self._thread.is_alive()
+
+    def submit(self, ops: list[dict[str, Any]]) -> None:
+        with self._state_lock:
+            if not self._accepting:
+                return
+            self._queue.put(ops)
+
+    def close(self, *, drain: bool) -> None:
+        with self._state_lock:
+            if not self._accepting:
+                return
+            self._accepting = False
+            self._cancel_pending = not drain
+            self._queue.put(_QC_HEARTBEAT_STOP)
+        self._thread.join(_QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS)
+
+    def _run(self) -> None:
+        while True:
+            item = self._queue.get()
+            if item is _QC_HEARTBEAT_STOP:
+                return
+            with self._state_lock:
+                cancel_pending = self._cancel_pending
+            if cancel_pending:
+                continue
+            try:
+                self.sender(item)
+            except Exception:
+                pass
+
+
 class WorkflowProductionService:
     def __init__(
         self,
@@ -142,6 +201,7 @@ class WorkflowProductionService:
         self.diagnostic_recorder = diagnostic_recorder
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
+        self._qc_heartbeat_workers: set[_QcHeartbeatWorker] = set()
 
     @staticmethod
     def _production_state(node: Mapping[str, Any]) -> dict[str, Any]:
@@ -249,6 +309,61 @@ class WorkflowProductionService:
             except ic_client.CanvasAgentError:
                 self.sleep(max(self.interval, 2.0))
         raise ExecutorExecutionError("真实工作流服务已停止")
+
+    def _send_qc_heartbeat_once(self, ops: list[dict[str, Any]]) -> None:
+        if self.client is ic_client:
+            ic_client.call_tool(
+                "canvas_apply_ops",
+                {"ops": ops},
+                timeout=_QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS,
+            )
+            return
+        self.client.apply_ops(ops)
+
+    def _start_qc_heartbeat_worker(self, request_id: str) -> _QcHeartbeatWorker:
+        worker = _QcHeartbeatWorker(request_id, self._send_qc_heartbeat_once)
+        self._qc_heartbeat_workers.add(worker)
+        return worker
+
+    def _close_qc_heartbeat_worker(
+        self,
+        worker: _QcHeartbeatWorker,
+        *,
+        drain: bool,
+    ) -> None:
+        try:
+            worker.close(drain=drain)
+        finally:
+            if not worker.alive:
+                self._qc_heartbeat_workers.discard(worker)
+
+    def _qc_progress_callback(
+        self,
+        worker: _QcHeartbeatWorker,
+        machine: Mapping[str, Any],
+        accepted_content: str,
+    ) -> Callable[[int, int], None]:
+        def report(completed: int, total: int) -> None:
+            if total != _QC_HEARTBEAT_TOTAL or completed not in range(1, total + 1):
+                return
+            if completed < total:
+                message = f"正在逐张质检 14 张成图…（第 {completed}/{total} 组完成）"
+            else:
+                message = "14 张成图质检汇总已完成，正在生成 QC 报告…（第 8/8 组完成）"
+            worker.submit(
+                [
+                    self._machine_update(
+                        machine,
+                        status="running",
+                        content=accepted_content,
+                        step="qc",
+                        produced_count=PRODUCTION_TOTAL_IMAGES,
+                        message=message,
+                    )
+                ]
+            )
+
+        return report
 
     def _persisted(self, node_id: str, sha256: str) -> bool:
         state = self.client.call_tool("canvas_get_state")
@@ -611,8 +726,22 @@ class WorkflowProductionService:
                 )
             else:
                 executor = self.executor_builder(step, manifest, manifest_path, on_output)
+            qc_heartbeat_worker: _QcHeartbeatWorker | None = None
+            execution_succeeded = False
             try:
+                if step == "qc":
+                    qc_heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
+                    binder = getattr(executor, "set_qc_progress_callback", None)
+                    if callable(binder):
+                        binder(
+                            self._qc_progress_callback(
+                                qc_heartbeat_worker,
+                                machine,
+                                accepted_content,
+                            )
+                        )
                 result = run_controller.execute_step(executor, step)
+                execution_succeeded = True
             except ExecutorExecutionError as exc:
                 code = str(getattr(exc, "code", ""))
                 if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
@@ -641,6 +770,12 @@ class WorkflowProductionService:
                     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
                         pass
                 raise
+            finally:
+                if qc_heartbeat_worker is not None:
+                    self._close_qc_heartbeat_worker(
+                        qc_heartbeat_worker,
+                        drain=execution_succeeded,
+                    )
             run_controller.append_event(journal, "step_succeeded", request_id=request_id, step=step, detail=result.detail[:160])
             if step == "renders":
                 produced_count = len(self.artifact_reader(manifest))
