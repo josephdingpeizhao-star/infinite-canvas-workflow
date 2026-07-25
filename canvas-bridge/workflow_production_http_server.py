@@ -19,6 +19,10 @@ from canvas_readonly_assistant import (
     AssistantQuestionNotFound,
     ReadonlyAssistantError,
 )
+from canvas_command_assistant import (
+    CommandAssistantError,
+    CommandDraftNotFound,
+)
 
 
 DEFAULT_PRODUCTION_HOST = "127.0.0.1"
@@ -27,6 +31,7 @@ UNIT_PRICE_USD = 0.06
 TOTAL_IMAGES = 14
 MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
+MAX_COMMAND_ASSISTANT_BODY_BYTES = 16 * 1024
 DRAIN_CAP = 256 * 1024
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
@@ -95,12 +100,14 @@ class WorkflowProductionHttpApplication:
         style_acceptor: Any | None = None,
         health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
         assistant_service: Any | None = None,
+        command_assistant_service: Any | None = None,
     ):
         self.repository_root = repository_root.resolve()
         self.token = token
         self.style_acceptor = style_acceptor
         self.health_provider = health_provider
         self.assistant_service = assistant_service
+        self.command_assistant_service = command_assistant_service
         self.acceptance = BatchAcceptanceService(self.repository_root)
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
@@ -277,6 +284,28 @@ class WorkflowProductionHttpApplication:
         except KeyError:
             raise AssistantQuestionNotFound("问答编号不存在") from None
 
+    def command_assistant_submit(self, payload: Any) -> dict[str, Any]:
+        if self.command_assistant_service is None:
+            raise CommandDraftNotFound("指令助手未启动")
+        if not isinstance(payload, dict) or set(payload) != {"utterance"}:
+            raise CommandAssistantError("指令助手请求格式无效")
+        try:
+            return self.command_assistant_service.submit(payload.get("utterance"))
+        except CommandAssistantError:
+            raise
+        except ValueError as exc:
+            raise CommandAssistantError(str(exc)) from None
+
+    def command_assistant_status(self, request_id: str) -> dict[str, Any]:
+        if self.command_assistant_service is None:
+            raise CommandDraftNotFound("指令助手未启动")
+        try:
+            return self.command_assistant_service.status(request_id)
+        except CommandAssistantError:
+            raise
+        except KeyError:
+            raise CommandDraftNotFound("命令草稿编号不存在") from None
+
 
 class _LocalThreadingHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
@@ -294,6 +323,7 @@ class WorkflowProductionHttpServer:
         style_acceptor: Any | None = None,
         health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
         assistant_service: Any | None = None,
+        command_assistant_service: Any | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
@@ -305,6 +335,7 @@ class WorkflowProductionHttpServer:
             style_acceptor=style_acceptor,
             health_provider=health_provider,
             assistant_service=assistant_service,
+            command_assistant_service=command_assistant_service,
         )
         self.host = host
         self.port = port
@@ -376,7 +407,7 @@ class WorkflowProductionHttpServer:
 
             def _assistant_error(
                 self,
-                exc: ReadonlyAssistantError,
+                exc: ReadonlyAssistantError | CommandAssistantError,
                 *,
                 origin: str | None,
             ) -> None:
@@ -408,6 +439,14 @@ class WorkflowProductionHttpServer:
                         self.wfile.write(payload)
                         return
                     application.authorize(self.headers.get("x-canvas-agent-token") or "")
+                    if len(segments) == 3 and segments[:2] == ["command-assistant", "drafts"]:
+                        try:
+                            snapshot = application.command_assistant_status(segments[2])
+                        except CommandAssistantError as exc:
+                            self._assistant_error(exc, origin=origin)
+                            return
+                        self._assistant_response(200, snapshot, origin=origin)
+                        return
                     if len(segments) == 3 and segments[:2] == ["readonly-assistant", "questions"]:
                         try:
                             snapshot = application.assistant_status(segments[2])
@@ -510,7 +549,15 @@ class WorkflowProductionHttpServer:
                         for item in assistant_path.path.split("/")
                         if item
                     ]
-                    if assistant_segments == ["readonly-assistant", "questions"]:
+                    is_readonly_assistant = assistant_segments == [
+                        "readonly-assistant",
+                        "questions",
+                    ]
+                    is_command_assistant = assistant_segments == [
+                        "command-assistant",
+                        "drafts",
+                    ]
+                    if is_readonly_assistant or is_command_assistant:
                         if self.headers.get("Transfer-Encoding"):
                             raise ProductionHttpError(400, "transfer encoding rejected")
                         assistant_lengths = self.headers.get_all("Content-Length") or []
@@ -521,7 +568,12 @@ class WorkflowProductionHttpServer:
                         except ValueError:
                             raise ProductionHttpError(400, "bad length") from None
                         declared_body_length = assistant_length
-                        if not 0 < assistant_length <= MAX_READONLY_ASSISTANT_BODY_BYTES:
+                        assistant_limit = (
+                            MAX_READONLY_ASSISTANT_BODY_BYTES
+                            if is_readonly_assistant
+                            else MAX_COMMAND_ASSISTANT_BODY_BYTES
+                        )
+                        if not 0 < assistant_length <= assistant_limit:
                             raise ProductionHttpError(413, "body too large")
                         if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
                             raise ProductionHttpError(415, "json required")
@@ -534,10 +586,14 @@ class WorkflowProductionHttpServer:
                         except (UnicodeError, json.JSONDecodeError):
                             raise ProductionHttpError(400, "bad json") from None
                         try:
-                            assistant_snapshot = application.assistant_submit(
-                                assistant_payload
+                            assistant_snapshot = (
+                                application.assistant_submit(assistant_payload)
+                                if is_readonly_assistant
+                                else application.command_assistant_submit(
+                                    assistant_payload
+                                )
                             )
-                        except ReadonlyAssistantError as exc:
+                        except (ReadonlyAssistantError, CommandAssistantError) as exc:
                             self._assistant_error(exc, origin=origin)
                             return
                         assistant_status = (

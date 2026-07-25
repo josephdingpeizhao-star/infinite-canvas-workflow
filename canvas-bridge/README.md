@@ -30,6 +30,7 @@
 - `workflow_production_projection.py` / `workflow_production_render_observer.py`：正式 PNG 落盘后逐张上桌并连回机器；固定 `wfprod-output:<batch>:<config>` 节点保留旧成果并避让。主图只收正方形，详情精确 3:4 直接放行；精确 2:3 先原样审计，再用左右最外 24px 条带镜像、LANCZOS 拉伸和 radius=18 虚化自动补足背景，原图完整保留在中央并原子替换为精确 3:4。renders 开始前先用同一规则清扫存量详情 PNG；审计同名不同 SHA、主图非正方形和详情其他比例仍停机。Pillow 只在 2:3 分支延迟导入，缺失时回退原审计停机行为。
 - `workflow_production_http_server.py`：固定 `127.0.0.1:17373` 的只读费用/正式 PNG 端点和风格补登上传入口。复用 canvas-agent 令牌，仅接受本机画布来源；正式图片返回 SHA-256，并在跨源成功响应中以 `Access-Control-Expose-Headers: x-content-sha256` 明确允许浏览器读取，浏览器再次核验后转存 localforage，节点不依赖服务长期在线，也不使用 data URI。`GET /workbench-health` 只返回四名工人的状态与最后状态时间，健康为 200，关键工人停止或画布重连中为 503，不返回令牌、路径或异常原文。
 - `canvas_readonly_assistant.py`：M3-a 只读批次助手。只从仓库批次清单、事件账本、正式 QC 报告、交付清单和旧状态快照的封闭白名单取证；事件、QC 与交付优先于旧快照。每问新开一次 `gpt-5.5 / xhigh` 本机 codex-dev 回合，不带附件、不续线程；真实调用前和传输前都检查 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`。同一时刻只允许一问，重复问题直接拒绝且不排队；后端和前端等待均不超过 300 秒，超时只返回脱敏失败文案且不自动重试。
+- `canvas_command_assistant.py`：M3-b 说人话指令起草器。常见中文说法先走本地规则，模糊话术才使用一次无附件 `gpt-5.5 / xhigh` codex-dev 回合；模型只返回 `command/question/unsupported` 结构化意图。命令必须再次逐字命中 `run: next`、九步骤 `run` 或九步骤 `retry` 的 19 条闭集才形成草稿。本模块不读取批次文件、不写画布、不调执行器或 `run_controller`，也不判断批次业务门禁。
 - `workflow_style_reference_intake.py`：M2-b “画布补登 A”通道。用户把磁盘风格图直接连到已登记信息卡；全部浏览器声明、节点凭证、字节数、类型和 SHA-256 一致后，才把原字节写入批准的 `inputs/style_refs` 并新建独立回执。白底原图、资产清单和建批回执不改写；不一致时整次硬停止且不自动重试。
 - `canvas_workbench_service.py`：日常“画布工作台”承载入口。在同一进程中运行 M1 demo、M2-a 建批、M2-b 真实制作和风格补登，并统一管理 17372/17373 两个回环监听。建批、真实制作、风格补登是关键工人，任一意外停止都会让整机停止并非零退出；demo 仍按既有隔离策略处理。脱敏工人状态及固定白名单内的生产失败码只追加到受标记保护的 `canvas_workbench.events.jsonl`。M1 的 0 元演示行为保持不变；旧 demo 单服务入口继续保留作对照。
 - `openai_image_executor.py`：GPT Image 2 适配器（默认模型 `gpt-image-2`），纯标准库 HTTP；无参考图走 `/v1/images/generations`，有参考图走 `/v1/images/edits`。HTTP 传输可注入，自动测试不访问真实网络。
@@ -89,6 +90,14 @@ python scripts/build_batch_manifest.py --product-id <批次编号> --product-typ
 这一入口只回答已登记批次的状态、QC、失败事件和交付情况，不读取代码、密钥、启动器、fork 或任意本机目录，也不接受图片附件或执行请求。问题上限 2 KiB、历史最多 8 条且 8 KiB、只读证据最多 32 KiB、最终提问最多 48 KiB、事件最多 200 条。每次问答使用新的模型回合；服务只保留少量进程内状态，不把问题、答案或线程编号写入仓库、批次工作区或事件账本。
 
 真实问答必须由工作台进程显式带入 `CODEX_DEV_ALLOW_REAL_EXECUTION=1`。未开启时立即用人话拒绝；问答进行中再次提交也立即拒绝且不排队。300 秒到达后，轮询必定进入脱敏失败终态；即使底层调用迟到，迟到答案也不会覆盖超时结果，新问题仍要等底层安全收尾完成，以保证任何时刻至多一个真实调用。
+
+## M3-b 说人话下指令
+
+“批次问答（只读）”页签升级为“批次助手”。明确问题仍转交上面的 M3-a 只读问答；“开始做图”“继续下一步”“重跑质检”等操作要求先经 `POST /command-assistant/drafts` 辨认，模糊话术再以 `GET /command-assistant/drafts/<requestId>` 读取结果。规则命中不调用模型；明确越范围的建批、风格补登、收货、关账、交付、单图返修、ComfyUI 和拖图连线只返回人话指路。
+
+助手只返回包含命令原文、人话说明、费用提醒和门禁提醒的草稿。草稿卡绑定当前画布工作流机器：一台时默认，多台时必须选择，零台时如实提示。用户点击“发出命令”后，前端调用与机器按钮完全相同的 `requestWorkflowStart`；演示或真实费用卡仍先出现，请求编号仍在费用确认后生成，随后才把命令写入原机器节点通道。助手后端没有画布客户端，不新增账本事件，也不复制批次门禁；关账批次仍由既有生产服务在任何 manifest 改写和事件追加前拒绝。
+
+命令闭集固定为 `run: next`、`run: identity|style_master|angle_inventory|main_vc|detail_vc|final_prompts|integrity|renders|qc` 及同九步骤的 `retry:`。大小写、别字、未知步骤、额外 JSON 字段、Markdown 或模型自由文本都不能进入草稿卡。真实模糊解析复用现有本机令牌、Origin、16 KiB HTTP 请求上限、无排队和 300 秒硬上限；确认费用卡前没有执行或费用。
 
 ## M2-a 信息卡与建批门禁
 
