@@ -32,7 +32,27 @@ class StyleReferencePublishTest(unittest.TestCase):
         self.original.write_bytes(b"original-bytes")
         self.asset_manifest = self.workspace / "manifests" / "asset_manifest.json"
         self.receipt = self.workspace / "manifests" / "batch_intake_receipt.json"
-        self.asset_manifest.write_text('{"fixed":true}\n', encoding="utf-8")
+        self.asset_manifest.write_text(
+            json.dumps(
+                {
+                    "assets": [
+                        {
+                            "asset_id": "white_bg_001",
+                            "file_path": "inputs/white_bg/original.jpg",
+                            "asset_role": "white_bg",
+                            "is_single_product_white_bg": True,
+                            "is_set_group_shot": False,
+                            "is_style_reference": False,
+                            "bound_angle_slot": "",
+                            "component_id": "",
+                            "notes": "",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         self.receipt.write_text('{"fixed":true}\n', encoding="utf-8")
         self.fixed_hashes = {
             path: hashlib.sha256(path.read_bytes()).hexdigest()
@@ -45,6 +65,7 @@ class StyleReferencePublishTest(unittest.TestCase):
                     "product_id": "cup",
                     "workspace": {"root": str(self.workspace)},
                     "inputs": {"style_reference_images": [str(self.workspace / "inputs" / "style_refs")]},
+                    "artifacts": {"asset_manifest": str(self.asset_manifest)},
                 }
             ),
             encoding="utf-8",
@@ -174,8 +195,33 @@ class StyleReferenceServiceTest(unittest.TestCase):
         self.workspace = self.root / "workspace"
         (self.repo / "manifests").mkdir(parents=True)
         (self.workspace / "manifests").mkdir(parents=True)
+        (self.workspace / "inputs" / "white_bg").mkdir(parents=True)
         (self.workspace / ".canvas_batch").write_text(
             json.dumps({"type": "canvas-batch-v1", "product_id": "cup"}), encoding="utf-8"
+        )
+        self.original = self.workspace / "inputs" / "white_bg" / "original.jpg"
+        self.original.write_bytes(b"original-bytes")
+        self.asset_manifest = self.workspace / "manifests" / "asset_manifest.json"
+        self.asset_manifest.write_text(
+            json.dumps(
+                {
+                    "assets": [
+                        {
+                            "asset_id": "white_bg_001",
+                            "file_path": "inputs/white_bg/original.jpg",
+                            "asset_role": "white_bg",
+                            "is_single_product_white_bg": True,
+                            "is_set_group_shot": False,
+                            "is_style_reference": False,
+                            "bound_angle_slot": "",
+                            "component_id": "",
+                            "notes": "",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
         )
         self.manifest = self.repo / "manifests" / "cup.batch_manifest.json"
         self.manifest.write_text(
@@ -186,6 +232,7 @@ class StyleReferenceServiceTest(unittest.TestCase):
                     "inputs": {
                         "style_reference_images": [str(self.workspace / "inputs" / "style_refs")]
                     },
+                    "artifacts": {"asset_manifest": str(self.asset_manifest)},
                 }
             ),
             encoding="utf-8",

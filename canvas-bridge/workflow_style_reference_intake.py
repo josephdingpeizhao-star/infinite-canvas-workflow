@@ -22,6 +22,14 @@ DEFAULT_STYLE_UPLOAD_HOST = "127.0.0.1"
 DEFAULT_STYLE_UPLOAD_PORT = 17_373
 MAX_STYLE_UPLOAD_BYTES = 64 * 1024 * 1024
 MAX_STYLE_REFERENCE_FILES = 20
+CROSS_ROLE_IMAGE_MESSAGE = (
+    "这张图已经是本批的产品原图，不能再登记为风格参考。"
+    "若是接反了：产品原图连工作流机器，风格参考图连信息卡。"
+)
+UNSAFE_PRODUCT_EVIDENCE_MESSAGE = (
+    "无法安全核对本批已登记的产品原图，风格补登已停止。"
+    "请保留现场并交由顾问核对，系统不会自动重试。"
+)
 
 
 class StyleReferenceIntakeError(ValueError):
@@ -84,6 +92,14 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _inside(path: Path, parent: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(parent.resolve(strict=False))
@@ -127,6 +143,61 @@ def _validate_upload(upload: StyleReferenceUpload) -> None:
         raise StyleReferenceIntakeError("风格参考图内容不是有效 WebP。")
 
 
+def _registered_product_sha256s(manifest_path: Path) -> frozenset[str]:
+    try:
+        manifest = _read_json(manifest_path, "批次清单")
+        batch_id = manifest.get("product_id")
+        workspace_value = (manifest.get("workspace") or {}).get("root") if isinstance(manifest.get("workspace"), dict) else None
+        artifacts = manifest.get("artifacts") if isinstance(manifest.get("artifacts"), dict) else None
+        asset_manifest_value = artifacts.get("asset_manifest") if artifacts else None
+        if not isinstance(batch_id, str) or not batch_id or not isinstance(workspace_value, str) or not workspace_value:
+            raise ValueError
+        if not isinstance(asset_manifest_value, str) or not asset_manifest_value:
+            raise ValueError
+        workspace = Path(workspace_value).resolve(strict=True)
+        marker = _read_json(workspace / ".canvas_batch", "批次安全标记")
+        if marker.get("type") != "canvas-batch-v1" or marker.get("product_id") != batch_id:
+            raise ValueError
+        asset_manifest_path = Path(asset_manifest_value).resolve(strict=True)
+        expected_asset_manifest = (workspace / "manifests" / "asset_manifest.json").resolve(strict=True)
+        if asset_manifest_path != expected_asset_manifest or not _inside(asset_manifest_path, workspace):
+            raise ValueError
+        asset_manifest = _read_json(asset_manifest_path, "资产清单")
+        assets = asset_manifest.get("assets")
+        if not isinstance(assets, list) or not assets:
+            raise ValueError
+        white_bg_root = (workspace / "inputs" / "white_bg").resolve(strict=True)
+        hashes: set[str] = set()
+        for asset in assets:
+            if (
+                not isinstance(asset, Mapping)
+                or asset.get("asset_role") != "white_bg"
+                or asset.get("is_single_product_white_bg") is not True
+                or asset.get("is_style_reference") is not False
+            ):
+                raise ValueError
+            relative_value = asset.get("file_path")
+            if not isinstance(relative_value, str) or not relative_value:
+                raise ValueError
+            relative = Path(relative_value)
+            if relative.is_absolute() or ".." in relative.parts:
+                raise ValueError
+            target = (workspace / relative).resolve(strict=True)
+            if target.parent != white_bg_root or not target.is_file() or target.is_symlink():
+                raise ValueError
+            hashes.add(_sha256_file(target))
+        if not hashes:
+            raise ValueError
+        return frozenset(hashes)
+    except (OSError, RuntimeError, TypeError, ValueError, StyleReferenceIntakeError):
+        raise StyleReferenceIntakeError(UNSAFE_PRODUCT_EVIDENCE_MESSAGE) from None
+
+
+def _reject_registered_product_hashes(manifest_path: Path, sha256s: tuple[str, ...]) -> None:
+    if _registered_product_sha256s(manifest_path).intersection(sha256s):
+        raise StyleReferenceIntakeError(CROSS_ROLE_IMAGE_MESSAGE)
+
+
 def publish_style_references(
     manifest_path: Path,
     request_id: str,
@@ -164,6 +235,10 @@ def publish_style_references(
         if lowered in names:
             raise StyleReferenceIntakeError("同一次补登含重复文件名。")
         names.add(lowered)
+    _reject_registered_product_hashes(
+        manifest_path,
+        tuple(upload.sha256 for upload in uploads),
+    )
 
     targets = tuple(style_root / upload.name for upload in uploads)
     for upload, target in zip(uploads, targets, strict=True):
@@ -365,7 +440,7 @@ class WorkflowStyleReferenceService:
                 or receipt.get("batchId") != batch_id
             ):
                 raise StyleReferenceIntakeError("信息卡尚未登记完成，不能补登风格参考图。")
-            self._manifest_path(batch_id)
+            manifest_path = self._manifest_path(batch_id)
             raw_sources = intake.get("sources")
             if not isinstance(raw_sources, list) or not 0 < len(raw_sources) <= MAX_STYLE_REFERENCE_FILES:
                 raise StyleReferenceIntakeError("风格参考图数量无效。")
@@ -403,6 +478,10 @@ class WorkflowStyleReferenceService:
                 }
                 if actual != expected:
                     raise StyleReferenceIntakeError("风格参考图声明与画布原文件不一致。")
+            _reject_registered_product_hashes(
+                manifest_path,
+                tuple(source.sha256 for source in sources),
+            )
             session = _StyleUploadSession(
                 request_id=request_id,
                 batch_id=batch_id,

@@ -14,6 +14,10 @@ BATCH_BUILD_VERB = "build"
 BATCH_BUILD_TARGET = "batch"
 DEFAULT_MAX_AGE_MS = 8_000
 DEFAULT_FUTURE_TOLERANCE_MS = 0
+DUPLICATE_PRODUCT_IMAGE_MESSAGE = (
+    "同一张图被重复加入本次产品原图登记，不能建批。"
+    "请删除重复项，只保留一张；产品原图连工作流机器，风格参考图连信息卡。"
+)
 
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$")
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -444,6 +448,14 @@ def parse_queued_request(
         )
         for node_id in image_ids
     )
+    source_hashes = [source.expected_sha256 for source in sources]
+    if len(source_hashes) != len(set(source_hashes)):
+        raise _error(
+            "duplicate_image",
+            DUPLICATE_PRODUCT_IMAGE_MESSAGE,
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
     folded_names = [source.name.casefold() for source in sources]
     if len(folded_names) != len(set(folded_names)):
         raise _error(
