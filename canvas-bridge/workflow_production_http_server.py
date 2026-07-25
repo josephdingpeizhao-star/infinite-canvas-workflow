@@ -27,6 +27,7 @@ UNIT_PRICE_USD = 0.06
 TOTAL_IMAGES = 14
 MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
+DRAIN_CAP = 256 * 1024
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
 WORKBENCH_WORKERS = (
@@ -43,6 +44,33 @@ class ProductionHttpError(ValueError):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+def _drain_unread_request_body(
+    stream: Any,
+    *,
+    declared_length: int | None,
+    consumed_length: int,
+) -> int:
+    if (
+        type(declared_length) is not int
+        or type(consumed_length) is not int
+        or declared_length <= 0
+        or declared_length > DRAIN_CAP
+        or consumed_length < 0
+    ):
+        return 0
+    remaining = min(max(declared_length - consumed_length, 0), DRAIN_CAP)
+    drained = 0
+    while drained < remaining:
+        try:
+            chunk = stream.read(remaining - drained)
+        except Exception:
+            break
+        if not chunk:
+            break
+        drained += len(chunk)
+    return drained
 
 
 def _inside(path: Path, parent: Path) -> bool:
@@ -312,6 +340,15 @@ class WorkflowProductionHttpServer:
                     self.send_header("Access-Control-Allow-Origin", origin)
                     self.send_header("Vary", "Origin")
 
+            def _declared_content_length(self) -> int | None:
+                values = self.headers.get_all("Content-Length") or []
+                if len(values) != 1:
+                    return None
+                try:
+                    return int(values[0])
+                except ValueError:
+                    return None
+
             def _error(self, status: int, *, origin: str | None = None) -> None:
                 data = json.dumps({"ok": False, "error": "request_rejected"}).encode("utf-8")
                 self.send_response(status)
@@ -458,6 +495,12 @@ class WorkflowProductionHttpServer:
 
             def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
                 origin: str | None = None
+                declared_body_length = (
+                    None
+                    if self.headers.get("Transfer-Encoding")
+                    else self._declared_content_length()
+                )
+                consumed_body_length = 0
                 try:
                     origin = self._origin(required=True)
                     application.authorize(self.headers.get("x-canvas-agent-token") or "")
@@ -477,11 +520,13 @@ class WorkflowProductionHttpServer:
                             assistant_length = int(assistant_lengths[0])
                         except ValueError:
                             raise ProductionHttpError(400, "bad length") from None
+                        declared_body_length = assistant_length
                         if not 0 < assistant_length <= MAX_READONLY_ASSISTANT_BODY_BYTES:
                             raise ProductionHttpError(413, "body too large")
                         if not (self.headers.get("Content-Type") or "").lower().startswith("application/json"):
                             raise ProductionHttpError(415, "json required")
                         assistant_data = self.rfile.read(assistant_length)
+                        consumed_body_length = len(assistant_data)
                         if len(assistant_data) != assistant_length:
                             raise ProductionHttpError(400, "short body")
                         try:
@@ -515,6 +560,7 @@ class WorkflowProductionHttpServer:
                         length = int(length_values[0])
                     except ValueError:
                         raise ProductionHttpError(400, "bad length") from None
+                    declared_body_length = length
                     path = urllib.parse.urlsplit(self.path)
                     segments = [urllib.parse.unquote(item) for item in path.path.split("/") if item]
                     is_acceptance = (
@@ -533,6 +579,7 @@ class WorkflowProductionHttpServer:
                         if any(not item or any(char in item for char in ("/", "\\", "\0")) for item in segments[1:]):
                             raise ProductionHttpError(400, "bad route")
                     data = self.rfile.read(length)
+                    consumed_body_length = len(data)
                     if len(data) != length:
                         raise ProductionHttpError(400, "short body")
                     if is_acceptance:
@@ -566,6 +613,11 @@ class WorkflowProductionHttpServer:
                     self.end_headers()
                     self.wfile.write(payload)
                 except ProductionHttpError as exc:
+                    _drain_unread_request_body(
+                        self.rfile,
+                        declared_length=declared_body_length,
+                        consumed_length=consumed_body_length,
+                    )
                     self._error(exc.status, origin=origin)
                 except (BrokenPipeError, ConnectionResetError):
                     return
