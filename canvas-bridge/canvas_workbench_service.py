@@ -17,6 +17,7 @@ import workflow_demo_service
 import workflow_production_http_server
 import workflow_production_service
 import workflow_style_reference_intake
+import canvas_readonly_assistant
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -305,6 +306,7 @@ def cmd_serve_canvas_workbench(
             port=workflow_batch_intake_service.DEFAULT_UPLOAD_PORT,
         )
         event_ledger = WorkbenchEventLedger(state_root)
+        assistant_service = canvas_readonly_assistant.CanvasReadonlyAssistant(REPO_ROOT)
         production_service = workflow_production_service.WorkflowProductionService(
             REPO_ROOT,
             interval=interval,
@@ -324,6 +326,7 @@ def cmd_serve_canvas_workbench(
             host=workflow_production_http_server.DEFAULT_PRODUCTION_HOST,
             port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
             style_acceptor=style_service,
+            assistant_service=assistant_service,
         )
         workbench = CanvasWorkbenchService(
             demo_service=demo_service,
