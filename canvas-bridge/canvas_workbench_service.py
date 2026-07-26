@@ -12,7 +12,9 @@ from typing import Any, Callable
 
 import batch_creator
 import batch_recycle_service
+from batch_recycle_lock import BatchOperationLock
 import ic_client
+import project_deletion_service
 import workflow_batch_intake_service
 import workflow_demo_service
 import workflow_production_http_server
@@ -78,6 +80,105 @@ class WorkbenchEventLedger:
                 "recorded_at": self.clock_ms(),
             }
         )
+
+    def record_project_deletion(
+        self,
+        batch_id: str,
+        request_id: str,
+    ) -> None:
+        if (
+            not isinstance(batch_id, str)
+            or not batch_id
+            or Path(batch_id).name != batch_id
+            or any(char in batch_id for char in ("/", "\\", "\0", "\r", "\n"))
+            or not project_deletion_service.valid_project_deletion_request_id(
+                request_id
+            )
+        ):
+            raise ValueError("项目删除审计字段无效")
+        self._append(
+            {
+                "event": "project_batch_deletion_requested",
+                "batch_id": batch_id,
+                "request_id": request_id,
+                "source_entry": "workbench",
+                "recorded_at": self.clock_ms(),
+            }
+        )
+
+    def has_project_deletion(
+        self,
+        batch_id: str,
+        request_id: str | None = None,
+        *,
+        instance_commit: str | None = None,
+    ) -> bool:
+        if (
+            not isinstance(batch_id, str)
+            or not batch_id
+            or Path(batch_id).name != batch_id
+            or any(char in batch_id for char in ("/", "\\", "\0", "\r", "\n"))
+            or (
+                request_id is not None
+                and not project_deletion_service.valid_project_deletion_request_id(
+                    request_id
+                )
+            )
+            or (
+                instance_commit is not None
+                and not (
+                    isinstance(instance_commit, str)
+                    and len(instance_commit) == 32
+                    and all(
+                        character in "0123456789abcdef"
+                        for character in instance_commit
+                    )
+                )
+            )
+        ):
+            raise ValueError("项目删除审计批次号无效")
+        state_root = batch_creator.require_state_root(self.state_root)
+        try:
+            unsafe = self.path.is_symlink()
+            is_junction = getattr(self.path, "is_junction", None)
+            unsafe = unsafe or bool(is_junction and is_junction())
+            if self.path.parent.resolve(strict=True) != state_root or unsafe:
+                raise OSError
+            if not self.path.exists():
+                return False
+            if not self.path.is_file():
+                raise OSError
+            with self._write_lock:
+                lines = self.path.read_text(encoding="utf-8").splitlines()
+        except (OSError, RuntimeError, UnicodeError):
+            raise RuntimeError("工作台事件账本无法安全读取。") from None
+        for line in lines:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                raise RuntimeError("工作台事件账本内容损坏。") from None
+            if (
+                isinstance(entry, dict)
+                and entry.get("event") == "project_batch_deletion_requested"
+                and entry.get("batch_id") == batch_id
+                and entry.get("source_entry") == "workbench"
+                and project_deletion_service.valid_project_deletion_request_id(
+                    entry.get("request_id")
+                )
+                and (
+                    request_id is None
+                    or entry.get("request_id") == request_id
+                )
+                and (
+                    instance_commit is None
+                    or project_deletion_service.project_deletion_request_has_instance(
+                        entry.get("request_id"),
+                        instance_commit,
+                    )
+                )
+            ):
+                return True
+        return False
 
     def _append(self, entry: dict[str, int | str]) -> None:
         state_root = batch_creator.require_state_root(self.state_root)
@@ -287,6 +388,7 @@ def cmd_serve_canvas_workbench(
         REPO_ROOT,
         state_root,
         test_root=test_workspace_root,
+        batch_lock_factory=BatchOperationLock,
     )
 
     with (
@@ -308,6 +410,12 @@ def cmd_serve_canvas_workbench(
             port=workflow_batch_intake_service.DEFAULT_UPLOAD_PORT,
         )
         event_ledger = WorkbenchEventLedger(state_root)
+        deletion_service = project_deletion_service.ProjectDeletionService(
+            REPO_ROOT,
+            workspace_parent=creator.workspace_parent,
+            state_root=state_root,
+            audit_ledger=event_ledger,
+        )
         assistant_service = canvas_readonly_assistant.CanvasReadonlyAssistant(REPO_ROOT)
         command_assistant_service = canvas_command_assistant.CanvasCommandAssistant(
             REPO_ROOT
@@ -338,6 +446,7 @@ def cmd_serve_canvas_workbench(
             assistant_service=assistant_service,
             command_assistant_service=command_assistant_service,
             batch_recycle_service=recycle_service,
+            project_deletion_service=deletion_service,
         )
         workbench = CanvasWorkbenchService(
             demo_service=demo_service,

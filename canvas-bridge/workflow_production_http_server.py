@@ -24,6 +24,7 @@ from canvas_command_assistant import (
     CommandAssistantError,
     CommandDraftNotFound,
 )
+from project_deletion_service import ProjectDeletionError
 
 
 DEFAULT_PRODUCTION_HOST = "127.0.0.1"
@@ -34,6 +35,7 @@ MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_COMMAND_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_BATCH_RECYCLE_BODY_BYTES = 256
+MAX_PROJECT_DELETION_BODY_BYTES = 64 * 1024
 DRAIN_CAP = 256 * 1024
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
@@ -104,6 +106,7 @@ class WorkflowProductionHttpApplication:
         assistant_service: Any | None = None,
         command_assistant_service: Any | None = None,
         batch_recycle_service: Any | None = None,
+        project_deletion_service: Any | None = None,
     ):
         self.repository_root = repository_root.resolve()
         self.token = token
@@ -112,6 +115,7 @@ class WorkflowProductionHttpApplication:
         self.assistant_service = assistant_service
         self.command_assistant_service = command_assistant_service
         self.batch_recycle_service = batch_recycle_service
+        self.project_deletion_service = project_deletion_service
         self.acceptance = BatchAcceptanceService(self.repository_root)
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
@@ -326,6 +330,26 @@ class WorkflowProductionHttpApplication:
             "message": "批次已移入回收站。",
         }
 
+    def project_deletion_preview(self, payload: Any) -> dict[str, Any]:
+        if self.project_deletion_service is None:
+            raise ProductionHttpError(404, "project deletion unavailable")
+        if not isinstance(payload, dict) or set(payload) != {"batchIds"}:
+            raise ProductionHttpError(400, "invalid project deletion preview")
+        return self.project_deletion_service.preview(payload.get("batchIds"))
+
+    def project_deletion_execute(self, payload: Any) -> dict[str, Any]:
+        if self.project_deletion_service is None:
+            raise ProductionHttpError(404, "project deletion unavailable")
+        if not isinstance(payload, dict) or set(payload) != {
+            "requestId",
+            "batchIds",
+        }:
+            raise ProductionHttpError(400, "invalid project deletion execute")
+        return self.project_deletion_service.execute(
+            payload.get("requestId"),
+            payload.get("batchIds"),
+        )
+
 
 class _LocalThreadingHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
@@ -345,6 +369,7 @@ class WorkflowProductionHttpServer:
         assistant_service: Any | None = None,
         command_assistant_service: Any | None = None,
         batch_recycle_service: Any | None = None,
+        project_deletion_service: Any | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
@@ -358,6 +383,7 @@ class WorkflowProductionHttpServer:
             assistant_service=assistant_service,
             command_assistant_service=command_assistant_service,
             batch_recycle_service=batch_recycle_service,
+            project_deletion_service=project_deletion_service,
         )
         self.host = host
         self.port = port
@@ -440,6 +466,23 @@ class WorkflowProductionHttpServer:
                         "ok": False,
                         "error": "batch_recycle_rejected",
                         "batchId": batch_id,
+                        "message": str(exc),
+                    },
+                    origin=origin,
+                )
+
+            def _project_deletion_error(
+                self,
+                exc: ProjectDeletionError,
+                *,
+                origin: str | None,
+            ) -> None:
+                self._assistant_response(
+                    409,
+                    {
+                        "ok": False,
+                        "error": "project_deletion_rejected",
+                        "batchId": exc.batch_id,
                         "message": str(exc),
                     },
                     origin=origin,
@@ -597,6 +640,75 @@ class WorkflowProductionHttpServer:
                         "command-assistant",
                         "drafts",
                     ]
+                    is_project_deletion_preview = (
+                        assistant_segments == ["project-deletion", "preview"]
+                        and not assistant_path.query
+                        and not assistant_path.fragment
+                    )
+                    is_project_deletion_execute = (
+                        assistant_segments == ["project-deletion", "execute"]
+                        and not assistant_path.query
+                        and not assistant_path.fragment
+                    )
+                    if is_project_deletion_preview or is_project_deletion_execute:
+                        if self.headers.get("Transfer-Encoding"):
+                            raise ProductionHttpError(
+                                400, "transfer encoding rejected"
+                            )
+                        deletion_lengths = (
+                            self.headers.get_all("Content-Length") or []
+                        )
+                        if len(deletion_lengths) != 1:
+                            raise ProductionHttpError(411, "length required")
+                        try:
+                            deletion_length = int(deletion_lengths[0])
+                        except ValueError:
+                            raise ProductionHttpError(400, "bad length") from None
+                        declared_body_length = deletion_length
+                        if not 0 < deletion_length <= MAX_PROJECT_DELETION_BODY_BYTES:
+                            raise ProductionHttpError(413, "body too large")
+                        content_types = self.headers.get_all("Content-Type") or []
+                        if len(content_types) != 1:
+                            raise ProductionHttpError(415, "json required")
+                        media_type = (
+                            content_types[0].split(";", 1)[0].strip().lower()
+                        )
+                        if media_type != "application/json":
+                            raise ProductionHttpError(415, "json required")
+                        deletion_data = self.rfile.read(deletion_length)
+                        consumed_body_length = len(deletion_data)
+                        if len(deletion_data) != deletion_length:
+                            raise ProductionHttpError(400, "short body")
+                        try:
+                            deletion_payload = json.loads(
+                                deletion_data.decode("utf-8")
+                            )
+                        except (UnicodeError, json.JSONDecodeError):
+                            raise ProductionHttpError(400, "bad json") from None
+                        try:
+                            deletion_result = (
+                                application.project_deletion_preview(
+                                    deletion_payload
+                                )
+                                if is_project_deletion_preview
+                                else application.project_deletion_execute(
+                                    deletion_payload
+                                )
+                            )
+                        except ProjectDeletionError as exc:
+                            self._project_deletion_error(exc, origin=origin)
+                            return
+                        self._assistant_response(
+                            200,
+                            deletion_result,
+                            origin=origin,
+                        )
+                        return
+                    if (
+                        assistant_segments
+                        and assistant_segments[0] == "project-deletion"
+                    ):
+                        raise ProductionHttpError(404, "not found")
                     if is_readonly_assistant or is_command_assistant:
                         if self.headers.get("Transfer-Encoding"):
                             raise ProductionHttpError(400, "transfer encoding rejected")

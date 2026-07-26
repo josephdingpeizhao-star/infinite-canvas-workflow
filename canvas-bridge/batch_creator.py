@@ -9,13 +9,20 @@ import subprocess
 import sys
 import unicodedata
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
 
 from batch_intake_controller import BatchIntakeRequest, ConfirmedFacts, SourceImage
+from batch_recycle_lock import (
+    BatchOperationBusy,
+    BatchOperationLock,
+    BatchOperationLockUnavailable,
+)
 from codex_dev_downstream import ExecutorExecutionError, parse_user_confirmed_requirements
+import windows_desktop
 
 
 STATE_MARKER_NAME = ".canvas_batch_intake_state"
@@ -35,6 +42,7 @@ _WINDOWS_RESERVED = {
     *(f"COM{index}" for index in range(1, 10)),
     *(f"LPT{index}" for index in range(1, 10)),
 }
+_DEFAULT_BATCH_LOCK_FACTORY = object()
 
 
 class BatchCreationError(RuntimeError):
@@ -386,6 +394,11 @@ class BatchCreator:
         *,
         test_root: Path | None = None,
         today: Callable[[], date] = date.today,
+        desktop_locator: Callable[[], Path] | None = None,
+        batch_lock_factory: Callable[..., Any] | None | object = (
+            _DEFAULT_BATCH_LOCK_FACTORY
+        ),
+        batch_lock_root: Path | None = None,
     ) -> None:
         self.repo_root = _assert_directory_unlinked(
             repo_root or Path(__file__).resolve().parents[1],
@@ -395,31 +408,86 @@ class BatchCreator:
         default_state = Path.home() / ".infinite-canvas" / "batch-intake"
         self.state_root = prepare_state_root(state_root or default_state)
         self._today = today
+        actual_repo = Path(__file__).resolve().parents[1]
+        self.desktop_locator = (
+            desktop_locator
+            if desktop_locator is not None
+            else (
+                windows_desktop.desktop_directory
+                if self.repo_root.resolve() == actual_repo
+                else None
+            )
+        )
+        self.batch_lock_factory = (
+            None
+            if batch_lock_factory is _DEFAULT_BATCH_LOCK_FACTORY
+            and test_root is not None
+            else (
+                BatchOperationLock
+                if batch_lock_factory is _DEFAULT_BATCH_LOCK_FACTORY
+                else batch_lock_factory
+            )
+        )
+        self.batch_lock_root = (
+            Path(batch_lock_root)
+            if batch_lock_root is not None
+            else self.state_root.parent / "batch-operation-locks"
+        )
         self.workspace_parent = (
             _require_test_root(test_root) if test_root is not None else self._production_parent()
         )
 
     def _production_parent(self) -> Path:
         manifest_path = self.repo_root / "manifests" / f"{FROZEN_PRODUCT_ID}.batch_manifest.json"
-        _assert_regular_unlinked(
-            manifest_path,
-            code="invalid_repository",
-            message="无法核对既有批次目录，已停止登记。",
-        )
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            root_text = manifest["workspace"]["root"]
-        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
-            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。") from None
-        if manifest.get("product_id") != FROZEN_PRODUCT_ID or not isinstance(root_text, str):
-            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
-        frozen_root = _absolute(Path(root_text))
-        if frozen_root.name != FROZEN_PRODUCT_ID:
-            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
-        return _assert_directory_unlinked(
-            frozen_root.parent,
-            code="invalid_repository",
-            message="既有批次的父目录不可用，已停止登记。",
+        anchor_parent: Path | None = None
+        if manifest_path.exists() or _is_unsafe_reparse(manifest_path):
+            _assert_regular_unlinked(
+                manifest_path,
+                code="invalid_repository",
+                message="无法核对既有批次目录，已停止登记。",
+            )
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                root_text = manifest["workspace"]["root"]
+            except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
+                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。") from None
+            if manifest.get("product_id") != FROZEN_PRODUCT_ID or not isinstance(root_text, str):
+                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
+            frozen_root = _absolute(Path(root_text))
+            if frozen_root.name != FROZEN_PRODUCT_ID:
+                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
+            anchor_parent = _assert_directory_unlinked(
+                frozen_root.parent,
+                code="invalid_repository",
+                message="既有批次的父目录不可用，已停止登记。",
+            )
+
+        desktop_parent: Path | None = None
+        if self.desktop_locator is not None:
+            try:
+                desktop = _absolute(Path(self.desktop_locator()))
+                desktop_parent = _assert_directory_unlinked(
+                    desktop / "杯类",
+                    code="invalid_repository",
+                    message="Windows 桌面批次目录不可用，已停止登记。",
+                )
+            except (OSError, RuntimeError, BatchCreationError):
+                desktop_parent = None
+        if anchor_parent is not None:
+            if (
+                desktop_parent is not None
+                and anchor_parent.resolve() != desktop_parent.resolve()
+            ):
+                raise BatchCreationError(
+                    "workspace_root_mismatch",
+                    "既有批次目录与 Windows 桌面位置不一致，已安全停止。",
+                )
+            return anchor_parent
+        if desktop_parent is not None:
+            return desktop_parent
+        raise BatchCreationError(
+            "invalid_repository",
+            "无法核对批次工作区父目录，已停止登记。",
         )
 
     def product_id_for(self, request: BatchIntakeRequest) -> str:
@@ -432,8 +500,6 @@ class BatchCreator:
         return f"{_clean_product_type(request.facts.product_type)}_{value:%Y%m%d}"
 
     def _target_paths(self, product_id: str) -> tuple[Path, Path]:
-        if product_id == FROZEN_PRODUCT_ID:
-            raise BatchCreationError("frozen_batch", "首批已经关账并受保护，不能重新登记或覆盖。")
         target = self.workspace_parent / product_id
         manifest = self.repo_root / "manifests" / f"{product_id}.batch_manifest.json"
         try:
@@ -444,6 +510,11 @@ class BatchCreator:
                 raise BatchCreationError("path_outside_root", "批次清单路径超出项目目录，已停止登记。")
         except (OSError, RuntimeError):
             raise BatchCreationError("path_outside_root", "无法验证批次路径，已停止登记。") from None
+        journal = self.repo_root / "manifests" / f"{product_id}.events.jsonl"
+        if product_id == FROZEN_PRODUCT_ID and (
+            target.exists() or manifest.exists() or journal.exists()
+        ):
+            raise BatchCreationError("frozen_batch", "首批已经关账并受保护，不能重新登记或覆盖。")
         return target, manifest
 
     def _completed_path(self, request_id: str) -> Path:
@@ -690,9 +761,10 @@ class BatchCreator:
     ) -> BatchCreationResult:
         product_id = self.product_id_for(request)
         target, manifest_path = self._target_paths(product_id)
+        journal_path = manifest_path.parent / f"{product_id}.events.jsonl"
         if self._request_already_committed(request.request_id):
             raise BatchCreationError("duplicate_request", "这次登记请求已经处理过，没有重复创建批次。")
-        if target.exists() or manifest_path.exists():
+        if target.exists() or manifest_path.exists() or journal_path.exists():
             raise BatchCreationError("batch_exists", "这个批次已经存在，未覆盖任何文件。")
         validated = self._validate_uploads(request, tuple(uploaded_files))
         manifest, directories = self._dry_run_plan(request, product_id, target)
@@ -704,63 +776,90 @@ class BatchCreator:
         marker_content = _workspace_marker(request.request_id, product_id)
         published = False
         try:
-            assets = self._build_stage(
-                stage,
-                target,
-                manifest,
-                directories,
-                request,
-                validated,
-                product_id,
-                marker_content,
+            lock = (
+                self.batch_lock_factory(
+                    product_id,
+                    lock_root=self.batch_lock_root,
+                )
+                if self.batch_lock_factory is not None
+                else nullcontext()
             )
-            _publish_workspace(stage, target)
-            published = True
-            _verify_published_workspace(target, assets)
-            _atomic_repository_manifest(manifest_path, manifest, request_id=request.request_id)
-        except BatchCreationError:
-            if published:
-                _safe_remove_owned_directory(
-                    target,
-                    marker_content=marker_content,
-                    allowed_parent=self.workspace_parent,
-                )
-            else:
-                removed = _safe_remove_owned_directory(
-                    stage,
-                    marker_content=marker_content,
-                    allowed_parent=self.workspace_parent,
-                )
-                if not removed:
-                    _safe_remove_exact_empty_directory(stage, allowed_parent=self.workspace_parent)
-            raise
-        except Exception:
-            if published:
-                _safe_remove_owned_directory(
-                    target,
-                    marker_content=marker_content,
-                    allowed_parent=self.workspace_parent,
-                )
-            else:
-                removed = _safe_remove_owned_directory(
-                    stage,
-                    marker_content=marker_content,
-                    allowed_parent=self.workspace_parent,
-                )
-                if not removed:
-                    _safe_remove_exact_empty_directory(stage, allowed_parent=self.workspace_parent)
-            raise BatchCreationError("commit_failed", "批次写入未完成，已撤回本次临时文件并停止。") from None
+            with lock:
+                try:
+                    if self._request_already_committed(request.request_id):
+                        raise BatchCreationError("duplicate_request", "这次登记请求已经处理过，没有重复创建批次。")
+                    if target.exists() or manifest_path.exists() or journal_path.exists():
+                        raise BatchCreationError("batch_exists", "这个批次已经存在，未覆盖任何文件。")
+                    assets = self._build_stage(
+                        stage,
+                        target,
+                        manifest,
+                        directories,
+                        request,
+                        validated,
+                        product_id,
+                        marker_content,
+                    )
+                    _publish_workspace(stage, target)
+                    published = True
+                    _verify_published_workspace(target, assets)
+                    _atomic_repository_manifest(manifest_path, manifest, request_id=request.request_id)
+                    completed_path = self._completed_path(request.request_id)
+                    try:
+                        completed_path.parent.mkdir(parents=True, exist_ok=True)
+                        _atomic_write_json(
+                            completed_path,
+                            {"request_id": request.request_id, "product_id": product_id},
+                            request_id=request.request_id,
+                        )
+                    except (OSError, BatchCreationError):
+                        pass
+                except BatchCreationError:
+                    if published:
+                        _safe_remove_owned_directory(
+                            target,
+                            marker_content=marker_content,
+                            allowed_parent=self.workspace_parent,
+                        )
+                    else:
+                        removed = _safe_remove_owned_directory(
+                            stage,
+                            marker_content=marker_content,
+                            allowed_parent=self.workspace_parent,
+                        )
+                        if not removed:
+                            _safe_remove_exact_empty_directory(stage, allowed_parent=self.workspace_parent)
+                    raise
+                except Exception:
+                    if published:
+                        _safe_remove_owned_directory(
+                            target,
+                            marker_content=marker_content,
+                            allowed_parent=self.workspace_parent,
+                        )
+                    else:
+                        removed = _safe_remove_owned_directory(
+                            stage,
+                            marker_content=marker_content,
+                            allowed_parent=self.workspace_parent,
+                        )
+                        if not removed:
+                            _safe_remove_exact_empty_directory(stage, allowed_parent=self.workspace_parent)
+                    raise BatchCreationError(
+                        "commit_failed",
+                        "批次写入未完成，已撤回本次临时文件并停止。",
+                    ) from None
+        except BatchOperationBusy:
+            raise BatchCreationError(
+                "batch_busy",
+                "本批次有任务正在运行，这次登记已安全停止。",
+            ) from None
+        except BatchOperationLockUnavailable:
+            raise BatchCreationError(
+                "lock_unavailable",
+                "批次独占保护暂时不可用，这次登记已安全停止。",
+            ) from None
 
-        completed_path = self._completed_path(request.request_id)
-        try:
-            completed_path.parent.mkdir(parents=True, exist_ok=True)
-            _atomic_write_json(
-                completed_path,
-                {"request_id": request.request_id, "product_id": product_id},
-                request_id=request.request_id,
-            )
-        except (OSError, BatchCreationError):
-            pass
         receipt_path = target / "manifests" / "batch_intake_receipt.json"
         return BatchCreationResult(
             request_id=request.request_id,
