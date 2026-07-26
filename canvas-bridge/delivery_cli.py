@@ -10,6 +10,11 @@ import uuid
 from pathlib import Path
 from typing import Callable, TextIO
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 import run_controller
 from delivery import DeliveryRejected, package_delivery
 
@@ -40,6 +45,7 @@ def run_cli(
     output: TextIO | None = None,
     request_id_factory: Callable[[], str] | None = None,
     packaged_at_factory: Callable[[], str] | None = None,
+    batch_lock_root: Path | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
     output = output or sys.stdout
@@ -60,6 +66,43 @@ def run_cli(
         output.write("交付门禁未通过：批次清单无效。\n")
         return 1
     journal = run_controller.journal_path(args.batch_manifest, product_id)
+    try:
+        with existing_batch_operation(
+            product_id,
+            lock_root=batch_lock_root,
+        ):
+            try:
+                lifecycle = read_batch_lifecycle(journal)
+            except BatchLifecycleReadError:
+                output.write("交付门禁未通过：批次账本无法读取。\n")
+                return 1
+            if lifecycle.recycled:
+                output.write("交付门禁未通过：批次已回收，未写入任何事件。\n")
+                return 1
+            return _run_active_delivery(
+                args,
+                manifest,
+                journal,
+                output=output,
+                request_id_factory=request_id_factory,
+                packaged_at_factory=packaged_at_factory,
+                batch_lock_root=batch_lock_root,
+            )
+    except BatchOperationBusy:
+        output.write("交付门禁未通过：本批次有任务正在运行，未写入任何事件。\n")
+        return 1
+
+
+def _run_active_delivery(
+    args,
+    manifest: dict,
+    journal: Path,
+    *,
+    output: TextIO,
+    request_id_factory: Callable[[], str],
+    packaged_at_factory: Callable[[], str],
+    batch_lock_root: Path | None,
+) -> int:
     request_id = request_id_factory()
     try:
         command = run_controller.parse_run_content(args.command)
@@ -76,6 +119,7 @@ def run_cli(
             journal_path=journal,
             request_id=request_id,
             packaged_at=packaged_at_factory(),
+            batch_lock_root=batch_lock_root,
         )
     except DeliveryRejected as exc:
         _append_rejection(journal, request_id, exc.code)

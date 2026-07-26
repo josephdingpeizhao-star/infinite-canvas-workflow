@@ -13,6 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 from codex_dev_executor import (
     PRODUCTION_CODEX_MODEL,
     PRODUCTION_CODEX_REASONING_EFFORT,
@@ -56,6 +60,8 @@ _ALLOWED_EVENT_FIELDS = (
     "work_order_count",
     "source_counts",
     "selection_count",
+    "source_entry",
+    "operation_at_utc",
 )
 _OUT_OF_SCOPE_PATTERNS = (
     re.compile(r"[A-Za-z]:[\\/]"),
@@ -496,9 +502,51 @@ class ReadonlyContextAssembler:
         catalog = self._manifest_catalog()
         selected = self._select_batch(question, catalog)
         manifest = selected["_manifest"]
+        batch_id = str(selected["batch_id"])
+        event_count, events, events_truncated = self._events(batch_id)
+        try:
+            lifecycle = read_batch_lifecycle(
+                self.manifests_root / f"{batch_id}.events.jsonl"
+            )
+        except BatchLifecycleReadError:
+            raise ReadonlyDataRejected("批次账本暂时无法读取") from None
+        if lifecycle.recycled:
+            context = {
+                "source_precedence": [
+                    "events",
+                    "batch_manifest",
+                ],
+                "batch_catalog": self._public_catalog(catalog),
+                "selected_batch": selected["batch_id"],
+                "batch_detail": {
+                    "lifecycle_status": "recycled",
+                    "status_message": "该批次已回收。",
+                    "manifest": {
+                        "batch_id": selected["batch_id"],
+                        "declared_stage": manifest.get("current_stage"),
+                        "user_confirmed_facts": manifest.get(
+                            "user_confirmed_facts"
+                        ),
+                    },
+                    "event_count": event_count,
+                    "events": events,
+                    "qc": {
+                        "available": False,
+                        "reason": "批次已回收，不读取已搬走的工作区资料。",
+                    },
+                    "delivery": {
+                        "available": False,
+                        "reason": "批次已回收，不读取已搬走的工作区资料。",
+                    },
+                },
+                "current_state_snapshot": {
+                    "warning": "批次已回收，仅以主仓事件账本为准。"
+                },
+                "truncated": events_truncated,
+            }
+            return self._fit_context(context)
         workspace = self._workspace_for(manifest)
         self._register_external_roots(manifest, workspace)
-        event_count, events, events_truncated = self._events(str(selected["batch_id"]))
         context = {
             "source_precedence": [
                 "events",
@@ -518,7 +566,7 @@ class ReadonlyContextAssembler:
                 "event_count": event_count,
                 "events": events,
                 "qc": self._qc_summary(),
-                "delivery": self._delivery_summary(str(selected["batch_id"])),
+                "delivery": self._delivery_summary(batch_id),
             },
             "current_state_snapshot": self._current_state_summary(),
             "truncated": events_truncated,

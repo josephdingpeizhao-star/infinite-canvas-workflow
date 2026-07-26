@@ -22,6 +22,12 @@ import re
 from pathlib import Path
 from typing import Any
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
+import run_controller
 import state_reader
 
 EDITOR_PREFIX = "wfedit"
@@ -108,7 +114,7 @@ def parse_editor_content(text: str) -> dict[str, Any]:
     return fields
 
 
-def apply_edits(manifest_path: Path, fields: dict[str, Any]) -> dict[str, Any]:
+def _apply_edits_active(manifest_path: Path, fields: dict[str, Any]) -> dict[str, Any]:
     """Gate 3 + atomic write. Returns a summary of the applied change."""
     illegal = [key for key in fields if key not in EDITABLE_KEYS]
     if illegal:
@@ -135,3 +141,39 @@ def apply_edits(manifest_path: Path, fields: dict[str, Any]) -> dict[str, Any]:
         "next_required_skill": route.get("next_required_skill"),
         "blocked_reasons": route.get("blocked_reasons"),
     }
+
+
+def apply_edits(
+    manifest_path: Path,
+    fields: dict[str, Any],
+    *,
+    batch_lock_root: Path | None = None,
+) -> dict[str, Any]:
+    """Freeze direct manifest editing while the batch workspace is recycled."""
+
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise EditValidationError("批次 manifest 无法读取。") from None
+    batch_id = (
+        str(manifest.get("product_id") or "")
+        if isinstance(manifest, dict)
+        else ""
+    )
+    if not batch_id:
+        raise EditValidationError("批次 manifest 缺少批次号。")
+    journal = run_controller.journal_path(manifest_path, batch_id)
+    try:
+        with existing_batch_operation(
+            batch_id,
+            lock_root=batch_lock_root,
+        ):
+            try:
+                lifecycle = read_batch_lifecycle(journal)
+            except BatchLifecycleReadError:
+                raise EditValidationError("批次账本暂时无法读取，配置未修改。") from None
+            if lifecycle.recycled:
+                raise EditValidationError("批次已回收，配置未修改。")
+            return _apply_edits_active(manifest_path, fields)
+    except BatchOperationBusy:
+        raise EditValidationError("本批次有任务正在运行，配置未修改。") from None

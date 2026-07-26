@@ -8,9 +8,15 @@ import shutil
 import string
 import zipfile
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
 from typing import Any, Mapping
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 from workflow_production_projection import WorkflowProductionArtifact, artifact_from_path
 
 
@@ -392,6 +398,58 @@ def _write_zip_entry(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
     )
 
 
+def _guard_delivery_operation(method):
+    @wraps(method)
+    def guarded(
+        manifest,
+        manifest_path,
+        *,
+        journal_path,
+        request_id,
+        packaged_at,
+        batch_lock_root=None,
+    ):
+        batch_id = _safe_identifier(
+            manifest.get("product_id") if isinstance(manifest, Mapping) else None
+        )
+        if not batch_id:
+            raise DeliveryRejected(
+                "manifest_invalid", "交付门禁未通过：批次清单无效。"
+            )
+        try:
+            with existing_batch_operation(
+                batch_id,
+                lock_root=batch_lock_root,
+            ):
+                try:
+                    lifecycle = read_batch_lifecycle(journal_path)
+                except BatchLifecycleReadError:
+                    raise DeliveryRejected(
+                        "journal_invalid",
+                        "交付门禁未通过：批次账本无法读取。",
+                    ) from None
+                if lifecycle.recycled:
+                    raise DeliveryRejected(
+                        "batch_recycled",
+                        "交付门禁未通过：批次已回收。",
+                    )
+                return method(
+                    manifest,
+                    manifest_path,
+                    journal_path=journal_path,
+                    request_id=request_id,
+                    packaged_at=packaged_at,
+                )
+        except BatchOperationBusy:
+            raise DeliveryRejected(
+                "batch_busy",
+                "交付门禁未通过：本批次有任务正在运行。",
+            ) from None
+
+    return guarded
+
+
+@_guard_delivery_operation
 def package_delivery(
     manifest: Mapping[str, Any],
     manifest_path: Path,

@@ -10,6 +10,11 @@ import uuid
 from pathlib import Path
 from typing import Callable, Mapping, TextIO
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 import run_controller
 import state_reader
 from executor_contract import Executor, ExecutorContext, ExecutorExecutionError
@@ -35,6 +40,7 @@ def run_cli(
     route_reader: Callable[[Path], dict] | None = None,
     image_executor_factory: Callable[[ExecutorContext], Executor] | None = None,
     output: TextIO | None = None,
+    batch_lock_root: Path | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
     environment = os.environ if environment is None else environment
@@ -53,6 +59,48 @@ def run_cli(
         output.write("返修门禁未通过：批次清单无效。\n")
         return 1
     journal = run_controller.journal_path(args.batch_manifest, product_id)
+    try:
+        with existing_batch_operation(
+            product_id,
+            lock_root=batch_lock_root,
+        ):
+            try:
+                lifecycle = read_batch_lifecycle(journal)
+            except BatchLifecycleReadError:
+                output.write("返修门禁未通过：批次账本暂时无法读取。\n")
+                return 1
+            if lifecycle.recycled:
+                output.write("返修门禁未通过：批次已回收，未写入任何事件。\n")
+                return 1
+            if lifecycle.closed:
+                output.write("返修门禁未通过：批次已关账，未写入任何事件。\n")
+                return 1
+            return _run_active_repair(
+                args,
+                manifest,
+                journal,
+                environment=environment,
+                repo_reports_dir=repo_reports_dir,
+                route_reader=route_reader,
+                image_executor_factory=image_executor_factory,
+                output=output,
+            )
+    except BatchOperationBusy:
+        output.write("返修门禁未通过：本批次有任务正在运行，未写入任何事件。\n")
+        return 1
+
+
+def _run_active_repair(
+    args,
+    manifest: dict,
+    journal: Path,
+    *,
+    environment: Mapping[str, str],
+    repo_reports_dir: Path | None,
+    route_reader: Callable[[Path], dict],
+    image_executor_factory: Callable[[ExecutorContext], Executor] | None,
+    output: TextIO,
+) -> int:
     request_id = uuid.uuid4().hex
     try:
         command = run_controller.parse_run_content(args.command)

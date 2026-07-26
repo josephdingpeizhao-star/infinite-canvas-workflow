@@ -18,9 +18,13 @@ import argparse
 import json
 import sys
 import time
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
+from typing import Iterator
 
 import batch_editor
+import batch_recycle_canvas
 import canvas_workbench_service
 import executor_factory
 import ic_client
@@ -29,6 +33,11 @@ import projector
 import run_controller
 import state_reader
 import workflow_demo_service
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 
 STRESS_PREFIX = "wfstress:"
 IMAGE_PREFIX = "wfimg:"
@@ -40,6 +49,87 @@ MINE_PREFIXES = (
     f"{run_controller.RUN_PREFIX}:",
     f"{run_controller.LOG_PREFIX}:",
 )
+
+
+@contextmanager
+def _legacy_batch_operation(
+    batch_id: str,
+    journal: Path,
+    *,
+    block_closed: bool = False,
+) -> Iterator[None]:
+    """Guard one finite legacy side effect without locking an idle daemon."""
+
+    try:
+        with existing_batch_operation(batch_id):
+            try:
+                lifecycle = read_batch_lifecycle(journal)
+            except BatchLifecycleReadError:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "批次账本暂时无法读取，命令已停止。",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(1)
+            if lifecycle.recycled:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "批次已回收，命令已停止。",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(1)
+            if block_closed and lifecycle.closed:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "error": "批次已关账，生产命令已停止。",
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                raise SystemExit(1)
+            yield
+    except BatchOperationBusy:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": "本批次有任务正在运行，命令已停止。",
+                },
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(1)
+
+
+def _guard_manifest_command(*, block_closed: bool = False):
+    """Prevent legacy commands from recreating or changing a recycled batch."""
+
+    def decorate(method):
+        @wraps(method)
+        def guarded(manifest_path: Path, *args, **kwargs):
+            batch = projector.load_batch_manifest(manifest_path)
+            batch_id = str(batch.get("product_id") or "")
+            journal = run_controller.journal_path(manifest_path, batch_id)
+            with _legacy_batch_operation(
+                batch_id,
+                journal,
+                block_closed=block_closed,
+            ):
+                return method(manifest_path, *args, **kwargs)
+
+        return guarded
+
+    return decorate
 
 
 def build_live_view(manifest_path: Path):
@@ -132,6 +222,7 @@ def control_update_ops(
     ]
 
 
+@_guard_manifest_command()
 def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
     product_id, _batch, route, _integrity, _view, layout, target, _journal, ops = build_full_projection(
         manifest_path, layout_path
@@ -155,6 +246,7 @@ def cmd_push_live(manifest_path: Path, layout_path: Path | None = None, restore_
     )
 
 
+@_guard_manifest_command()
 def cmd_layout_save(manifest_path: Path, layout_path: Path | None = None) -> None:
     graph = projector.load_graph()
     batch = projector.load_batch_manifest(manifest_path)
@@ -171,6 +263,7 @@ def cmd_layout_save(manifest_path: Path, layout_path: Path | None = None) -> Non
     print(json.dumps({"layout_saved": str(target), "node_count": len(layout["nodes"])}, ensure_ascii=False))
 
 
+@_guard_manifest_command()
 def cmd_apply_edits(manifest_path: Path, layout_path: Path | None = None, restore_viewport: bool = False) -> None:
     manifest = projector.load_batch_manifest(manifest_path)
     product_id = str(manifest.get("product_id") or "unknown")
@@ -195,31 +288,44 @@ def cmd_apply_edits(manifest_path: Path, layout_path: Path | None = None, restor
 
 
 def cmd_watch(manifest_path: Path, interval: float, layout_path: Path | None = None) -> None:
-    product_id, _batch, route, _integrity, view, _layout, _target, _journal, initial_ops = build_full_projection(
-        manifest_path, layout_path
-    )
-    ic_client.apply_ops(initial_ops)
+    batch_identity = projector.load_batch_manifest(manifest_path)
+    batch_id = str(batch_identity.get("product_id") or "")
+    lifecycle_journal = run_controller.journal_path(manifest_path, batch_id)
+    with _legacy_batch_operation(batch_id, lifecycle_journal):
+        (
+            product_id,
+            _batch,
+            route,
+            _integrity,
+            view,
+            _layout,
+            _target,
+            _journal,
+            initial_ops,
+        ) = build_full_projection(manifest_path, layout_path)
+        ic_client.apply_ops(initial_ops)
     print(json.dumps({"watch": "started", "interval": interval, "current_stage": route.get("current_stage")}, ensure_ascii=False), flush=True)
     previous = view
     try:
         while True:
             time.sleep(interval)
-            _graph, _batch, route, current = build_live_view(manifest_path)
-            ops = projector.runtime_update_ops(product_id, previous, current)
-            if ops:
-                ic_client.apply_ops(ops)
-                print(
-                    json.dumps(
-                        {
-                            "changed_nodes": len(ops),
-                            "current_stage": route.get("current_stage"),
-                            "next_required_skill": route.get("next_required_skill"),
-                        },
-                        ensure_ascii=False,
-                    ),
-                    flush=True,
-                )
-            previous = current
+            with _legacy_batch_operation(batch_id, lifecycle_journal):
+                _graph, _batch, route, current = build_live_view(manifest_path)
+                ops = projector.runtime_update_ops(product_id, previous, current)
+                if ops:
+                    ic_client.apply_ops(ops)
+                    print(
+                        json.dumps(
+                            {
+                                "changed_nodes": len(ops),
+                                "current_stage": route.get("current_stage"),
+                                "next_required_skill": route.get("next_required_skill"),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
+                previous = current
     except KeyboardInterrupt:
         print(json.dumps({"watch": "stopped"}, ensure_ascii=False))
 
@@ -232,12 +338,34 @@ def cmd_serve(
 ) -> None:
     """Phase 4 daemon: full projection, then poll the run console for commands
     and mirror manifest changes incrementally (three gates per command)."""
-    product_id, batch, route, integrity, view, _layout, _target, journal, ops = build_full_projection(
-        manifest_path, layout_path
-    )
-    executor = executor_factory.build_executor(executor_name, batch, manifest_path)
+    batch_identity = projector.load_batch_manifest(manifest_path)
+    batch_id = str(batch_identity.get("product_id") or "")
+    lifecycle_journal = run_controller.journal_path(manifest_path, batch_id)
+    # Startup projection is one finite side effect: lifecycle check, workspace
+    # parsing, and the first canvas write stay atomic with respect to recycle.
     try:
-        ic_client.apply_ops(ops)
+        with _legacy_batch_operation(
+            batch_id,
+            lifecycle_journal,
+            block_closed=True,
+        ):
+            (
+                product_id,
+                batch,
+                route,
+                integrity,
+                view,
+                _layout,
+                _target,
+                journal,
+                ops,
+            ) = build_full_projection(manifest_path, layout_path)
+            executor = executor_factory.build_executor(
+                executor_name,
+                batch,
+                manifest_path,
+            )
+            ic_client.apply_ops(ops)
     except ic_client.CanvasAgentError as exc:
         print(
             json.dumps({"serve": "projection_fallback", "error": str(exc)[:120]}, ensure_ascii=False),
@@ -246,7 +374,15 @@ def cmd_serve(
         for batch_index, batch_ops in enumerate(projection_fallback_batches(ops), start=1):
             while True:
                 try:
-                    ic_client.apply_ops(batch_ops)
+                    # A failed canvas call releases the lock before waiting.
+                    # Every retry reacquires it and rechecks lifecycle so stale
+                    # projection chunks cannot revive a recycled batch.
+                    with _legacy_batch_operation(
+                        batch_id,
+                        lifecycle_journal,
+                        block_closed=True,
+                    ):
+                        ic_client.apply_ops(batch_ops)
                     break
                 except ic_client.CanvasAgentError as batch_exc:
                     print(
@@ -285,128 +421,149 @@ def cmd_serve(
                 print(json.dumps({"serve": "waiting_canvas", "error": str(exc)[:120]}, ensure_ascii=False), flush=True)
                 continue
 
-            run_id = run_controller.run_node_id(product_id)
-            node = next((item for item in state.get("nodes") or [] if item.get("id") == run_id), None)
-            if node is None:
-                # Self-heal: someone deleted the control nodes; re-add them.
-                ic_client.apply_ops(
-                    [
-                        run_controller.run_node_op(product_id, route, integrity),
-                        run_controller.log_node_op(product_id, run_controller.read_journal_tail(journal)),
-                    ]
+            # One finite tick begins after the canvas read. If recycle completed
+            # while that read was in flight, lifecycle rejection happens before
+            # stale controls are parsed or any workspace file is opened.
+            with _legacy_batch_operation(
+                batch_id,
+                lifecycle_journal,
+                block_closed=True,
+            ):
+                run_id = run_controller.run_node_id(product_id)
+                node = next(
+                    (
+                        item
+                        for item in state.get("nodes") or []
+                        if item.get("id") == run_id
+                    ),
+                    None,
                 )
-                continue
+                if node is None:
+                    # Self-heal: someone deleted the control nodes; re-add them.
+                    _graph, batch, route, current = build_live_view(manifest_path)
+                    integrity = state_reader.integrity_report_status(route)
+                    ic_client.apply_ops(
+                        [
+                            run_controller.run_node_op(product_id, route, integrity),
+                            run_controller.log_node_op(product_id, run_controller.read_journal_tail(journal)),
+                        ]
+                    )
+                    previous = current
+                    continue
 
-            content = str((node.get("metadata") or {}).get("content") or "")
-            command = None
-            parse_error: run_controller.RunValidationError | None = None
-            if content != consumed_content:
-                try:
-                    command = run_controller.parse_run_content(content)
-                except run_controller.RunValidationError as exc:
-                    parse_error = exc
-                if command is None and parse_error is None:
-                    consumed_content = None  # idle template observed; accept future commands
-
-            if command or parse_error:
-                consumed_content = content
-                _graph, batch, route, current = build_live_view(manifest_path)
-                integrity = state_reader.integrity_report_status(route)
-                error = parse_error
-                step = None
-                if command and not error:
+                content = str((node.get("metadata") or {}).get("content") or "")
+                command = None
+                parse_error: run_controller.RunValidationError | None = None
+                if content != consumed_content:
                     try:
-                        step = run_controller.resolve_command(command, route, integrity)
+                        command = run_controller.parse_run_content(content)
                     except run_controller.RunValidationError as exc:
-                        error = exc
-                if error:
-                    detail = str(error)
-                    command_text = f"{command[0]}: {command[1]}" if command else ""
-                    run_controller.append_event(journal, "gate_rejected", command=command_text, detail=detail)
+                        parse_error = exc
+                    if command is None and parse_error is None:
+                        consumed_content = None  # idle template observed; accept future commands
+
+                if command or parse_error:
+                    consumed_content = content
+                    # The tick lock becomes the command lock from its first
+                    # possible append through execution and terminal audit.
+                    _graph, batch, route, current = build_live_view(manifest_path)
+                    integrity = state_reader.integrity_report_status(route)
+                    error = parse_error
+                    step = None
+                    if command and not error:
+                        try:
+                            step = run_controller.resolve_command(command, route, integrity)
+                        except run_controller.RunValidationError as exc:
+                            error = exc
+                    if error:
+                        detail = str(error)
+                        command_text = f"{command[0]}: {command[1]}" if command else ""
+                        run_controller.append_event(journal, "gate_rejected", command=command_text, detail=detail)
+                        update_ops = projector.runtime_update_ops(product_id, previous, current)
+                        update_ops += control_update_ops(
+                            product_id, route, integrity, journal, note=f"🚫 {detail}", status="error", error=detail
+                        )
+                        ic_client.apply_ops(update_ops)
+                        previous = current
+                        print(json.dumps({"gate_rejected": detail}, ensure_ascii=False), flush=True)
+                        continue
+
+                    verb, target_name = command  # type: ignore[misc]
+                    run_controller.append_event(journal, "step_started", step=step, command=f"{verb}: {target_name}")
+                    stage_canvas_id = projector.canvas_node_id(product_id, run_controller.STEP_GRAPH_NODES[step])
+                    loading_ops = control_update_ops(
+                        product_id, route, integrity, journal, note=f"⏳ 正在执行 {step} …", status="loading"
+                    )
+                    loading_ops.append({"type": "update_node", "id": stage_canvas_id, "metadata": {"status": "loading"}})
+                    ic_client.apply_ops(loading_ops)
+
+                    started = time.monotonic()
+                    try:
+                        run_detail = run_controller.execute_step(executor, step).detail
+                    except run_controller.RunExecutionError as exc:
+                        run_controller.append_event(journal, "step_failed", step=step, detail=str(exc))
+                        note, status, error_text = f"✘ {step} 失败：{exc}", "error", str(exc)
+                        result_log = {"step": step, "result": "failed", "detail": str(exc)}
+                    else:
+                        elapsed = f"{time.monotonic() - started:.1f}s"
+                        run_controller.append_event(journal, "step_succeeded", step=step, detail=f"{run_detail}（{elapsed}）")
+                        note, status, error_text = f"✔ {step} 完成（{elapsed}）", "success", ""
+                        result_log = {"step": step, "result": "succeeded", "elapsed": elapsed}
+
+                    _graph, batch, route, current = build_live_view(manifest_path)
+                    integrity = state_reader.integrity_report_status(route)
                     update_ops = projector.runtime_update_ops(product_id, previous, current)
+                    # The stage node was forced to loading outside the view diff;
+                    # when its view entry is unchanged (e.g. retry of a completed
+                    # step) the diff is empty, so always restore it explicitly.
+                    entry = current.get(run_controller.STEP_GRAPH_NODES[step])
+                    if entry:
+                        update_ops.append(
+                            {
+                                "type": "update_node",
+                                "id": stage_canvas_id,
+                                "patch": {"title": entry["title"]},
+                                "metadata": {
+                                    "status": entry["status"] or "idle",
+                                    "content": entry["content"],
+                                    "errorDetails": entry["errorDetails"],
+                                },
+                            }
+                        )
                     update_ops += control_update_ops(
-                        product_id, route, integrity, journal, note=f"🚫 {detail}", status="error", error=detail
+                        product_id, route, integrity, journal, note=note, status=status, error=error_text
                     )
                     ic_client.apply_ops(update_ops)
                     previous = current
-                    print(json.dumps({"gate_rejected": detail}, ensure_ascii=False), flush=True)
+                    print(
+                        json.dumps(
+                            {
+                                **result_log,
+                                "current_stage": route.get("current_stage"),
+                                "next_required_skill": route.get("next_required_skill"),
+                            },
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
                     continue
 
-                verb, target_name = command  # type: ignore[misc]
-                run_controller.append_event(journal, "step_started", step=step, command=f"{verb}: {target_name}")
-                stage_canvas_id = projector.canvas_node_id(product_id, run_controller.STEP_GRAPH_NODES[step])
-                loading_ops = control_update_ops(
-                    product_id, route, integrity, journal, note=f"⏳ 正在执行 {step} …", status="loading"
-                )
-                loading_ops.append({"type": "update_node", "id": stage_canvas_id, "metadata": {"status": "loading"}})
-                ic_client.apply_ops(loading_ops)
-
-                started = time.monotonic()
-                try:
-                    run_detail = run_controller.execute_step(executor, step).detail
-                except run_controller.RunExecutionError as exc:
-                    run_controller.append_event(journal, "step_failed", step=step, detail=str(exc))
-                    note, status, error_text = f"✘ {step} 失败：{exc}", "error", str(exc)
-                    result_log = {"step": step, "result": "failed", "detail": str(exc)}
-                else:
-                    elapsed = f"{time.monotonic() - started:.1f}s"
-                    run_controller.append_event(journal, "step_succeeded", step=step, detail=f"{run_detail}（{elapsed}）")
-                    note, status, error_text = f"✔ {step} 完成（{elapsed}）", "success", ""
-                    result_log = {"step": step, "result": "succeeded", "elapsed": elapsed}
-
+                # Plain mirror ticks re-read workspace under this same short
+                # lifecycle lock; a pre-recycle snapshot is never applied.
                 _graph, batch, route, current = build_live_view(manifest_path)
                 integrity = state_reader.integrity_report_status(route)
                 update_ops = projector.runtime_update_ops(product_id, previous, current)
-                # The stage node was forced to loading outside the view diff;
-                # when its view entry is unchanged (e.g. retry of a completed
-                # step) the diff is empty, so always restore it explicitly.
-                entry = current.get(run_controller.STEP_GRAPH_NODES[step])
-                if entry:
-                    update_ops.append(
-                        {
-                            "type": "update_node",
-                            "id": stage_canvas_id,
-                            "patch": {"title": entry["title"]},
-                            "metadata": {
-                                "status": entry["status"] or "idle",
-                                "content": entry["content"],
-                                "errorDetails": entry["errorDetails"],
-                            },
-                        }
+                if update_ops:
+                    update_ops += control_update_ops(product_id, route, integrity, journal)
+                    ic_client.apply_ops(update_ops)
+                    print(
+                        json.dumps(
+                            {"changed_nodes": len(update_ops), "current_stage": route.get("current_stage")},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
                     )
-                update_ops += control_update_ops(
-                    product_id, route, integrity, journal, note=note, status=status, error=error_text
-                )
-                ic_client.apply_ops(update_ops)
                 previous = current
-                print(
-                    json.dumps(
-                        {
-                            **result_log,
-                            "current_stage": route.get("current_stage"),
-                            "next_required_skill": route.get("next_required_skill"),
-                        },
-                        ensure_ascii=False,
-                    ),
-                    flush=True,
-                )
-                continue
-
-            # Plain watch tick: mirror external manifest/workspace changes.
-            _graph, batch, route, current = build_live_view(manifest_path)
-            integrity = state_reader.integrity_report_status(route)
-            update_ops = projector.runtime_update_ops(product_id, previous, current)
-            if update_ops:
-                update_ops += control_update_ops(product_id, route, integrity, journal)
-                ic_client.apply_ops(update_ops)
-                print(
-                    json.dumps(
-                        {"changed_nodes": len(update_ops), "current_stage": route.get("current_stage")},
-                        ensure_ascii=False,
-                    ),
-                    flush=True,
-                )
-            previous = current
     except KeyboardInterrupt:
         print(json.dumps({"serve": "stopped"}, ensure_ascii=False))
 
@@ -415,6 +572,7 @@ def cmd_health() -> None:
     print(json.dumps(ic_client.health(), ensure_ascii=False))
 
 
+@_guard_manifest_command()
 def cmd_push_batch(manifest_path: Path) -> None:
     graph = projector.load_graph()
     batch = projector.load_batch_manifest(manifest_path)
@@ -560,6 +718,23 @@ def cmd_clear_mine() -> None:
     print(json.dumps({"deleted": len(ids)}, ensure_ascii=False))
 
 
+def cmd_clear_batch(batch_id: str) -> None:
+    if (
+        not batch_id
+        or Path(batch_id).name != batch_id
+        or any(char in batch_id for char in ("/", "\\", "\0", "\r", "\n"))
+    ):
+        print(json.dumps({"deleted": 0, "error": "批次号无效。"}, ensure_ascii=False))
+        raise SystemExit(1)
+    ids = batch_recycle_canvas.clear_batch_canvas_nodes(ic_client, batch_id)
+    print(
+        json.dumps(
+            {"deleted": len(ids), "ids": ids, "batchId": batch_id},
+            ensure_ascii=False,
+        )
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Spike driver: project workflow state into infinite-canvas.")
     parser.add_argument("--health", action="store_true")
@@ -588,6 +763,11 @@ def main() -> int:
         help="只删除指定批次当前活跃且在册的投影节点，不触碰其他画布节点",
     )
     parser.add_argument("--clear-mine", action="store_true")
+    parser.add_argument(
+        "--clear-batch",
+        metavar="BATCH_ID",
+        help="只删除指定批次可证明归属的画布节点",
+    )
     parser.add_argument(
         "--serve-workflow-demo",
         type=Path,
@@ -651,6 +831,9 @@ def main() -> int:
         ran = True
     if args.clear_mine:
         cmd_clear_mine()
+        ran = True
+    if args.clear_batch:
+        cmd_clear_batch(args.clear_batch)
         ran = True
     if args.serve_workflow_demo:
         workflow_demo_service.cmd_serve_workflow_demo(args.serve_workflow_demo, args.interval)

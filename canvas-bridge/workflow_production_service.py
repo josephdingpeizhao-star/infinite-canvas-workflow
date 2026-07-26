@@ -8,9 +8,17 @@ import queue
 import re
 import threading
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BUSY_MESSAGE,
+    RECYCLED_MESSAGE,
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 import executor_factory
 import ic_client
 import run_controller
@@ -58,6 +66,62 @@ BATCH_CLOSED_MESSAGE = "本批次已关账，不能再发起制作、质检、�
 
 class BatchClosedGateError(ProductionGateError):
     pass
+
+
+class BatchRecycledGateError(ProductionGateError):
+    pass
+
+
+class BatchOperationBusyGateError(ProductionGateError):
+    pass
+
+
+class BatchLifecycleGateError(ProductionGateError):
+    pass
+
+
+def _guard_batch_side_effect(*, quiet: bool = False):
+    """Hold the shared batch lock before any workspace, journal or Canvas write."""
+
+    def decorate(method):
+        @wraps(method)
+        def guarded(self, machine, canvas_state, *args, **kwargs):
+            try:
+                selection = resolve_production_selection(
+                    str(machine.get("id") or ""),
+                    canvas_state,
+                )
+                manifest_path = self._manifest_path(selection.batch_id)
+                journal = self._journal_path(manifest_path, selection.batch_id)
+                with existing_batch_operation(
+                    selection.batch_id,
+                    lock_root=self.batch_lock_root,
+                ):
+                    lifecycle = read_batch_lifecycle(journal)
+                    if lifecycle.recycled:
+                        if quiet:
+                            return None
+                        raise BatchRecycledGateError(RECYCLED_MESSAGE)
+                    return method(self, machine, canvas_state, *args, **kwargs)
+            except BatchOperationBusy:
+                if quiet:
+                    return None
+                raise BatchOperationBusyGateError(BUSY_MESSAGE) from None
+            except BatchLifecycleReadError:
+                if quiet:
+                    return None
+                raise BatchLifecycleGateError(
+                    "批次账本暂时无法读取，真实制作没有开始。"
+                ) from None
+            except ProductionGateError:
+                if quiet:
+                    return None
+                raise
+
+        return guarded
+
+    return decorate
+
 
 _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
@@ -204,6 +268,7 @@ class WorkflowProductionService:
         persistence_timeout_ms: int = 12_000,
         environment: Mapping[str, str] | None = None,
         diagnostic_recorder: Callable[[str, str], None] | None = None,
+        batch_lock_root: Path | None = None,
     ) -> None:
         self.repository_root = repository_root.resolve()
         self.client = client
@@ -225,6 +290,7 @@ class WorkflowProductionService:
         self.persistence_timeout_ms = max(0, int(persistence_timeout_ms))
         self.environment = environment if environment is not None else os.environ
         self.diagnostic_recorder = diagnostic_recorder
+        self.batch_lock_root = batch_lock_root
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
         self._qc_heartbeat_workers: set[_QcHeartbeatWorker] = set()
@@ -476,6 +542,7 @@ class WorkflowProductionService:
                 self._project_artifact(machine, artifact, journal, request_id)
         return artifacts
 
+    @_guard_batch_side_effect(quiet=True)
     def _backfill_render_sources(
         self,
         machine: Mapping[str, Any],
@@ -544,6 +611,7 @@ class WorkflowProductionService:
             "metadata": {"workflowRepairedProjection": updated},
         }
 
+    @_guard_batch_side_effect()
     def _process_repaired_projection(
         self,
         machine: Mapping[str, Any],
@@ -772,6 +840,7 @@ class WorkflowProductionService:
             ]
         )
 
+    @_guard_batch_side_effect()
     def _process(self, machine: Mapping[str, Any], canvas_state: Mapping[str, Any]) -> None:
         production = self._production_state(machine)
         request_id = str(production.get("requestId") or "")
@@ -1034,7 +1103,15 @@ class WorkflowProductionService:
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
                 controlled = self._controlled_failure(exc)
-                if not isinstance(exc, BatchClosedGateError):
+                if not isinstance(
+                    exc,
+                    (
+                        BatchClosedGateError,
+                        BatchRecycledGateError,
+                        BatchOperationBusyGateError,
+                        BatchLifecycleGateError,
+                    ),
+                ):
                     try:
                         manifest_path = self._manifest_path(batch_id)
                         run_controller.append_event(

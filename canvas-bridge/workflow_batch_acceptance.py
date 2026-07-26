@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any, Mapping
 
 import run_controller
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 from workflow_production_projection import artifact_from_path
 
 
@@ -62,9 +67,36 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
 
 
 class BatchAcceptanceService:
-    def __init__(self, repository_root: Path) -> None:
+    def __init__(
+        self,
+        repository_root: Path,
+        *,
+        batch_lock_root: Path | None = None,
+    ) -> None:
         self.repository_root = repository_root.resolve()
         self._close_lock = threading.Lock()
+        self.batch_lock_root = batch_lock_root
+
+    def _manifest_journal(self, batch_id: str) -> tuple[Path, Path]:
+        if (
+            not batch_id
+            or Path(batch_id).name != batch_id
+            or any(char in batch_id for char in ("/", "\\", "\0"))
+        ):
+            raise AcceptanceRejected(400, "批次号无效。")
+        manifest_path = (
+            self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
+        )
+        if not manifest_path.is_file():
+            raise AcceptanceRejected(404, "找不到这个批次。")
+        return manifest_path, run_controller.journal_path(manifest_path, batch_id)
+
+    @staticmethod
+    def _lifecycle(journal: Path):
+        try:
+            return read_batch_lifecycle(journal)
+        except BatchLifecycleReadError:
+            raise AcceptanceRejected(409, "批次账本暂时无法读取。") from None
 
     def _context(
         self,
@@ -122,6 +154,18 @@ class BatchAcceptanceService:
         )
 
     def status(self, batch_id: str) -> dict[str, Any]:
+        _manifest_path, journal = self._manifest_journal(batch_id)
+        lifecycle = self._lifecycle(journal)
+        if lifecycle.recycled:
+            return {
+                "ok": True,
+                "batchId": batch_id,
+                "status": "recycled",
+                "recycledAt": (
+                    lifecycle.active_recycled_event or {}
+                ).get("operation_at_utc")
+                or (lifecycle.active_recycled_event or {}).get("ts"),
+            }
         _manifest, _manifest_path, _workspace, journal = self._context(batch_id)
         event = self._closed_event(journal)
         payload: dict[str, Any] = {
@@ -224,22 +268,43 @@ class BatchAcceptanceService:
         return path
 
     def close(self, batch_id: str, payload: Any) -> dict[str, Any]:
-        request_id, machine_id, selections = self._validated_request(payload)
         with self._close_lock:
-            manifest, _manifest_path, workspace, journal = self._context(batch_id)
-            if self._closed_event(journal):
-                raise AcceptanceRejected(409, "本批次已关账，不能重复关账。")
-            for selection in selections:
-                self._resolve_selection(manifest, workspace, selection)
-            run_controller.append_event(
-                journal,
-                ACCEPTANCE_EVENT,
-                request_id=request_id,
-                machine_id=machine_id,
-                selection_count=len(selections),
-                selections=selections,
-                final_review_statement=ACCEPTANCE_STATEMENT,
-            )
+            _early_manifest, early_journal = self._manifest_journal(batch_id)
+            try:
+                with existing_batch_operation(
+                    batch_id,
+                    lock_root=self.batch_lock_root,
+                ):
+                    lifecycle = self._lifecycle(early_journal)
+                    if lifecycle.recycled:
+                        raise AcceptanceRejected(
+                            409, "本批次已回收，不能执行关账。"
+                        )
+                    request_id, machine_id, selections = self._validated_request(
+                        payload
+                    )
+                    manifest, _manifest_path, workspace, journal = self._context(
+                        batch_id
+                    )
+                    if self._closed_event(journal):
+                        raise AcceptanceRejected(
+                            409, "本批次已关账，不能重复关账。"
+                        )
+                    for selection in selections:
+                        self._resolve_selection(manifest, workspace, selection)
+                    run_controller.append_event(
+                        journal,
+                        ACCEPTANCE_EVENT,
+                        request_id=request_id,
+                        machine_id=machine_id,
+                        selection_count=len(selections),
+                        selections=selections,
+                        final_review_statement=ACCEPTANCE_STATEMENT,
+                    )
+            except BatchOperationBusy:
+                raise AcceptanceRejected(
+                    409, "本批次有任务正在运行，暂不能关账。"
+                ) from None
         return {
             "ok": True,
             "batchId": batch_id,

@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
+from batch_recycle_state import (
+    BatchLifecycleReadError,
+    read_batch_lifecycle,
+)
 import ic_client
+import run_controller
 
 
 SUPPORTED_SUFFIXES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
@@ -198,7 +204,7 @@ def _reject_registered_product_hashes(manifest_path: Path, sha256s: tuple[str, .
         raise StyleReferenceIntakeError(CROSS_ROLE_IMAGE_MESSAGE)
 
 
-def publish_style_references(
+def _publish_style_references_active(
     manifest_path: Path,
     request_id: str,
     uploads: tuple[StyleReferenceUpload, ...],
@@ -293,6 +299,46 @@ def publish_style_references(
     )
 
 
+def publish_style_references(
+    manifest_path: Path,
+    request_id: str,
+    uploads: tuple[StyleReferenceUpload, ...],
+    *,
+    batch_lock_root: Path | None = None,
+) -> StyleReferencePublishResult:
+    """Freeze the publish boundary before its first workspace write."""
+
+    manifest = _read_json(manifest_path, "批次清单")
+    batch_id = str(manifest.get("product_id") or "").strip()
+    if not batch_id:
+        raise StyleReferenceIntakeError("批次清单缺少批次号。")
+    journal = run_controller.journal_path(manifest_path, batch_id)
+    try:
+        with existing_batch_operation(
+            batch_id,
+            lock_root=batch_lock_root,
+        ):
+            try:
+                lifecycle = read_batch_lifecycle(journal)
+            except BatchLifecycleReadError:
+                raise StyleReferenceIntakeError(
+                    "批次账本暂时无法读取，风格补登未写入。"
+                ) from None
+            if lifecycle.recycled:
+                raise StyleReferenceIntakeError(
+                    "批次已回收，风格补登未写入。"
+                )
+            return _publish_style_references_active(
+                manifest_path,
+                request_id,
+                uploads,
+            )
+    except BatchOperationBusy:
+        raise StyleReferenceIntakeError(
+            "本批次有任务正在运行，风格补登未写入。"
+        ) from None
+
+
 class WorkflowStyleReferenceService:
     """Open exact-byte upload sessions declared by a registered batch card.
 
@@ -312,6 +358,7 @@ class WorkflowStyleReferenceService:
         interval: float = 2.0,
         upload_host: str = DEFAULT_STYLE_UPLOAD_HOST,
         upload_port: int = DEFAULT_STYLE_UPLOAD_PORT,
+        batch_lock_root: Path | None = None,
     ) -> None:
         if upload_host != DEFAULT_STYLE_UPLOAD_HOST:
             raise ValueError("风格参考上传只允许绑定 127.0.0.1 回环地址。")
@@ -324,6 +371,7 @@ class WorkflowStyleReferenceService:
         self.interval = interval
         self.upload_host = upload_host
         self.upload_port = upload_port
+        self.batch_lock_root = batch_lock_root
         self.sessions: dict[str, _StyleUploadSession] = {}
         self.consumed_request_ids: set[str] = set()
         self.stopping = False
@@ -554,6 +602,7 @@ class WorkflowStyleReferenceService:
                     self._manifest_path(batch_id),
                     request_id,
                     tuple(session.uploads[item] for item in session.sources),
+                    batch_lock_root=self.batch_lock_root,
                 )
             except StyleReferenceIntakeError as exc:
                 session.blocked = True
