@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import batch_creator
+import batch_recycle_service
 import ic_client
 import workflow_batch_intake_service
 import workflow_demo_service
@@ -324,6 +325,10 @@ def cmd_serve_canvas_workbench(
             interval=interval,
             upload_port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
         )
+        recycle_service = batch_recycle_service.BatchRecycleService(
+            REPO_ROOT,
+            client=ic_client,
+        )
         production_http = workflow_production_http_server.WorkflowProductionHttpServer(
             repository_root=REPO_ROOT,
             token=token,
@@ -332,6 +337,7 @@ def cmd_serve_canvas_workbench(
             style_acceptor=style_service,
             assistant_service=assistant_service,
             command_assistant_service=command_assistant_service,
+            batch_recycle_service=recycle_service,
         )
         workbench = CanvasWorkbenchService(
             demo_service=demo_service,

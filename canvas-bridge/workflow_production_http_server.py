@@ -11,6 +11,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from batch_recycle_service import BatchRecycleError
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
@@ -32,6 +33,7 @@ TOTAL_IMAGES = 14
 MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_COMMAND_ASSISTANT_BODY_BYTES = 16 * 1024
+MAX_BATCH_RECYCLE_BODY_BYTES = 256
 DRAIN_CAP = 256 * 1024
 CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
@@ -101,6 +103,7 @@ class WorkflowProductionHttpApplication:
         health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
         assistant_service: Any | None = None,
         command_assistant_service: Any | None = None,
+        batch_recycle_service: Any | None = None,
     ):
         self.repository_root = repository_root.resolve()
         self.token = token
@@ -108,6 +111,7 @@ class WorkflowProductionHttpApplication:
         self.health_provider = health_provider
         self.assistant_service = assistant_service
         self.command_assistant_service = command_assistant_service
+        self.batch_recycle_service = batch_recycle_service
         self.acceptance = BatchAcceptanceService(self.repository_root)
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
@@ -306,6 +310,22 @@ class WorkflowProductionHttpApplication:
         except KeyError:
             raise CommandDraftNotFound("命令草稿编号不存在") from None
 
+    def batch_recycle(self, batch_id: str) -> dict[str, Any]:
+        if self.batch_recycle_service is None:
+            raise ProductionHttpError(404, "batch recycle unavailable")
+        outcome = self.batch_recycle_service.recycle(
+            batch_id,
+            source_entry="workbench",
+        )
+        if outcome.batch_id != batch_id or outcome.status != "recycled":
+            raise RuntimeError("invalid batch recycle outcome")
+        return {
+            "ok": True,
+            "batchId": batch_id,
+            "status": "recycled",
+            "message": "批次已移入回收站。",
+        }
+
 
 class _LocalThreadingHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
@@ -324,6 +344,7 @@ class WorkflowProductionHttpServer:
         health_provider: Callable[[], tuple[bool, Mapping[str, Any]]] | None = None,
         assistant_service: Any | None = None,
         command_assistant_service: Any | None = None,
+        batch_recycle_service: Any | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
@@ -336,6 +357,7 @@ class WorkflowProductionHttpServer:
             health_provider=health_provider,
             assistant_service=assistant_service,
             command_assistant_service=command_assistant_service,
+            batch_recycle_service=batch_recycle_service,
         )
         self.host = host
         self.port = port
@@ -404,6 +426,24 @@ class WorkflowProductionHttpServer:
                 self._send_cors(origin)
                 self.end_headers()
                 self.wfile.write(data)
+
+            def _batch_recycle_error(
+                self,
+                batch_id: str,
+                exc: BatchRecycleError,
+                *,
+                origin: str | None,
+            ) -> None:
+                self._assistant_response(
+                    409,
+                    {
+                        "ok": False,
+                        "error": "batch_recycle_rejected",
+                        "batchId": batch_id,
+                        "message": str(exc),
+                    },
+                    origin=origin,
+                )
 
             def _assistant_error(
                 self,
@@ -604,6 +644,89 @@ class WorkflowProductionHttpServer:
                         self._assistant_response(
                             assistant_status,
                             assistant_snapshot,
+                            origin=origin,
+                        )
+                        return
+                    raw_recycle_parts = assistant_path.path.split("/")
+                    in_batch_recycle_namespace = (
+                        len(raw_recycle_parts) > 1
+                        and raw_recycle_parts[0] == ""
+                        and raw_recycle_parts[1] == "batch-recycle"
+                    )
+                    is_batch_recycle = (
+                        in_batch_recycle_namespace
+                        and len(raw_recycle_parts) == 3
+                        and bool(raw_recycle_parts[2])
+                        and not assistant_path.query
+                        and not assistant_path.fragment
+                    )
+                    if in_batch_recycle_namespace:
+                        if not is_batch_recycle:
+                            raise ProductionHttpError(404, "not found")
+                        batch_id = urllib.parse.unquote(raw_recycle_parts[2])
+                        if (
+                            Path(batch_id).name != batch_id
+                            or any(
+                                char in batch_id
+                                for char in ("/", "\\", "\0", "\r", "\n")
+                            )
+                        ):
+                            raise ProductionHttpError(400, "bad route")
+                        if self.headers.get("Transfer-Encoding"):
+                            raise ProductionHttpError(
+                                400, "transfer encoding rejected"
+                            )
+                        recycle_lengths = (
+                            self.headers.get_all("Content-Length") or []
+                        )
+                        if len(recycle_lengths) != 1:
+                            raise ProductionHttpError(411, "length required")
+                        try:
+                            recycle_length = int(recycle_lengths[0])
+                        except ValueError:
+                            raise ProductionHttpError(400, "bad length") from None
+                        declared_body_length = recycle_length
+                        if not 0 < recycle_length <= MAX_BATCH_RECYCLE_BODY_BYTES:
+                            raise ProductionHttpError(413, "body too large")
+                        recycle_content_types = (
+                            self.headers.get_all("Content-Type") or []
+                        )
+                        if len(recycle_content_types) != 1:
+                            raise ProductionHttpError(415, "json required")
+                        recycle_media_type = (
+                            recycle_content_types[0]
+                            .split(";", 1)[0]
+                            .strip()
+                            .lower()
+                        )
+                        if recycle_media_type != "application/json":
+                            raise ProductionHttpError(415, "json required")
+                        recycle_data = self.rfile.read(recycle_length)
+                        consumed_body_length = len(recycle_data)
+                        if len(recycle_data) != recycle_length:
+                            raise ProductionHttpError(400, "short body")
+                        try:
+                            recycle_payload = json.loads(
+                                recycle_data.decode("utf-8")
+                            )
+                        except (UnicodeError, json.JSONDecodeError):
+                            raise ProductionHttpError(400, "bad json") from None
+                        if not isinstance(recycle_payload, dict) or recycle_payload:
+                            raise ProductionHttpError(
+                                400, "empty object required"
+                            )
+                        try:
+                            recycle_result = application.batch_recycle(batch_id)
+                        except BatchRecycleError as exc:
+                            self._batch_recycle_error(
+                                batch_id,
+                                exc,
+                                origin=origin,
+                            )
+                            return
+                        self._assistant_response(
+                            200,
+                            recycle_result,
                             origin=origin,
                         )
                         return
