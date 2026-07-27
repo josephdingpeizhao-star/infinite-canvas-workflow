@@ -48,6 +48,8 @@ STYLE = b"\xff\xd8\xffstyle-reference"
 def _facts() -> dict[str, object]:
     return {
         "product_type": "杯子",
+        "length_cm": None,
+        "width_cm": None,
         "height_cm": 8,
         "handheld_main": 2,
         "handheld_detail": 1,
@@ -91,6 +93,8 @@ def _duplicate_hash_canvas_state() -> tuple[dict[str, object], dict[str, object]
                 "status": "queued",
                 "requestId": REQUEST_ID,
                 "requestedAt": 1_000,
+                "category": "杯类",
+                "contractHash": batch_controller.batch_intake_contract_sha256(ROOT),
                 "facts": _facts(),
             },
         },
@@ -303,6 +307,12 @@ class Nc01IsolatedNormalFlowTests(unittest.TestCase):
             scripts.mkdir(parents=True)
             manifests.mkdir()
             shutil.copy2(ROOT / "scripts" / "build_batch_manifest.py", scripts)
+            (repo / "canvas-bridge").mkdir()
+            shutil.copy2(
+                ROOT / "canvas-bridge" / "category_recipes.py",
+                repo / "canvas-bridge",
+            )
+            shutil.copytree(ROOT / "categories", repo / "categories")
             shutil.copy2(ROOT / "manifests" / "batch_manifest.template.json", manifests)
             shutil.copy2(ROOT / "manifests" / "asset_manifest.template.json", manifests)
             state_root = prepare_state_root(root / "state")

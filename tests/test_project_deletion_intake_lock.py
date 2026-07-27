@@ -45,6 +45,12 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
             ROOT / "scripts" / "build_batch_manifest.py",
             self.repo / "scripts" / "build_batch_manifest.py",
         )
+        (self.repo / "canvas-bridge").mkdir()
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "category_recipes.py",
+            self.repo / "canvas-bridge",
+        )
+        shutil.copytree(ROOT / "categories", self.repo / "categories")
         shutil.copy2(
             ROOT / "manifests" / "batch_manifest.template.json",
             self.repo / "manifests" / "batch_manifest.template.json",

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import socket
 import sys
 import tempfile
@@ -35,6 +36,7 @@ class ProductionHttpServerTest(unittest.TestCase):
         self.repo = self.root / "repo"
         self.workspace = self.root / "workspace"
         (self.repo / "manifests").mkdir(parents=True)
+        shutil.copytree(ROOT / "categories", self.repo / "categories")
         (self.workspace / "outputs" / "renders").mkdir(parents=True)
         (self.workspace / ".canvas_demo").write_text("safe\n", encoding="utf-8")
         (self.workspace / ".canvas_batch").write_text(

@@ -867,12 +867,15 @@ class CodexDevDownstreamTest(unittest.TestCase):
             {
                 **STRUCTURED_FACTS,
                 "product_type": "玻璃收纳罐",
+                "length_cm": None,
+                "width_cm": None,
                 "height_cm": 31,
                 "allow_clear_water": False,
                 "missing_d_no_retake": False,
             },
             result["manifest_data"]["user_confirmed_facts"],
         )
+        self.assertEqual("杯类", result["manifest_data"]["category"])
         self.assertFalse(manifest_path.exists())
         self.assertFalse(asset_manifest_path.exists())
         self.assertFalse(input_path.exists())
@@ -894,7 +897,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
             "--height-cm",
             "31",
             "--handheld-main",
-            "3",
+            "7",
             "--handheld-detail",
             "1",
             "--allow-clear-water",

@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "contract": "canvas_batch_intake_payload",
+  "payload": {
+    "type": "object",
+    "required": ["category", "contractHash", "facts"],
+    "properties": {
+      "category": {"type": "string", "semantics": "installed_category_key"},
+      "contractHash": {"type": "string", "format": "sha256"},
+      "facts": {
+        "type": "object",
+        "required": [
+          "product_type",
+          "length_cm",
+          "width_cm",
+          "height_cm",
+          "handheld_main",
+          "handheld_detail",
+          "allow_clear_water",
+          "forbid_pouring_and_heating",
+          "missing_d_no_retake"
+        ],
+        "properties": {
+          "product_type": {"type": "string"},
+          "length_cm": {"type": ["integer", "null"]},
+          "width_cm": {"type": ["integer", "null"]},
+          "height_cm": {"type": "integer"},
+          "handheld_main": {"type": "integer"},
+          "handheld_detail": {"type": "integer"},
+          "allow_clear_water": {"type": "boolean"},
+          "forbid_pouring_and_heating": {"type": "boolean"},
+          "missing_d_no_retake": {"type": "boolean"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  }
+}

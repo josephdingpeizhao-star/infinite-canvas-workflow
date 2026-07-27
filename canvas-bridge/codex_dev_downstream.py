@@ -232,16 +232,12 @@ def _yes_value(notes: str, label: str) -> bool:
 
 def _validated_user_requirements(
     requirements: UserConfirmedRequirements,
-    *,
-    explicit_category: bool,
 ) -> UserConfirmedRequirements:
     recipe = requirements.recipe
     if recipe is None:
         raise ValueError("missing category recipe")
     if not requirements.product_type:
         raise ValueError("invalid requirement")
-    if explicit_category and requirements.product_type != recipe.product_noun:
-        raise ValueError("category product noun mismatch")
     field_metadata = {
         item["key"]: item for item in recipe.form["dimensions"]["fields"]
     }
@@ -323,8 +319,7 @@ def _parse_structured_user_requirements(
             width_cm=width_cm,
             category=recipe.key,
             recipe=recipe,
-        ),
-        explicit_category=explicit_category,
+        )
     )
 
 
@@ -356,8 +351,7 @@ def parse_user_confirmed_requirements(
                 missing_d_no_retake=_yes_value(notes, "D槽位不补拍"),
                 category=recipe.key,
                 recipe=recipe,
-            ),
-            explicit_category=False,
+            )
         )
     except (CategoryRecipeError, KeyError, TypeError, ValueError):
         raise ExecutorExecutionError("codex-dev 缺少有效的用户确认商品信息") from None

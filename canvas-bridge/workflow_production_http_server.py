@@ -11,7 +11,16 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from batch_intake_contract import (
+    BatchIntakeContractError,
+    batch_intake_contract_sha256,
+)
 from batch_recycle_service import BatchRecycleError
+from category_recipes import (
+    CategoryRecipeError,
+    installed_category_metadata,
+    load_manifest_category,
+)
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
@@ -151,6 +160,18 @@ class WorkflowProductionHttpApplication:
         )
         return bool(healthy) and critical_running, {"workers": workers}
 
+    def batch_categories(self) -> dict[str, Any]:
+        try:
+            categories = installed_category_metadata(self.repository_root)
+            contract_hash = batch_intake_contract_sha256(self.repository_root)
+        except (CategoryRecipeError, BatchIntakeContractError):
+            raise ProductionHttpError(503, "batch categories unavailable") from None
+        return {
+            "ok": True,
+            "contractHash": contract_hash,
+            "categories": list(categories),
+        }
+
     def _manifest(self, batch_id: str) -> tuple[dict[str, Any], Path, Path]:
         if not batch_id or Path(batch_id).name != batch_id or any(char in batch_id for char in ("/", "\\", "\0")):
             raise ProductionHttpError(400, "invalid batch")
@@ -163,6 +184,10 @@ class WorkflowProductionHttpApplication:
             raise ProductionHttpError(409, "batch unavailable") from None
         if not isinstance(value, dict) or value.get("product_id") != batch_id:
             raise ProductionHttpError(409, "batch mismatch")
+        try:
+            load_manifest_category(self.repository_root, value)
+        except CategoryRecipeError:
+            raise ProductionHttpError(409, "category recipe unavailable") from None
         workspace_value = (value.get("workspace") or {}).get("root") if isinstance(value.get("workspace"), dict) else None
         if not isinstance(workspace_value, str) or not workspace_value:
             raise ProductionHttpError(409, "workspace missing")
@@ -522,6 +547,19 @@ class WorkflowProductionHttpServer:
                         self.wfile.write(payload)
                         return
                     application.authorize(self.headers.get("x-canvas-agent-token") or "")
+                    if segments == ["batch-categories"]:
+                        payload = json.dumps(
+                            application.batch_categories(),
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                        self.send_response(200)
+                        self.send_header("content-type", "application/json; charset=utf-8")
+                        self.send_header("cache-control", "no-store")
+                        self.send_header("content-length", str(len(payload)))
+                        self._send_cors(origin)
+                        self.end_headers()
+                        self.wfile.write(payload)
+                        return
                     if len(segments) == 3 and segments[:2] == ["command-assistant", "drafts"]:
                         try:
                             snapshot = application.command_assistant_status(segments[2])

@@ -78,7 +78,13 @@ class BatchCreatorTests(unittest.TestCase):
     def _make_repo_fixture(self) -> None:
         (self.repo / "scripts").mkdir(parents=True)
         (self.repo / "manifests").mkdir()
+        (self.repo / "canvas-bridge").mkdir()
         shutil.copy2(ROOT / "scripts" / "build_batch_manifest.py", self.repo / "scripts")
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "category_recipes.py",
+            self.repo / "canvas-bridge",
+        )
+        shutil.copytree(ROOT / "categories", self.repo / "categories")
         shutil.copy2(
             ROOT / "manifests" / "batch_manifest.template.json",
             self.repo / "manifests",
@@ -105,6 +111,8 @@ class BatchCreatorTests(unittest.TestCase):
         request_id: str = "batch-req-0001",
         facts: ConfirmedFacts = FACTS,
         sources: tuple[SourceImage, ...] | None = None,
+        category: str = "杯类",
+        contract_hash: str = "",
     ) -> BatchIntakeRequest:
         if sources is None:
             payload = b"original-png-bytes\x00\x01"
@@ -126,6 +134,8 @@ class BatchCreatorTests(unittest.TestCase):
             workflow_node_id="workflow-1",
             facts=facts,
             source_images=sources,
+            category=category,
+            contract_hash=contract_hash,
         )
 
     def upload(self, request: BatchIntakeRequest, index: int = 0, *, data: bytes | None = None) -> UploadedFile:
@@ -219,6 +229,33 @@ class BatchCreatorTests(unittest.TestCase):
         self.assertIn("餐具_20260718", routed["manifest_source_path"])
         self.assertIn("餐具_20260718", routed_white_bg)
         self.assertEqual("needs_product_identity_archive", routed["current_stage"])
+
+    def test_plate_category_and_three_dimensions_reach_manifest_and_receipt(self) -> None:
+        facts = ConfirmedFacts(
+            product_type="盘子",
+            length_cm=28,
+            width_cm=28,
+            height_cm=3,
+            handheld_main=6,
+            handheld_detail=8,
+            allow_clear_water=True,
+            forbid_pouring_and_heating=True,
+            missing_d_no_retake=True,
+        )
+        request = self.request(
+            facts=facts,
+            category="盘子",
+            contract_hash="a" * 64,
+        )
+
+        result = self.creator.create(request, [self.upload(request)])
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        receipt = json.loads(result.receipt_path.read_text(encoding="utf-8"))
+
+        self.assertEqual("盘子", manifest["category"])
+        self.assertEqual(facts.as_dict(), manifest["user_confirmed_facts"])
+        self.assertEqual("盘子", receipt["category"])
+        self.assertEqual("a" * 64, receipt["contract_hash"])
 
     def test_receipt_records_browser_uploaded_and_destination_hash_equality(self) -> None:
         request = self.request()

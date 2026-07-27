@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -158,7 +159,6 @@ class CategoryRecipeTest(unittest.TestCase):
         invalid = (
             {key: value for key, value in PLATE_FACTS.items() if key != "width_cm"},
             {**PLATE_FACTS, "unexpected": True},
-            {**PLATE_FACTS, "product_type": "餐盘"},
         )
         for facts in invalid:
             with self.subTest(facts=facts):
@@ -263,6 +263,62 @@ class CategoryRecipeTest(unittest.TestCase):
 
         self.assertIn("长约 12 厘米、宽约 10 厘米", prompt)
         self.assertIn("不得改写已确认高度", prompt)
+
+    def test_plate_cli_requires_three_dimensions_and_keeps_dry_run_side_effect_free(self) -> None:
+        product_id = "__cat01_plate_cli_dry_run__"
+        command = [
+            sys.executable,
+            str(ROOT / "scripts" / "build_batch_manifest.py"),
+            "--product-id",
+            product_id,
+            "--category",
+            "盘子",
+            "--product-type",
+            "盘子",
+            "--length-cm",
+            "30",
+            "--width-cm",
+            "28",
+            "--height-cm",
+            "4",
+            "--handheld-main",
+            "6",
+            "--handheld-detail",
+            "8",
+            "--allow-clear-water",
+            "false",
+            "--forbid-pouring-and-heating",
+            "true",
+            "--missing-d-no-retake",
+            "true",
+            "--dry-run",
+        ]
+
+        completed = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        manifest = json.loads(completed.stdout)["manifest_data"]
+        self.assertEqual("盘子", manifest["category"])
+        self.assertEqual(PLATE_FACTS | {"handheld_main": 6}, manifest["user_confirmed_facts"])
+        self.assertFalse((ROOT / "manifests" / f"{product_id}.batch_manifest.json").exists())
+
+        missing_width = [item for item in command if item not in {"--width-cm", "28"}]
+        rejected = subprocess.run(
+            missing_width,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+        self.assertNotEqual(0, rejected.returncode)
 
     def test_runtime_code_reads_only_generic_skill_files_from_agents(self) -> None:
         sources = "\n".join(

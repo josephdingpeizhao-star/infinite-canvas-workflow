@@ -5,12 +5,21 @@ import ast
 import hashlib
 import json
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BRIDGE = ROOT / "canvas-bridge"
+if str(BRIDGE) not in sys.path:
+    sys.path.insert(0, str(BRIDGE))
+
+from codex_dev_downstream import (  # noqa: E402
+    ExecutorExecutionError,
+    parse_user_confirmed_requirements,
+)
 
 SOURCE_RULE_FILES = [
     "产品身份档案提示词.txt",
@@ -1462,50 +1471,24 @@ def note_int(notes: str, label: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
-_USER_CONFIRMED_FACT_KEYS = frozenset(
-    {
-        "product_type",
-        "height_cm",
-        "handheld_main",
-        "handheld_detail",
-        "allow_clear_water",
-        "forbid_pouring_and_heating",
-        "missing_d_no_retake",
-    }
-)
-
-
 def integrity_expectations(
     batch_manifest: Mapping[str, Any],
 ) -> tuple[int | None, dict[str, int | None], str]:
     """Read structured facts first; notes are only a legacy fallback."""
 
     if "user_confirmed_facts" in batch_manifest:
-        raw = batch_manifest["user_confirmed_facts"]
-        if not isinstance(raw, Mapping) or set(raw) != _USER_CONFIRMED_FACT_KEYS:
+        try:
+            requirements = parse_user_confirmed_requirements(batch_manifest, ROOT)
+        except ExecutorExecutionError:
             raise ValueError("invalid structured user facts")
-        product_type = raw["product_type"]
-        height_cm = raw["height_cm"]
-        handheld_main = raw["handheld_main"]
-        handheld_detail = raw["handheld_detail"]
-        boolean_values = (
-            raw["allow_clear_water"],
-            raw["forbid_pouring_and_heating"],
-            raw["missing_d_no_retake"],
+        return (
+            requirements.height_cm,
+            {
+                "main": requirements.handheld_main,
+                "detail": requirements.handheld_detail,
+            },
+            "structured",
         )
-        if (
-            not isinstance(product_type, str)
-            or not product_type.strip()
-            or type(height_cm) is not int
-            or height_cm <= 0
-            or type(handheld_main) is not int
-            or handheld_main != 2
-            or type(handheld_detail) is not int
-            or handheld_detail != 1
-            or any(type(value) is not bool for value in boolean_values)
-        ):
-            raise ValueError("invalid structured user facts")
-        return height_cm, {"main": handheld_main, "detail": handheld_detail}, "structured"
 
     notes = str(batch_manifest.get("notes") or "")
     return (

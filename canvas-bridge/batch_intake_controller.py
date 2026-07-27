@@ -3,8 +3,14 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
+from batch_intake_contract import (
+    BatchIntakeContractError,
+    batch_intake_contract_sha256,
+)
+from category_recipes import DEFAULT_CATEGORY_KEY
 from codex_dev_downstream import ExecutorExecutionError, parse_user_confirmed_requirements
 
 
@@ -50,10 +56,14 @@ class ConfirmedFacts:
     allow_clear_water: bool
     forbid_pouring_and_heating: bool
     missing_d_no_retake: bool
+    length_cm: int | None = None
+    width_cm: int | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "product_type": self.product_type,
+            "length_cm": self.length_cm,
+            "width_cm": self.width_cm,
             "height_cm": self.height_cm,
             "handheld_main": self.handheld_main,
             "handheld_detail": self.handheld_detail,
@@ -93,6 +103,8 @@ class BatchIntakeRequest:
     workflow_node_id: str
     facts: ConfirmedFacts
     source_images: tuple[SourceImage, ...]
+    category: str = DEFAULT_CATEGORY_KEY
+    contract_hash: str = ""
 
     def route_dict(self) -> dict[str, Any]:
         return {
@@ -100,6 +112,8 @@ class BatchIntakeRequest:
             "requestedAt": self.requested_at,
             "infoNodeId": self.info_node_id,
             "workflowNodeId": self.workflow_node_id,
+            "category": self.category,
+            "contractHash": self.contract_hash,
             "facts": self.facts.as_dict(),
             "sourceImages": [source.route_dict() for source in self.source_images],
         }
@@ -149,20 +163,29 @@ def queued_info_nodes(state: Mapping[str, Any]) -> tuple[Mapping[str, Any], ...]
 def _parse_facts(
     raw: Any,
     *,
+    category: str,
+    repository_root: Path,
     info_node_id: str,
     request_id: str,
 ) -> ConfirmedFacts:
     try:
-        parsed = parse_user_confirmed_requirements({"user_confirmed_facts": raw})
+        parsed = parse_user_confirmed_requirements(
+            {"category": category, "user_confirmed_facts": raw},
+            repository_root,
+        )
+        if parsed.recipe is None or parsed.product_type != parsed.recipe.product_noun:
+            raise ExecutorExecutionError("category product noun mismatch")
     except ExecutorExecutionError:
         raise _error(
             "invalid_facts",
-            "商品信息没有填写完整，请检查品类、高度和三个确认开关。",
+            "商品信息没有填写完整，请检查品类、必填尺寸、手持数量和高级选项。",
             info_node_id=info_node_id,
             request_id=request_id,
         ) from None
     return ConfirmedFacts(
         product_type=parsed.product_type,
+        length_cm=parsed.length_cm,
+        width_cm=parsed.width_cm,
         height_cm=parsed.height_cm,
         handheld_main=parsed.handheld_main,
         handheld_detail=parsed.handheld_detail,
@@ -276,6 +299,7 @@ def parse_queued_request(
     now_ms: int,
     max_age_ms: int = DEFAULT_MAX_AGE_MS,
     future_tolerance_ms: int = DEFAULT_FUTURE_TOLERANCE_MS,
+    repository_root: Path | None = None,
 ) -> BatchIntakeRequest:
     """Validate one queued `build: batch` card against the authoritative canvas graph."""
 
@@ -325,6 +349,33 @@ def parse_queued_request(
 
     metadata = info_node.get("metadata")
     assert isinstance(metadata, Mapping)
+    root = repository_root or Path(__file__).resolve().parent.parent
+    category_value = batch.get("category")
+    contract_hash_value = batch.get("contractHash")
+    try:
+        expected_contract_hash = batch_intake_contract_sha256(root)
+    except BatchIntakeContractError:
+        raise _error(
+            "contract_unavailable",
+            "批次信息字段契约无法核对，请重启工作台并刷新画布后再试。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        ) from None
+    if (
+        not isinstance(category_value, str)
+        or not category_value.strip()
+        or not isinstance(contract_hash_value, str)
+        or not _SHA256.fullmatch(contract_hash_value)
+        or contract_hash_value.lower() != expected_contract_hash
+    ):
+        raise _error(
+            "contract_mismatch",
+            "批次信息卡版本与工作台不一致，请重启工作台并刷新画布后再登记。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+    category = category_value.strip()
+    contract_hash = contract_hash_value.lower()
     _parse_command(
         metadata.get("content"),
         expected_request_id=request_id,
@@ -333,6 +384,8 @@ def parse_queued_request(
     )
     facts = _parse_facts(
         batch.get("facts"),
+        category=category,
+        repository_root=root,
         info_node_id=info_node_id,
         request_id=request_id,
     )
@@ -471,4 +524,6 @@ def parse_queued_request(
         workflow_node_id=workflow_node_id,
         facts=facts,
         source_images=sources,
+        category=category,
+        contract_hash=contract_hash,
     )

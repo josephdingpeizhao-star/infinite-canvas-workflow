@@ -605,6 +605,8 @@ class BatchCreator:
             product_id,
             "--product-type",
             facts.product_type,
+            "--category",
+            request.category,
             "--height-cm",
             str(facts.height_cm),
             "--handheld-main",
@@ -621,6 +623,10 @@ class BatchCreator:
             str(target),
             "--dry-run",
         ]
+        if facts.length_cm is not None:
+            command.extend(("--length-cm", str(facts.length_cm)))
+        if facts.width_cm is not None:
+            command.extend(("--width-cm", str(facts.width_cm)))
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
         environment["PYTHONIOENCODING"] = "utf-8"
@@ -644,11 +650,13 @@ class BatchCreator:
         if not isinstance(manifest, dict) or not isinstance(directory_values, list):
             raise BatchCreationError("planning_failed", "批次结构预检结果无效，未创建任何批次文件。")
         try:
-            parsed = parse_user_confirmed_requirements(manifest)
+            parsed = parse_user_confirmed_requirements(manifest, self.repo_root)
         except ExecutorExecutionError:
             raise BatchCreationError("planning_failed", "批次商品信息预检没有通过，未创建任何批次文件。") from None
         planned_facts = ConfirmedFacts(
             product_type=parsed.product_type,
+            length_cm=parsed.length_cm,
+            width_cm=parsed.width_cm,
             height_cm=parsed.height_cm,
             handheld_main=parsed.handheld_main,
             handheld_detail=parsed.handheld_detail,
@@ -656,7 +664,7 @@ class BatchCreator:
             forbid_pouring_and_heating=parsed.forbid_pouring_and_heating,
             missing_d_no_retake=parsed.missing_d_no_retake,
         )
-        if planned_facts != request.facts:
+        if planned_facts != request.facts or manifest.get("category") != request.category:
             raise BatchCreationError("planning_failed", "批次商品信息预检结果不一致，未创建任何批次文件。")
         try:
             planned_root = Path(manifest["workspace"]["root"]).resolve(strict=False)
@@ -737,6 +745,8 @@ class BatchCreator:
             "receipt_type": "canvas_batch_intake_v1",
             "request_id": request.request_id,
             "product_id": product_id,
+            "category": request.category,
+            "contract_hash": request.contract_hash,
             "image_count": len(assets),
             "facts": request.facts.as_dict(),
             "source_node_ids": [source.node_id for source in request.source_images],

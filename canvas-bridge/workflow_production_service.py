@@ -12,6 +12,7 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from category_recipes import CategoryRecipeError, load_manifest_category
 from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
 from batch_recycle_state import (
     BUSY_MESSAGE,
@@ -319,14 +320,19 @@ class WorkflowProductionService:
             raise ProductionGateError("找不到这张信息卡对应的批次清单。")
         return path
 
-    @staticmethod
-    def _load_manifest(path: Path, batch_id: str) -> dict[str, Any]:
+    def _load_manifest(self, path: Path, batch_id: str) -> dict[str, Any]:
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise ProductionGateError("批次清单无法读取，真实制作没有开始。") from exc
         if not isinstance(manifest, dict) or manifest.get("product_id") != batch_id:
             raise ProductionGateError("批次清单与信息卡不一致，真实制作没有开始。")
+        try:
+            load_manifest_category(self.repository_root, manifest)
+        except CategoryRecipeError as exc:
+            raise ProductionGateError(
+                f"产品品类配方不可用，真实制作没有开始：{exc}"
+            ) from None
         workspace_value = (manifest.get("workspace") or {}).get("root") if isinstance(manifest.get("workspace"), Mapping) else None
         if not isinstance(workspace_value, str) or not workspace_value:
             raise ProductionGateError("批次工作区信息缺失，真实制作没有开始。")

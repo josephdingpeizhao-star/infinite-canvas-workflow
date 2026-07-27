@@ -18,14 +18,18 @@ from batch_intake_controller import (  # noqa: E402
     parse_queued_request,
     queued_info_nodes,
 )
+from batch_intake_contract import batch_intake_contract_sha256  # noqa: E402
 
 
 NOW_MS = 20_000
 REQUEST_ID = "batch-req-0001"
 IMAGE_BYTES = b"offline-original-image"
 IMAGE_SHA256 = hashlib.sha256(IMAGE_BYTES).hexdigest()
+CONTRACT_HASH = batch_intake_contract_sha256(ROOT)
 FACTS = {
-    "product_type": "餐具",
+    "product_type": "杯子",
+    "length_cm": None,
+    "width_cm": None,
     "height_cm": 25,
     "handheld_main": 2,
     "handheld_detail": 1,
@@ -52,6 +56,8 @@ def info_node(
     content: str | None = None,
     status: str = "queued",
     node_id: str = "info-1",
+    category: object = "杯类",
+    contract_hash: object = CONTRACT_HASH,
 ) -> dict:
     return {
         "id": node_id,
@@ -63,6 +69,8 @@ def info_node(
                 "status": status,
                 "requestId": request_id,
                 "requestedAt": requested_at,
+                "category": category,
+                "contractHash": contract_hash,
                 "facts": copy.deepcopy(FACTS if facts is None else facts),
             },
         },
@@ -144,6 +152,8 @@ class BatchIntakeControllerTests(unittest.TestCase):
         self.assertEqual(NOW_MS - 1_000, request.requested_at)
         self.assertEqual("info-1", request.info_node_id)
         self.assertEqual("workflow-1", request.workflow_node_id)
+        self.assertEqual("杯类", request.category)
+        self.assertEqual(CONTRACT_HASH, request.contract_hash)
         self.assertEqual(FACTS, request.facts.as_dict())
         self.assertEqual(["image-1", "image-2"], [source.node_id for source in request.source_images])
         self.assertEqual(IMAGE_SHA256, request.source_images[0].expected_sha256)
@@ -155,8 +165,8 @@ class BatchIntakeControllerTests(unittest.TestCase):
         encoded = json.dumps(request.route_dict(), ensure_ascii=False).encode("utf-8")
         decoded = json.loads(encoded.decode("utf-8"))
 
-        self.assertIn("餐具".encode("utf-8"), encoded)
-        self.assertEqual("餐具", decoded["facts"]["product_type"])
+        self.assertIn("杯子".encode("utf-8"), encoded)
+        self.assertEqual("杯子", decoded["facts"]["product_type"])
         self.assertEqual("原图一.png", decoded["sourceImages"][0]["name"])
         self.assertEqual(REQUEST_ID, decoded["requestId"])
 
@@ -220,7 +230,7 @@ class BatchIntakeControllerTests(unittest.TestCase):
         request = self.parse(valid_state(info=node), node, future_tolerance_ms=10)
         self.assertEqual(NOW_MS + 10, request.requested_at)
 
-    def test_facts_require_exact_seven_keys_and_types(self) -> None:
+    def test_facts_require_exact_nine_keys_and_types(self) -> None:
         invalid = (
             {key: value for key, value in FACTS.items() if key != "height_cm"},
             {**FACTS, "extra": "private"},
@@ -238,6 +248,12 @@ class BatchIntakeControllerTests(unittest.TestCase):
                 node = info_node(facts=facts)
                 error = self.assert_gate("invalid_facts", valid_state(info=node), node)
                 self.assertNotIn("private", str(error))
+
+    def test_payload_contract_hash_must_match_backend(self) -> None:
+        for value in (None, "", "0" * 64):
+            with self.subTest(value=value):
+                node = info_node(contract_hash=value)
+                self.assert_gate("contract_mismatch", valid_state(info=node), node)
 
     def test_info_card_must_connect_to_exactly_one_workflow(self) -> None:
         no_workflow = valid_state()

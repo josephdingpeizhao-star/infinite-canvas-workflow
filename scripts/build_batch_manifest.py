@@ -2,8 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
+
+ROOT = Path(__file__).resolve().parents[1]
+BRIDGE = ROOT / "canvas-bridge"
+if str(BRIDGE) not in sys.path:
+    sys.path.insert(0, str(BRIDGE))
+
+from category_recipes import (  # noqa: E402
+    DEFAULT_CATEGORY_KEY,
+    CategoryRecipeError,
+    load_category_recipe,
+)
 
 ARTIFACT_DIRS = [
     "identity",
@@ -34,7 +46,7 @@ OUTPUT_DIRS = [
 
 
 def project_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return ROOT
 
 
 def load_template(root: Path) -> dict:
@@ -188,9 +200,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create a product batch manifest and workspace folders.")
     parser.add_argument("--product-id", required=True, help="Product id used for the manifest name and batch id.")
     parser.add_argument("--product-type", required=True, help="Confirmed non-empty product category.")
+    parser.add_argument(
+        "--category",
+        help="Installed category recipe key. Existing calls default to 杯类.",
+    )
+    parser.add_argument("--length-cm", type=positive_integer)
+    parser.add_argument("--width-cm", type=positive_integer)
     parser.add_argument("--height-cm", required=True, type=positive_integer)
-    parser.add_argument("--handheld-main", required=True, type=int, choices=(2,))
-    parser.add_argument("--handheld-detail", required=True, type=int, choices=(1,))
+    parser.add_argument("--handheld-main", required=True, type=int)
+    parser.add_argument("--handheld-detail", required=True, type=int)
     parser.add_argument("--allow-clear-water", required=True, type=strict_boolean)
     parser.add_argument("--forbid-pouring-and-heating", required=True, type=strict_boolean)
     parser.add_argument("--missing-d-no-retake", required=True, type=strict_boolean)
@@ -210,16 +228,49 @@ def main() -> int:
     if not product_type:
         print("product-type must not be empty")
         return 2
+    category = (args.category or DEFAULT_CATEGORY_KEY).strip()
+    try:
+        recipe = load_category_recipe(root, category)
+    except CategoryRecipeError as exc:
+        print(f"产品品类配方不可用：{exc}")
+        return 2
+    dimensions = {
+        "length_cm": args.length_cm,
+        "width_cm": args.width_cm,
+        "height_cm": args.height_cm,
+    }
+    if any(
+        dimensions[key] is None
+        for key in recipe.form["dimensions"]["required"]
+    ):
+        print("selected category is missing a required dimension")
+        return 2
+    for field in recipe.form["dimensions"]["fields"]:
+        value = dimensions[field["key"]]
+        if value is not None and not field["minimum"] <= value <= field["maximum"]:
+            print(f"{field['key']} is outside the selected category range")
+            return 2
+    for mode, value in (
+        ("main", args.handheld_main),
+        ("detail", args.handheld_detail),
+    ):
+        bounds = recipe.form["handheld"][mode]
+        if type(value) is not int or not bounds["minimum"] <= value <= bounds["maximum"]:
+            print(f"handheld-{mode} is outside the selected category range")
+            return 2
 
     manifest = load_template(root)
     manifest["product_id"] = product_id
     manifest["batch_id"] = product_id
     manifest["batch_type"] = "single"
+    manifest["category"] = category
     manifest["user_declared_set_product"] = False
     manifest["current_stage"] = "not_started"
     manifest["next_skill"] = "workflow-router"
     manifest["user_confirmed_facts"] = {
         "product_type": product_type,
+        "length_cm": args.length_cm,
+        "width_cm": args.width_cm,
         "height_cm": args.height_cm,
         "handheld_main": args.handheld_main,
         "handheld_detail": args.handheld_detail,

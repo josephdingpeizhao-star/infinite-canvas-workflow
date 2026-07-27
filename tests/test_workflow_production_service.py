@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -241,6 +242,7 @@ class ProductionServiceTest(unittest.TestCase):
         self.repo = self.root / "repo"
         self.workspace = self.root / "workspace"
         (self.repo / "manifests").mkdir(parents=True)
+        shutil.copytree(ROOT / "categories", self.repo / "categories")
         (self.workspace / "inputs" / "style_refs").mkdir(parents=True)
         (self.workspace / "inputs" / "style_refs" / "style.jpg").write_bytes(b"style")
         (self.workspace / "outputs" / "renders").mkdir(parents=True)
@@ -319,6 +321,24 @@ class ProductionServiceTest(unittest.TestCase):
                 )
                 artifacts.append(artifact_from_path("cup", path))
         return tuple(artifacts)
+
+    def test_missing_category_recipe_blocks_production_before_workspace_use(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["category"] = "未安装品类"
+        self.manifest.write_text(
+            json.dumps(manifest, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=FakeCanvasClient(),
+        )
+
+        with self.assertRaisesRegex(
+            production_service.ProductionGateError,
+            "产品品类配方不可用",
+        ):
+            service._load_manifest(self.manifest, "cup")
 
     def test_failure_stops_pipeline_without_retry_and_hides_provider_detail(self) -> None:
         client = FakeCanvasClient()

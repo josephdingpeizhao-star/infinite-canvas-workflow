@@ -4,6 +4,7 @@ import contextlib
 import errno
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -54,6 +55,7 @@ class BatchRecycleGateTests(unittest.TestCase):
         self.repo = self.root / "repo"
         self.manifests = self.repo / "manifests"
         self.manifests.mkdir(parents=True)
+        shutil.copytree(ROOT / "categories", self.repo / "categories")
         self.lock_root = self.root / "locks"
 
     def tearDown(self) -> None:
