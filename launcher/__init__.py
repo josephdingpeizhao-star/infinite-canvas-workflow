@@ -1,0 +1,1 @@
+"""Windowless Infinite Canvas launcher."""

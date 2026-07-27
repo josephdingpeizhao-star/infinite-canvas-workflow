@@ -1,0 +1,141 @@
+{
+  "_comment": "本机路径可在 ~/.infinite-canvas/launcher/config.override.json 中按键覆盖，无需修改仓库文件。",
+  "paths": {
+    "state_file": "~/.infinite-canvas/launcher/launcher_state.json",
+    "log_dir": "~/.infinite-canvas/logs"
+  },
+  "runtime": {
+    "startup_timeout_seconds": 60,
+    "connection_ready_timeout_seconds": 90,
+    "health_poll_seconds": 0.5,
+    "health_request_timeout_seconds": 1.5,
+    "terminate_timeout_seconds": 5,
+    "log_max_bytes": 10485760,
+    "log_backups": 3
+  },
+  "browser": {
+    "url": "http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s",
+    "command": []
+  },
+  "services": {
+    "agent": {
+      "label": "canvas-agent",
+      "command": [
+        "C:\\Users\\John\\.bun\\bin\\bun.exe",
+        "run",
+        "--cwd",
+        "D:/dev/infinite-canvas/canvas-agent",
+        "dev"
+      ],
+      "cwd": "D:\\dev\\infinite-canvas\\canvas-agent",
+      "ports": [
+        17371
+      ],
+      "health": {
+        "url": "http://127.0.0.1:17371/config",
+        "expected_statuses": [
+          200
+        ]
+      },
+      "identity_marker_groups": [
+        [
+          "infinite-canvas/canvas-agent",
+          "dev"
+        ],
+        [
+          "infinite-canvas/canvas-agent",
+          "src/index.ts"
+        ]
+      ],
+      "environment": {}
+    },
+    "workbench": {
+      "label": "画布工作台服务",
+      "command": [
+        "python",
+        "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份\\canvas-bridge\\spike_canvas_push.py",
+        "--serve-canvas-workbench",
+        "D:\\dev\\canvas-demo-workspace\\manifests\\batch_manifest.json",
+        "--interval",
+        "2"
+      ],
+      "cwd": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
+      "ports": [
+        17372,
+        17373
+      ],
+      "health": {
+        "url": "http://127.0.0.1:17373/workbench-health",
+        "expected_statuses": [
+          200
+        ],
+        "critical_workers": [
+          "batch_intake",
+          "workflow_production",
+          "style_reference_intake"
+        ]
+      },
+      "identity_marker_groups": [
+        [
+          "canvas-bridge/spike_canvas_push.py",
+          "--serve-canvas-workbench"
+        ]
+      ],
+      "environment": {
+        "CODEX_DEV_ALLOW_REAL_EXECUTION": "1"
+      }
+    }
+  },
+  "web": {
+    "mode": "dist",
+    "ports": [
+      3000
+    ],
+    "health": {
+      "url": "http://127.0.0.1:3000/",
+      "expected_statuses": [
+        200
+      ]
+    },
+    "dist": {
+      "root": "D:\\dev\\infinite-canvas\\web\\dist",
+      "command": [
+        "{pythonw}",
+        "{launcher_dir}\\static_server.py",
+        "--root",
+        "{dist_root}",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "3000"
+      ],
+      "cwd": "{launcher_dir}",
+      "identity_marker_groups": [
+        [
+          "launcher/static_server.py",
+          "--port 3000"
+        ]
+      ]
+    },
+    "dev": {
+      "command": [
+        "C:\\Users\\John\\.bun\\bin\\bun.exe",
+        "run",
+        "--cwd",
+        "D:/dev/infinite-canvas/web",
+        "dev"
+      ],
+      "cwd": "D:\\dev\\infinite-canvas\\web",
+      "identity_marker_groups": [
+        [
+          "infinite-canvas/web",
+          "dev"
+        ],
+        [
+          "infinite-canvas/web",
+          "vite"
+        ]
+      ]
+    }
+  }
+}
