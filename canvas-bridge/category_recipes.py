@@ -9,6 +9,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Mapping
 
+from image_count_contract import ImageCountContractError, image_count_spec
+
 
 DEFAULT_CATEGORY_KEY = "杯类"
 DIMENSION_KEYS = ("length_cm", "width_cm", "height_cm")
@@ -135,8 +137,16 @@ def _nonempty_string(value: object, label: str) -> str:
 
 
 def _validate_form(form: dict[str, Any]) -> None:
-    if set(form) != {"dimensions", "handheld", "advanced_options"}:
+    if set(form) != {"dimensions", "image_counts", "handheld", "advanced_options"}:
         raise CategoryRecipeError("品类表单元数据结构无效")
+    try:
+        count_specs = {
+            mode: image_count_spec(form, mode)
+            for mode in ("main", "detail")
+        }
+    except ImageCountContractError as error:
+        raise CategoryRecipeError(str(error)) from None
+
     dimensions = form["dimensions"]
     if not isinstance(dimensions, dict) or set(dimensions) != {"required", "fields"}:
         raise CategoryRecipeError("品类尺寸元数据结构无效")
@@ -182,17 +192,15 @@ def _validate_form(form: dict[str, Any]) -> None:
         raise CategoryRecipeError("品类手持元数据结构无效")
     for mode in ("main", "detail"):
         item = handheld[mode]
-        if not isinstance(item, dict) or set(item) != {"default", "minimum", "maximum"}:
+        if not isinstance(item, dict) or set(item) != {"default", "minimum"}:
             raise CategoryRecipeError("品类手持元数据无效")
         default = item["default"]
         minimum = item["minimum"]
-        maximum = item["maximum"]
         if (
             type(default) is not int
             or type(minimum) is not int
-            or type(maximum) is not int
             or minimum < 0
-            or not minimum <= default <= maximum
+            or not minimum <= default <= count_specs[mode].default
         ):
             raise CategoryRecipeError("品类手持默认值或范围无效")
 

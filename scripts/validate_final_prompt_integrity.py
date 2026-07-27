@@ -18,6 +18,7 @@ if str(BRIDGE) not in sys.path:
 
 from codex_dev_downstream import (  # noqa: E402
     ExecutorExecutionError,
+    manifest_config_ids,
     parse_user_confirmed_requirements,
 )
 
@@ -1598,6 +1599,24 @@ def build_prompts_only_report(
             )
             return None
 
+    try:
+        manifest_expected_ids = manifest_config_ids(batch_manifest, ROOT)
+    except ExecutorExecutionError:
+        manifest_expected_ids = ()
+        block(
+            "manifest_image_counts_invalid",
+            "Batch manifest image counts or expected config ids are invalid.",
+            asset=batch_manifest_path,
+        )
+    expected_ids_by_mode = {
+        mode: tuple(
+            config_id
+            for config_id in manifest_expected_ids
+            if config_id.startswith(f"{mode}_")
+        )
+        for mode in ("main", "detail")
+    }
+
     identity_doc = read_checked_json(identity_path, "identity")
     identity = identity_doc.get("identity") if isinstance(identity_doc, dict) else None
     identity_negative = identity.get("negative_prompt_constraints") if isinstance(identity, dict) else None
@@ -1652,6 +1671,25 @@ def build_prompts_only_report(
                 f"variable_config_count_mismatch_{mode}",
                 "Variable config count does not match its ordered config list.",
                 asset=source_path,
+            )
+        expected_mode_ids = expected_ids_by_mode[mode]
+        observed_mode_ids = tuple(
+            str(config.get("config_id") or "")
+            for config in configs
+            if isinstance(config, dict)
+        )
+        if (
+            source_doc.get("config_count") != len(expected_mode_ids)
+            or observed_mode_ids != expected_mode_ids
+        ):
+            block(
+                f"variable_config_manifest_count_mismatch_{mode}",
+                "Variable config ids do not match the batch manifest image count.",
+                asset=source_path,
+                evidence={
+                    "expected": list(expected_mode_ids),
+                    "observed": list(observed_mode_ids),
+                },
             )
         try:
             source_hash = file_sha256(source_path)

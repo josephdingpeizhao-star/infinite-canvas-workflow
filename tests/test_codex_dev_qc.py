@@ -657,6 +657,12 @@ class CodexDevQcTest(unittest.TestCase):
                     worker,
                     machine,
                     "# request-id: request-progress\n# accepted",
+                    total_count=len(plan.assets),
+                    expected_ids=tuple(
+                        asset.asset_id.removesuffix(".png")
+                        for asset in plan.assets
+                    ),
+                    chunk_count=len(plan.batches) + 1,
                 )
             )
 

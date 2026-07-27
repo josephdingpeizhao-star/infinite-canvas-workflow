@@ -42,10 +42,10 @@
 - `qc_repair_executor.py`：逐工单创建单任务 `image-production / renders` 计划，继续复用 `openai-image` 和现有比例观察器。单张失败不重试且继续下一张；renders 由执行前后 SHA-256 快照保护，合法同名 repaired 安全跳过，2:3 原件进入 repaired 专属审计目录，同批排他锁阻止并发重复费用。事件只记录 ID、数量、尺寸和哈希，不记录提示词正文、凭据或服务地址。
 - `qc_repair_cli.py`：M2-d 服务外 CLI。命令必须先过既有 `parse_run_content()`，再过 `run_controller` 的 CLI 专用 repair 路由门禁，最后从统一执行入口调用返修执行器；不修改画布 service/controller，不触发 QC。真实执行仍须另行批准并由仓库外桌面闸门注入环境参数。
 - `codex_dev_executor.py`：可选开发适配器 `codex-dev`。当前接受 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc`、`final_prompts` 与 `qc`，通过 canvas-agent 现有 Codex 新线程 + HTTP/SSE 能力取得结构化结果；其他步骤在任何传输或文件访问前拒绝。前三步保持原有身份、风格和单品 A/B/C/D 角度边界。六工序与下游门禁的品类知识统一从当前批次 `category` 对应的 `categories/<品类>/` 配方读取；主图仍固定 6 套、详情仍固定 8 套，手持数量按批次确认值逐项执行。杯类只填高度时保持旧输出逐字节不变；盘子要求长宽高三维。最终提示词用两个独立 thread 分别编译 6+8 套，全部通过后才一次性写入 14 份 JSON/Markdown 和索引，不生成 ComfyUI 作业、QC 或图片。所有下游步骤仍只允许合格 A/B/C，并由本地适配器固定产品编号、正式路径、编号和哈希。
-- 新建批次 manifest 顶层新增 `category`，`user_confirmed_facts` 固定为 `product_type`、`length_cm`、`width_cm`、`height_cm`、两项手持数量及三个布尔开关。已安装配方决定必填尺寸、手持范围与默认值；未知或损坏配方在建批及生产入口都拒绝，不回退内嵌旧值。旧 manifest 缺 `category` 时只读按杯类解析，旧七字段与 notes 兼容路径不回写；对象一旦存在仍执行“无效即拒绝、不回退”。14 张总数继续固定为 6 主图 + 8 详情图。
+- 新建批次 manifest 顶层包含 `category`，`user_confirmed_facts` 另登记主图与详情图张数。两类张数均为每批 1–30，品类配方提供默认值，手持上限跟随本批对应张数；未知或损坏配方在建批及生产入口都拒绝。旧 manifest 缺张数字段时只读使用该品类配方默认值，不回写旧文件；对象一旦存在仍执行“无效即拒绝、不回退”。
 - `categories/` 是品类单一事实源：`杯类/` 保存从旧运行代码逐字迁出的内容，`盘子/` 保存一期草案并以 `business_review_status=pending_business_review` 标记首个真实批次前必须业务终审。`.agents/skills/*/references` 只保留为非运行时历史资料，生产管线不再读取其中任何品类专属正文；运行时仍读取的 `.agents` 文件只有七份品类无关的通用 `SKILL.md`：`product-identity-archive`、`style-master-extractor`、`angle-inventory`、`main-variable-config`、`detail-variable-config`、`final-prompt-compiler`、`qc-inspector`。
 - 载荷摘要只覆盖 `categories/_shared/batch-intake-contract.json` 中的字段名、类型和必填结构语义。表单文案、默认值与手持范围来自品类端点，不进入摘要，调整这些内容不要求重建 fork 的 `web/dist`；只有真正新增、删除或改变载荷字段结构时，才必须同步两端摘要并重建 dist。
-- `codex_dev_qc.py`：`codex-dev / qc` 的纯标准库业务模块。它在首个传输前一次性核对 manifest 路径边界、14 张 PNG 名称与 1:1/3:4 比例、14 份最终提示词绑定、按批次确认值计算的手持声明、白底参考图格式、QC Skill、当前品类 QC 配方、`qc_report.schema.json` 合同以及 20/28 MiB 请求上限；随后固定为 7 个两图批次加 1 个不带附件的全批总结。八批全部通过后才以排他原子方式只写 `qc_report.json`，永不覆盖既有报告，也不改动同目录完整性报告。
+- `codex_dev_qc.py`：`codex-dev / qc` 的纯标准库业务模块。它在首个传输前按 manifest 核对整批 PNG 编号、1:1/3:4 比例、最终提示词绑定、手持声明、白底参考图格式、QC Skill、当前品类 QC 配方、`qc_report.schema.json` 合同以及 20/28 MiB 请求上限；随后沿用每组最多两图、末组全批总结的既有分批体系。全部批次通过后才以排他原子方式只写 `qc_report.json`，永不覆盖既有报告，也不改动同目录完整性报告。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
 - `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）；M1-b 只新增 `--prepare-workflow-demo` 分支，补齐 demo 路由所需的最小档案且永不覆盖既有文件。
 - `spike_canvas_push.py`：驱动脚本，见 `--help`。`--clear-projection <manifest>` 只删除指定批次当前活跃且在册的投影节点，并保护其他批次、未知同前缀节点和用户自建节点；`--serve` 正常仍一次提交完整初始投影，若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。M1-b 另增 `--serve-workflow-demo` 与只供人工验收使用的 `--clear-workflow-demo <machine-id>`；后者只删除精确 `wfdemo-output:` 前缀结果，未接入启动器。
@@ -154,7 +154,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 
 ### M2-c 第一段：QC 步接入工作台
 
-- 14/14 正式图片齐全且 QC 报告缺失时，用户在画布机器上点击一次“开始/重新开始”，工作台继续执行既有 `run: qc`；运行中显示“正在逐张质检 14 张成图…”，报告落盘后显示“质检完成，QC 报告已生成。”并停机。
+- 本批 manifest 登记的正式图片全部齐全且 QC 报告缺失时，用户在画布机器上点击一次“开始/重新开始”，工作台继续执行既有 `run: qc`；运行中显示该批真实张数与动态组进度，报告落盘后显示“质检完成，QC 报告已生成。”并停机。
 - `production_completed` 保持“14/14 出图完成”语义。服务从事件账本和现场路由判断是否已记账，不依赖进程内存；第三批进入 QC 或在 `ready` 状态重复点击都不会重复追加该事件。
 - 现有 QC 继续使用 7 个两图批次和第 8 次汇总。第三批最大估算单批附件为 13,473,190 字节，低于 20 MiB 上限；无需缩图或改变附件策略。7 个图片批次现在各用独立 thread，第 8 次汇总使用独立无附件 thread；组内传输修复仍复用本组 thread，全局恢复上限保持 2 次。
 - 第三批首次真实 QC 在完成前 5 组后因旧单线程上下文累积超出 258,400-token 窗口而失败；第 6 组未进入 Codex，报告目录零新增、14 张 renders 无损。线程隔离补丁的纯离线测试为 512/512；用户重启工作台后亲手发起的第二次 QC 已于 16:38:02 成功，成功或失败后停机且不自动重试的纪律保持。QC 角标与已收货框属于 M2-c 第二段。
@@ -184,7 +184,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 ### M2-e：关账后交付打包（NC-04）
 
 - `python canvas-bridge/delivery_cli.py --batch-manifest <主仓库批次清单> --command "run: delivery"` 是独立的纯本地导出入口，不接画布、不进入生产路由、不需要执行开关、密钥或任何模型服务。它复用现有命令解析确认唯一命令，但不修改 `run_controller.py` 的生产步骤与冻结逻辑。
-- 唯一 `batch_acceptance_closed` 是选图权威。CLI 要求批次号、安全标记、账本、14 个不重复图位和来源白名单全部一致，并在创建正式交付目录前逐张重算磁盘 SHA-256；任一不符即停止且零正式产物。`杯子_20260722` 的最终选择为 repaired 6 张（`main_01`、`main_02`、`detail_01`、`detail_02`、`detail_05`、`detail_06`）与 renders 8 张。
+- 唯一 `batch_acceptance_closed` 是选图权威。CLI 要求批次号、安全标记、账本、manifest 登记的全部不重复图位和来源白名单一致，并在创建正式交付目录前逐张重算磁盘 SHA-256；任一不符即停止且零正式产物。历史批次 `杯子_20260722` 的最终选择仍为 repaired 6 张（`main_01`、`main_02`、`detail_01`、`detail_02`、`detail_05`、`detail_06`）与 renders 8 张。
 - 交付物固定为 `deliveries/<批次>/images/`、JSON/Markdown 两份清单、`deliveries/<批次>.zip` 和标准 `.zip.sha256` 旁车。ZIP 条目顺序、时间、权限与 Deflate 9 参数固定，包内文件与交付目录逐字节一致；旁车避免让包内清单自我引用 ZIP 哈希。
 - 账本已有 `delivery_packaged`、完整交付物已存在、残留目录或排他锁存在时均拒绝重复运行。残留现场不自动删除、不覆盖；成功事件只记录关账请求、来源计数、选择摘要以及 ZIP/清单哈希和字节数，不记录路径或异常正文。
 
@@ -210,7 +210,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - 业务路由负责判断“现在能不能运行”；适配器只负责“如何执行”，不得绕过门禁。
 - M1-b 的 `workflow-demo` 只在 `build_executor("workflow-demo", ...)` 的独立分支注册；原 `build_registry()` 的既有四个适配器与所有真实批次调用保持原样。它只允许标记后的 demo 工作区，不读取生产图片、不开真实执行开关，也不发起外部请求。
 - `--serve` 的默认执行器仍是 `demo`。`codex-dev` 已注册为可选开发适配器，支持 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc`、只产出提示词的 `final_prompts` 与只产出结构化报告的 `qc`；`image-production` 已注册为生产图片组合入口，内部复用 `openai-image`，不替换也不改变现有三个适配器的行为。
-- `codex-dev` 复用 canvas-agent 的 `/agent/codex/threads/new`、`/agent/codex/turn`、`/events` 与 thread 读取接口，Python 不启动另一套 Codex 会话。生产上游适配路径在一处固定 `model=gpt-5.5` 与 `effort=xhigh`，新线程和回合请求均显式携带两项设置，不再继承桌面或全局档位；Canvas Agent 按 Codex 0.139.0 白名单校验档位，并在可恢复的线程异常重建中保留模型和档位。未提供档位的普通画布回合仍省略该字段。上层业务仍只认识 `codex-dev` 名称和统一契约。SSE 只作为完成通知，`failed` / `interrupted` 会先收敛为脱敏失败，只有 `completed` 才从本次专用 thread 重新读取最终文本，避免把共享事件流中其他线程的消息当成本次结果；Canvas Agent 在回合异常回收时另发同一白名单内的备用失败通知，防止完成通知未被消费时丢失空答复类别。identity、style master 和 angle inventory 的既有行为不变；main/detail 变量配置只在对应正式上游存在后运行，最终提示词只在两类变量配置均存在后运行，QC 只在 14 张正式渲染图与全部上游正式产物完整时运行。七类输出都必须位于 manifest 声明的 `artifacts_root` 范围内；越界产物、异常格式、Unicode 损坏字符和不受支持事实均在写入前拒绝，已有档案不会被覆盖。最终提示词整包与 QC 报告都使用同目录临时文件和排他落盘；任一批失败不留下正式半成品。
+- `codex-dev` 复用 canvas-agent 的 `/agent/codex/threads/new`、`/agent/codex/turn`、`/events` 与 thread 读取接口，Python 不启动另一套 Codex 会话。生产上游适配路径在一处固定 `model=gpt-5.5` 与 `effort=xhigh`，新线程和回合请求均显式携带两项设置，不再继承桌面或全局档位；Canvas Agent 按 Codex 0.139.0 白名单校验档位，并在可恢复的线程异常重建中保留模型和档位。未提供档位的普通画布回合仍省略该字段。上层业务仍只认识 `codex-dev` 名称和统一契约。SSE 只作为完成通知，`failed` / `interrupted` 会先收敛为脱敏失败，只有 `completed` 才从本次专用 thread 重新读取最终文本，避免把共享事件流中其他线程的消息当成本次结果；Canvas Agent 在回合异常回收时另发同一白名单内的备用失败通知，防止完成通知未被消费时丢失空答复类别。identity、style master 和 angle inventory 的既有行为不变；main/detail 变量配置只在对应正式上游存在后运行，最终提示词只在两类变量配置均存在后运行，QC 只在 manifest 登记的全部正式渲染图与全部上游正式产物完整时运行。七类输出都必须位于 manifest 声明的 `artifacts_root` 范围内；越界产物、异常格式、Unicode 损坏字符和不受支持事实均在写入前拒绝，已有档案不会被覆盖。最终提示词整包与 QC 报告都使用同目录临时文件和排他落盘；任一批失败不留下正式半成品。
 - 2026-07-21 完成生产图文档位显式固定的离线 TDD：主仓 406 项、fork 69 项/332 断言、Canvas Agent 编译、web TypeScript 与生产构建全部通过。测试覆盖启动参数、回环 HTTP/SSE、空答复单次硬停止与零产物、附件字节/顺序、非法档位拒绝、异常重建保留和普通回合隔离。本次没有运行真实 Codex、没有访问外网、没有设置执行开关或密钥；一次隔离配额验证仍须用户另行批准。
 - `codex-dev` 的自动测试使用假传输和临时工作区，不启动真实 Codex、不访问网络、不读取真实批次图片。2026-07-15 完成本次详情配置校验器的类级修复后，全仓 180 项测试通过；既有四段覆盖、同线程续传、传输恢复与包装纠正上限、业务错误不重试、完整八项手持数量及汇总校验、失败零正式文件等行为保持不变。canvas-agent 继续使用连续 UTF-8 解码，避免中文字符跨数据块时被替换为 U+FFFD；fork 侧既有 3 项测试与 TypeScript 编译结果不受本次主仓库修改影响。
 - 下游未确认事实门禁现在把数值精确等于用户确认高度、单位为厘米或 `cm`（不区分大小写）的复述默认视为合法，并由 detail 分段、detail 整包、main 整包和 `final_prompts` 批次共享；同一子句或字段路径含竞争维度、区间/连字、负号、单位扩展或相邻乘号尺寸组时仍拒绝，其他既有单位及非确认高度的厘米值也仍拒绝。材质/认证扫描只额外保护结构完整的“不把/不将……写死/固定/标注/设定/锁定/指定为/成……”否定指令，且保护范围只覆盖“为/成”后的目标列表；结构中夹带或另起的正向事实仍拒绝，既有保护词行为不变，也不会因“不锈钢”中的“不”或一般“不是……”而放行。一次业务门禁会先收集本次输入内全部未确认参数与商品事实，再用不超过 200 字符的“类别 + 净化字段路径 + 计数”统一报错；未知键名改用稳定占位符，不回显原值、数值上下文或提示词正文。段号、结构、模块、角度、比例和手持等其他校验仍保持原来的逐项立即失败。

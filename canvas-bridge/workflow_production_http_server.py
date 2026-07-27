@@ -21,6 +21,8 @@ from category_recipes import (
     installed_category_metadata,
     load_manifest_category,
 )
+from codex_dev_downstream import manifest_config_ids
+from executor_contract import ExecutorExecutionError
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
@@ -39,14 +41,12 @@ from project_deletion_service import ProjectDeletionError
 DEFAULT_PRODUCTION_HOST = "127.0.0.1"
 DEFAULT_PRODUCTION_PORT = 17373
 UNIT_PRICE_USD = 0.06
-TOTAL_IMAGES = 14
 MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_COMMAND_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_BATCH_RECYCLE_BODY_BYTES = 256
 MAX_PROJECT_DELETION_BODY_BYTES = 64 * 1024
 DRAIN_CAP = 256 * 1024
-CONFIG_IDS = tuple([f"main_{index:02d}" for index in range(1, 7)] + [f"detail_{index:02d}" for index in range(1, 9)])
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
 WORKBENCH_WORKERS = (
     "workflow_demo",
@@ -201,11 +201,15 @@ class WorkflowProductionHttpApplication:
         return value, path, workspace
 
     def _output(self, batch_id: str, config_id: str, source: str = "renders") -> Path:
-        if config_id not in CONFIG_IDS:
-            raise ProductionHttpError(404, "output not found")
         if source not in {"renders", "repaired"}:
             raise ProductionHttpError(404, "output not found")
         manifest, _manifest_path, workspace = self._manifest(batch_id)
+        try:
+            expected_ids = manifest_config_ids(manifest, self.repository_root)
+        except ExecutorExecutionError:
+            raise ProductionHttpError(409, "batch image counts invalid") from None
+        if config_id not in expected_ids:
+            raise ProductionHttpError(404, "output not found")
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
         matches: list[Path] = []
         for root in _first_paths(outputs.get(source)):
@@ -231,19 +235,25 @@ class WorkflowProductionHttpApplication:
 
     def quote(self, batch_id: str) -> dict[str, Any]:
         manifest, _manifest_path, workspace = self._manifest(batch_id)
+        try:
+            expected_ids = manifest_config_ids(manifest, self.repository_root)
+        except ExecutorExecutionError:
+            raise ProductionHttpError(409, "batch image counts invalid") from None
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
         ready: set[str] = set()
-        for config_id in CONFIG_IDS:
+        for config_id in expected_ids:
             for key in ("renders", "repaired"):
                 for root in _first_paths(outputs.get(key)):
                     target = root / f"{config_id}.png" if root.suffix.lower() != ".png" else root
                     if _inside(target, workspace) and target.is_file() and self._accepted(target):
                         ready.add(config_id)
-        remaining = TOTAL_IMAGES - len(ready)
+        total_count = len(expected_ids)
+        remaining = total_count - len(ready)
         return {
             "ok": True,
             "batchId": batch_id,
-            "totalCount": TOTAL_IMAGES,
+            "totalCount": total_count,
+            "expectedConfigIds": list(expected_ids),
             "readyCount": len(ready),
             "remainingCount": remaining,
             "estimatedUnitUsd": UNIT_PRICE_USD,

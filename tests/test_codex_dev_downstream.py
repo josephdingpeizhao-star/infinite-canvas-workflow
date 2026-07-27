@@ -812,6 +812,8 @@ class CodexDevDownstreamTest(unittest.TestCase):
             {
                 "product_type": "",
                 "height_cm": None,
+                "main_image_count": None,
+                "detail_image_count": None,
                 "handheld_main": None,
                 "handheld_detail": None,
                 "allow_clear_water": None,
@@ -870,6 +872,8 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 "length_cm": None,
                 "width_cm": None,
                 "height_cm": 31,
+                "main_image_count": 6,
+                "detail_image_count": 8,
                 "allow_clear_water": False,
                 "missing_d_no_retake": False,
             },

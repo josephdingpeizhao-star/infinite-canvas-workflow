@@ -592,6 +592,8 @@ class BatchRecycleGateTests(unittest.TestCase):
         facts = ConfirmedFacts(
             product_type="餐具",
             height_cm=None,
+            main_image_count=6,
+            detail_image_count=8,
             handheld_main=0,
             handheld_detail=0,
             allow_clear_water=False,

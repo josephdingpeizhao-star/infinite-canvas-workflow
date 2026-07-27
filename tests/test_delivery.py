@@ -68,6 +68,10 @@ class DeliveryFixture:
         self.manifest = {
             "batch_id": "cup",
             "product_id": "cup",
+            "user_confirmed_facts": {
+                "main_image_count": 6,
+                "detail_image_count": 8,
+            },
             "workspace": {"root": str(self.workspace)},
             "outputs": {
                 "renders": [str(self.renders)],

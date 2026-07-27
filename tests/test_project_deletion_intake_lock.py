@@ -50,6 +50,10 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
             ROOT / "canvas-bridge" / "category_recipes.py",
             self.repo / "canvas-bridge",
         )
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "image_count_contract.py",
+            self.repo / "canvas-bridge",
+        )
         shutil.copytree(ROOT / "categories", self.repo / "categories")
         shutil.copy2(
             ROOT / "manifests" / "batch_manifest.template.json",
@@ -69,6 +73,8 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
         facts = ConfirmedFacts(
             product_type="杯子",
             height_cm=12,
+            main_image_count=6,
+            detail_image_count=8,
             handheld_main=2,
             handheld_detail=1,
             allow_clear_water=True,

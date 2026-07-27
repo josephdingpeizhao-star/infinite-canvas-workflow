@@ -7,9 +7,13 @@
       {"key": "height_cm", "label": "高", "unit": "厘米", "minimum": 1, "maximum": 9999}
     ]
   },
+  "image_counts": {
+    "main": {"default": 6, "minimum": 1, "maximum": 30},
+    "detail": {"default": 8, "minimum": 1, "maximum": 30}
+  },
   "handheld": {
-    "main": {"default": 2, "minimum": 0, "maximum": 6},
-    "detail": {"default": 1, "minimum": 0, "maximum": 8}
+    "main": {"default": 2, "minimum": 0},
+    "detail": {"default": 1, "minimum": 0}
   },
   "advanced_options": [
     {

@@ -14,19 +14,13 @@ from batch_recycle_state import (
     BatchLifecycleReadError,
     read_batch_lifecycle,
 )
+from codex_dev_downstream import manifest_config_ids
+from executor_contract import ExecutorExecutionError
 from workflow_production_projection import artifact_from_path
 
 
-CONFIG_IDS = tuple(
-    [f"main_{index:02d}" for index in range(1, 7)]
-    + [f"detail_{index:02d}" for index in range(1, 9)]
-)
-CONFIG_ID_SET = frozenset(CONFIG_IDS)
 SOURCES = frozenset({"renders", "repaired"})
 ACCEPTANCE_EVENT = "batch_acceptance_closed"
-ACCEPTANCE_STATEMENT = (
-    "用户终审：桌面已收满 14 个不同图位，并确认全部收货，批次正式关账。"
-)
 
 
 class AcceptanceRejected(ValueError):
@@ -91,6 +85,25 @@ class BatchAcceptanceService:
             raise AcceptanceRejected(404, "找不到这个批次。")
         return manifest_path, run_controller.journal_path(manifest_path, batch_id)
 
+    def _manifest_expected_ids(
+        self,
+        manifest_path: Path,
+    ) -> tuple[str, ...]:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if not isinstance(manifest, dict):
+                raise ValueError
+            return manifest_config_ids(manifest, self.repository_root)
+        except (OSError, UnicodeError, json.JSONDecodeError, ValueError, ExecutorExecutionError):
+            raise AcceptanceRejected(409, "批次图片张数或编号清单无效。") from None
+
+    @staticmethod
+    def _acceptance_statement(total_count: int) -> str:
+        return (
+            f"用户终审：桌面已收满 {total_count} 个不同图位，"
+            "并确认全部收货，批次正式关账。"
+        )
+
     @staticmethod
     def _lifecycle(journal: Path):
         try:
@@ -154,7 +167,12 @@ class BatchAcceptanceService:
         )
 
     def status(self, batch_id: str) -> dict[str, Any]:
-        _manifest_path, journal = self._manifest_journal(batch_id)
+        manifest_path, journal = self._manifest_journal(batch_id)
+        expected_ids = self._manifest_expected_ids(manifest_path)
+        count_payload = {
+            "totalCount": len(expected_ids),
+            "expectedConfigIds": list(expected_ids),
+        }
         lifecycle = self._lifecycle(journal)
         if lifecycle.recycled:
             return {
@@ -165,6 +183,7 @@ class BatchAcceptanceService:
                     lifecycle.active_recycled_event or {}
                 ).get("operation_at_utc")
                 or (lifecycle.active_recycled_event or {}).get("ts"),
+                **count_payload,
             }
         _manifest, _manifest_path, _workspace, journal = self._context(batch_id)
         event = self._closed_event(journal)
@@ -172,14 +191,23 @@ class BatchAcceptanceService:
             "ok": True,
             "batchId": batch_id,
             "status": "closed" if event else "open",
+            **count_payload,
         }
         if event:
             payload["closedAt"] = event.get("ts")
-            payload["finalReviewStatement"] = ACCEPTANCE_STATEMENT
+            payload["finalReviewStatement"] = (
+                event.get("final_review_statement")
+                or self._acceptance_statement(len(expected_ids))
+            )
         return payload
 
     @staticmethod
-    def _validated_request(payload: Any) -> tuple[str, str, list[dict[str, str]]]:
+    def _validated_request(
+        payload: Any,
+        expected_ids: tuple[str, ...],
+    ) -> tuple[str, str, list[dict[str, str]]]:
+        expected_id_set = frozenset(expected_ids)
+        total_count = len(expected_ids)
         if not isinstance(payload, dict):
             raise AcceptanceRejected(400, "关账内容格式不正确。")
         request_id = payload.get("requestId")
@@ -193,9 +221,12 @@ class BatchAcceptanceService:
             or not 1 <= len(machine_id) <= 160
             or any(char in machine_id for char in ("\r", "\n", "\0"))
             or not isinstance(selections, list)
-            or len(selections) != len(CONFIG_IDS)
+            or len(selections) != total_count
         ):
-            raise AcceptanceRejected(400, "必须一次提交 14 个完整图位。")
+            raise AcceptanceRejected(
+                400,
+                f"必须一次提交 {total_count} 个完整图位。",
+            )
         normalized: list[dict[str, str]] = []
         for selection in selections:
             if not isinstance(selection, dict) or set(selection) != {
@@ -208,7 +239,7 @@ class BatchAcceptanceService:
             source = selection.get("source")
             sha256 = selection.get("sha256")
             if (
-                config_id not in CONFIG_ID_SET
+                config_id not in expected_id_set
                 or source not in SOURCES
                 or not isinstance(sha256, str)
                 or len(sha256) != 64
@@ -223,9 +254,16 @@ class BatchAcceptanceService:
                 }
             )
         config_ids = [item["config_id"] for item in normalized]
-        if len(set(config_ids)) != len(CONFIG_IDS) or set(config_ids) != CONFIG_ID_SET:
-            raise AcceptanceRejected(400, "14 个图位必须齐全且不能重复。")
-        normalized.sort(key=lambda item: CONFIG_IDS.index(item["config_id"]))
+        if (
+            len(set(config_ids)) != total_count
+            or set(config_ids) != expected_id_set
+        ):
+            raise AcceptanceRejected(
+                400,
+                f"{total_count} 个图位必须齐全且不能重复。",
+            )
+        order = {config_id: index for index, config_id in enumerate(expected_ids)}
+        normalized.sort(key=lambda item: order[item["config_id"]])
         return request_id, machine_id, normalized
 
     @staticmethod
@@ -280,11 +318,13 @@ class BatchAcceptanceService:
                         raise AcceptanceRejected(
                             409, "本批次已回收，不能执行关账。"
                         )
-                    request_id, machine_id, selections = self._validated_request(
-                        payload
-                    )
                     manifest, _manifest_path, workspace, journal = self._context(
                         batch_id
+                    )
+                    expected_ids = self._manifest_expected_ids(_manifest_path)
+                    request_id, machine_id, selections = self._validated_request(
+                        payload,
+                        expected_ids,
                     )
                     if self._closed_event(journal):
                         raise AcceptanceRejected(
@@ -292,6 +332,7 @@ class BatchAcceptanceService:
                         )
                     for selection in selections:
                         self._resolve_selection(manifest, workspace, selection)
+                    statement = self._acceptance_statement(len(expected_ids))
                     run_controller.append_event(
                         journal,
                         ACCEPTANCE_EVENT,
@@ -299,7 +340,7 @@ class BatchAcceptanceService:
                         machine_id=machine_id,
                         selection_count=len(selections),
                         selections=selections,
-                        final_review_statement=ACCEPTANCE_STATEMENT,
+                        final_review_statement=statement,
                     )
             except BatchOperationBusy:
                 raise AcceptanceRejected(
@@ -310,5 +351,7 @@ class BatchAcceptanceService:
             "batchId": batch_id,
             "status": "closed",
             "selectionCount": len(selections),
-            "finalReviewStatement": ACCEPTANCE_STATEMENT,
+            "totalCount": len(expected_ids),
+            "expectedConfigIds": list(expected_ids),
+            "finalReviewStatement": statement,
         }

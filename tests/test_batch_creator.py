@@ -40,6 +40,8 @@ from state_reader import read_batch_route  # noqa: E402
 FACTS = ConfirmedFacts(
     product_type="餐具",
     height_cm=25,
+    main_image_count=6,
+    detail_image_count=8,
     handheld_main=2,
     handheld_detail=1,
     allow_clear_water=True,
@@ -82,6 +84,10 @@ class BatchCreatorTests(unittest.TestCase):
         shutil.copy2(ROOT / "scripts" / "build_batch_manifest.py", self.repo / "scripts")
         shutil.copy2(
             ROOT / "canvas-bridge" / "category_recipes.py",
+            self.repo / "canvas-bridge",
+        )
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "image_count_contract.py",
             self.repo / "canvas-bridge",
         )
         shutil.copytree(ROOT / "categories", self.repo / "categories")
@@ -236,6 +242,8 @@ class BatchCreatorTests(unittest.TestCase):
             length_cm=28,
             width_cm=28,
             height_cm=3,
+            main_image_count=6,
+            detail_image_count=8,
             handheld_main=6,
             handheld_detail=8,
             allow_clear_water=True,

@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from category_recipes import CategoryRecipeError, load_manifest_category
+from codex_dev_qc import qc_chunk_count
+from codex_dev_downstream import manifest_config_ids
 from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
 from batch_recycle_state import (
     BUSY_MESSAGE,
@@ -28,7 +30,6 @@ from executor_contract import Executor, ExecutorContext, ExecutorExecutionError
 from image_production_executor import ImageProductionExecutor
 from openai_image_executor import OpenAIImageExecutor
 from workflow_production_controller import (
-    PRODUCTION_TOTAL_IMAGES,
     ProductionGateError,
     apply_production_requested_outputs,
     human_step_message,
@@ -58,7 +59,6 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
-_QC_HEARTBEAT_TOTAL = 8
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
 _QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
 _QC_HEARTBEAT_STOP = object()
@@ -161,12 +161,22 @@ def _path_values(value: Any) -> tuple[Path, ...]:
 def discover_source_artifacts(
     manifest: Mapping[str, Any],
     source: str,
+    repository_root: Path | None = None,
 ) -> tuple[WorkflowProductionArtifact, ...]:
     if source not in {"renders", "repaired"}:
         return ()
     batch_id = str(manifest.get("product_id") or "")
     workspace_value = (manifest.get("workspace") or {}).get("root") if isinstance(manifest.get("workspace"), Mapping) else None
     if not batch_id or not isinstance(workspace_value, str) or not workspace_value:
+        return ()
+    try:
+        expected_ids = frozenset(
+            manifest_config_ids(
+                manifest,
+                repository_root or Path(__file__).resolve().parent.parent,
+            )
+        )
+    except ExecutorExecutionError:
         return ()
     workspace = Path(workspace_value)
     outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), Mapping) else {}
@@ -175,6 +185,8 @@ def discover_source_artifacts(
         if not _inside(root, workspace) or not root.is_dir():
             continue
         for path in sorted(root.glob("*.png")):
+            if path.stem not in expected_ids:
+                continue
             try:
                 artifact = artifact_from_path(batch_id, path, source=source)
             except (OSError, ValueError):
@@ -189,10 +201,13 @@ def discover_source_artifacts(
     return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
 
 
-def discover_accepted_artifacts(manifest: Mapping[str, Any]) -> tuple[WorkflowProductionArtifact, ...]:
+def discover_accepted_artifacts(
+    manifest: Mapping[str, Any],
+    repository_root: Path | None = None,
+) -> tuple[WorkflowProductionArtifact, ...]:
     found: dict[str, WorkflowProductionArtifact] = {}
     for source in ("renders", "repaired"):
-        for artifact in discover_source_artifacts(manifest, source):
+        for artifact in discover_source_artifacts(manifest, source, repository_root):
             found.setdefault(artifact.config_id, artifact)
     return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
 
@@ -259,7 +274,7 @@ class WorkflowProductionService:
         executor_builder: Callable[[str, Mapping[str, Any], Path, Callable[[WorkflowProductionArtifact], None]], Executor] | None = None,
         route_reader: Callable[[Path], dict[str, Any]] = state_reader.read_batch_route,
         integrity_reader: Callable[[dict[str, Any]], dict[str, Any]] = state_reader.integrity_report_status,
-        artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] = discover_accepted_artifacts,
+        artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         render_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         repaired_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         clock_ms: Callable[[], int] | None = None,
@@ -277,12 +292,25 @@ class WorkflowProductionService:
         self.executor_builder = executor_builder or self._build_executor
         self.route_reader = route_reader
         self.integrity_reader = integrity_reader
-        self.artifact_reader = artifact_reader
+        self.artifact_reader = artifact_reader or (
+            lambda manifest: discover_accepted_artifacts(
+                manifest,
+                self.repository_root,
+            )
+        )
         self.render_artifact_reader = render_artifact_reader or (
-            lambda manifest: discover_source_artifacts(manifest, "renders")
+            lambda manifest: discover_source_artifacts(
+                manifest,
+                "renders",
+                self.repository_root,
+            )
         )
         self.repaired_artifact_reader = repaired_artifact_reader or (
-            lambda manifest: discover_source_artifacts(manifest, "repaired")
+            lambda manifest: discover_source_artifacts(
+                manifest,
+                "repaired",
+                self.repository_root,
+            )
         )
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
         self.sleep = sleep
@@ -329,6 +357,7 @@ class WorkflowProductionService:
             raise ProductionGateError("批次清单与信息卡不一致，真实制作没有开始。")
         try:
             load_manifest_category(self.repository_root, manifest)
+            self._expected_ids(manifest)
         except CategoryRecipeError as exc:
             raise ProductionGateError(
                 f"产品品类配方不可用，真实制作没有开始：{exc}"
@@ -344,6 +373,14 @@ class WorkflowProductionService:
         if not isinstance(marker, dict) or marker.get("type") != "canvas-batch-v1" or marker.get("product_id") != batch_id:
             raise ProductionGateError("批次安全标记与信息卡不一致，真实制作没有开始。")
         return manifest
+
+    def _expected_ids(self, manifest: Mapping[str, Any]) -> tuple[str, ...]:
+        try:
+            return manifest_config_ids(manifest, self.repository_root)
+        except ExecutorExecutionError:
+            raise ProductionGateError(
+                "批次图片张数无效，真实制作没有开始。"
+            ) from None
 
     @staticmethod
     def _journal_seen(path: Path, request_id: str) -> bool:
@@ -383,6 +420,8 @@ class WorkflowProductionService:
         content: str,
         step: str | None = None,
         produced_count: int | None = None,
+        total_count: int | None = None,
+        expected_ids: tuple[str, ...] | None = None,
         error_message: str | None = None,
         message: str | None = None,
     ) -> dict[str, Any]:
@@ -391,14 +430,25 @@ class WorkflowProductionService:
         state["updatedAt"] = self.clock_ms()
         if step:
             state["step"] = step
-            state["message"] = message or human_step_message(step, produced_count=produced_count or 0)
+            state["message"] = message or human_step_message(
+                step,
+                produced_count=produced_count or 0,
+                total_count=total_count,
+            )
         else:
             state.pop("step", None)
             if message:
                 state["message"] = message
         if produced_count is not None:
             state["producedCount"] = produced_count
-        state["totalCount"] = PRODUCTION_TOTAL_IMAGES
+        if total_count is not None and expected_ids is not None:
+            if total_count != len(expected_ids):
+                raise ProductionGateError("批次图片总数与编号清单不一致。")
+            state["totalCount"] = total_count
+            state["expectedConfigIds"] = list(expected_ids)
+        else:
+            state.pop("totalCount", None)
+            state.pop("expectedConfigIds", None)
         if error_message:
             state["errorMessage"] = error_message
         else:
@@ -450,14 +500,24 @@ class WorkflowProductionService:
         worker: _QcHeartbeatWorker,
         machine: Mapping[str, Any],
         accepted_content: str,
+        *,
+        total_count: int,
+        expected_ids: tuple[str, ...],
+        chunk_count: int,
     ) -> Callable[[int, int], None]:
         def report(completed: int, total: int) -> None:
-            if total != _QC_HEARTBEAT_TOTAL or completed not in range(1, total + 1):
+            if total != chunk_count or completed not in range(1, total + 1):
                 return
             if completed < total:
-                message = f"正在逐张质检 14 张成图…（第 {completed}/{total} 组完成）"
+                message = (
+                    f"正在逐张质检 {total_count} 张成图…"
+                    f"（第 {completed}/{total} 组完成）"
+                )
             else:
-                message = "14 张成图质检汇总已完成，正在生成 QC 报告…（第 8/8 组完成）"
+                message = (
+                    f"{total_count} 张成图质检汇总已完成，正在生成 QC 报告…"
+                    f"（第 {total}/{total} 组完成）"
+                )
             worker.submit(
                 [
                     self._machine_update(
@@ -465,7 +525,9 @@ class WorkflowProductionService:
                         status="running",
                         content=accepted_content,
                         step="qc",
-                        produced_count=PRODUCTION_TOTAL_IMAGES,
+                        produced_count=total_count,
+                        total_count=total_count,
+                        expected_ids=expected_ids,
                         message=message,
                     )
                 ]
@@ -504,8 +566,16 @@ class WorkflowProductionService:
         journal: Path,
         request_id: str,
         *,
+        expected_ids: tuple[str, ...] | None = None,
         event_name: str = "image_persisted",
     ) -> None:
+        if expected_ids is not None and artifact.config_id not in expected_ids:
+            raise ExecutorExecutionError("正式图片不在当前批次登记图位中。")
+        main_count = (
+            sum(config_id.startswith("main_") for config_id in expected_ids)
+            if expected_ids is not None
+            else None
+        )
         state = self.client.call_tool("canvas_get_state")
         current_machine = next(
             (item for item in state.get("nodes") or [] if item.get("id") == machine.get("id")),
@@ -516,6 +586,7 @@ class WorkflowProductionService:
             list(state.get("nodes") or []),
             artifact,
             self.production_base_url,
+            main_count=main_count,
         )
         self._apply_with_reconnect(ops)
         self._wait_for_persistence(artifact)
@@ -538,14 +609,27 @@ class WorkflowProductionService:
         journal: Path,
         request_id: str,
     ) -> tuple[WorkflowProductionArtifact, ...]:
+        expected_ids = self._expected_ids(manifest)
         artifacts = self.artifact_reader(manifest)
+        artifact_ids = [artifact.config_id for artifact in artifacts]
+        if (
+            len(artifact_ids) != len(set(artifact_ids))
+            or any(config_id not in expected_ids for config_id in artifact_ids)
+        ):
+            raise ProductionGateError("磁盘成图与批次登记图位不一致。")
         for artifact in artifacts:
             if not self._persisted(
                 output_node_id(artifact.batch_id, artifact.config_id, artifact.source),
                 artifact.sha256,
                 artifact.source,
             ):
-                self._project_artifact(machine, artifact, journal, request_id)
+                self._project_artifact(
+                    machine,
+                    artifact,
+                    journal,
+                    request_id,
+                    expected_ids=expected_ids,
+                )
         return artifacts
 
     @_guard_batch_side_effect(quiet=True)
@@ -570,6 +654,10 @@ class WorkflowProductionService:
             output_node_id(artifact.batch_id, artifact.config_id): artifact
             for artifact in self.render_artifact_reader(manifest)
         }
+        expected_ids = self._expected_ids(manifest)
+        main_count = sum(
+            config_id.startswith("main_") for config_id in expected_ids
+        )
         ops: list[dict[str, Any]] = []
         for node in canvas_state.get("nodes") or []:
             artifact = by_id.get(str(node.get("id") or ""))
@@ -588,6 +676,7 @@ class WorkflowProductionService:
                     dict(node),
                     artifact,
                     self.production_base_url,
+                    main_count=main_count,
                 )
             )
         if ops:
@@ -712,6 +801,7 @@ class WorkflowProductionService:
         if step == "integrity":
             return ImageProductionExecutor(context)
         if step == "renders":
+            expected_ids = self._expected_ids(manifest)
             workspace = Path(str((manifest.get("workspace") or {}).get("root") or ""))
             outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), Mapping) else {}
             render_roots = _path_values(outputs.get("renders"))
@@ -724,6 +814,7 @@ class WorkflowProductionService:
                 audit_root=workspace / "artifacts" / "audit",
                 on_output=on_output,
                 renders_root=render_roots[0],
+                expected_ids=expected_ids,
                 on_auto_padded=on_auto_padded,
             )
             image_observer.prepare()
@@ -893,6 +984,8 @@ class WorkflowProductionService:
                 requested_outputs=list(edit_result["requested_outputs"]),
             )
 
+        expected_ids = self._expected_ids(manifest)
+        total_count = len(expected_ids)
         accepted_content = f"# request-id: {request_id}\n# accepted"
         existing = self._sync_existing(machine, manifest, journal, request_id)
         produced_count = len(existing)
@@ -912,14 +1005,16 @@ class WorkflowProductionService:
                             machine,
                             status="completed",
                             content=f"# request-id: {request_id}\n# completed",
-                            produced_count=PRODUCTION_TOTAL_IMAGES,
+                            produced_count=total_count,
+                            total_count=total_count,
+                            expected_ids=expected_ids,
                             message="质检完成，QC 报告已生成。",
                         )
                     ]
                 )
                 return
             if (
-                produced_count >= PRODUCTION_TOTAL_IMAGES
+                produced_count >= total_count
                 and stage == "needs_qc_reports"
                 and not self._journal_has_event(journal, "production_completed")
             ):
@@ -927,7 +1022,7 @@ class WorkflowProductionService:
                     journal,
                     "production_completed",
                     request_id=request_id,
-                    produced_count=PRODUCTION_TOTAL_IMAGES,
+                    produced_count=total_count,
                 )
             step = resolve_gated_step(command_text, route, integrity)
             if step not in M2C_STEPS:
@@ -945,6 +1040,8 @@ class WorkflowProductionService:
                             content=f"# request-id: {request_id}\n# gate-paused",
                             step=step,
                             produced_count=produced_count,
+                            total_count=total_count,
+                            expected_ids=expected_ids,
                             message="上游准备完成，已停在出图前。等待批准下一闸门。",
                         )
                     ]
@@ -966,12 +1063,20 @@ class WorkflowProductionService:
                         content=accepted_content,
                         step=step,
                         produced_count=produced_count,
+                        total_count=total_count,
+                        expected_ids=expected_ids,
                     )
                 ]
             )
 
             def on_output(artifact: WorkflowProductionArtifact) -> None:
-                self._project_artifact(machine, artifact, journal, request_id)
+                self._project_artifact(
+                    machine,
+                    artifact,
+                    journal,
+                    request_id,
+                    expected_ids=expected_ids,
+                )
                 current = len(self.artifact_reader(manifest))
                 self._apply_with_reconnect(
                     [
@@ -981,6 +1086,8 @@ class WorkflowProductionService:
                             content=accepted_content,
                             step="renders",
                             produced_count=current,
+                            total_count=total_count,
+                            expected_ids=expected_ids,
                         )
                     ]
                 )
@@ -1010,6 +1117,9 @@ class WorkflowProductionService:
                                 qc_heartbeat_worker,
                                 machine,
                                 accepted_content,
+                                total_count=total_count,
+                                expected_ids=expected_ids,
+                                chunk_count=qc_chunk_count(total_count),
                             )
                         )
                 result = run_controller.execute_step(executor, step)
@@ -1053,7 +1163,7 @@ class WorkflowProductionService:
                 produced_count = len(self.artifact_reader(manifest))
                 route = self.route_reader(manifest_path)
                 if (
-                    produced_count < PRODUCTION_TOTAL_IMAGES
+                    produced_count < total_count
                     or route.get("current_stage") != "needs_qc_reports"
                 ):
                     self._apply_with_reconnect(
@@ -1063,6 +1173,8 @@ class WorkflowProductionService:
                                 status="paused",
                                 content=f"# request-id: {request_id}\n# paused",
                                 produced_count=produced_count,
+                                total_count=total_count,
+                                expected_ids=expected_ids,
                             )
                         ]
                     )
@@ -1070,7 +1182,14 @@ class WorkflowProductionService:
                     return
             produced_count = len(self.artifact_reader(manifest))
             route = self.route_reader(manifest_path)
-            command_text = next_gated_command(route, accepted_render_count=produced_count) or ""
+            command_text = (
+                next_gated_command(
+                    route,
+                    accepted_render_count=produced_count,
+                    total_count=total_count,
+                )
+                or ""
+            )
 
     def poll_once(self) -> None:
         state = self.client.call_tool("canvas_get_state")

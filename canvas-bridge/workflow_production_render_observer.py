@@ -144,12 +144,14 @@ class ProductionRenderObserverExecutor:
         audit_root: Path,
         on_output: Callable[[WorkflowProductionArtifact], None],
         renders_root: Path | None = None,
+        expected_ids: tuple[str, ...] | None = None,
         on_auto_padded: Callable[[Mapping[str, str | int]], None] | None = None,
     ) -> None:
         self.delegate = delegate
         self.batch_id = batch_id
         self.audit_root = audit_root
         self.renders_root = renders_root
+        self.expected_ids = expected_ids
         self.on_output = on_output
         self.on_auto_padded = on_auto_padded or (lambda _record: None)
         self._sweep_complete = False
@@ -166,8 +168,15 @@ class ProductionRenderObserverExecutor:
     def _sweep_existing_details(self) -> None:
         if self.renders_root is None:
             return
-        for index in range(1, 9):
-            path = self.renders_root / f"detail_{index:02d}.png"
+        if self.expected_ids is None:
+            paths = sorted(self.renders_root.glob("detail_*.png"))
+        else:
+            paths = [
+                self.renders_root / f"{config_id}.png"
+                for config_id in self.expected_ids
+                if config_id.startswith("detail_")
+            ]
+        for path in paths:
             if not path.is_file():
                 continue
             artifact = artifact_from_path(self.batch_id, path)
@@ -186,6 +195,8 @@ class ProductionRenderObserverExecutor:
         self.prepare()
         result = self.delegate.execute(request)
         for path in result.outputs:
+            if self.expected_ids is not None and path.stem not in self.expected_ids:
+                raise ExecutorExecutionError("渲染结果不在当前批次登记图位中。")
             artifact = artifact_from_path(self.batch_id, path)
             self.on_output(self._accept_padded(artifact))
         return result

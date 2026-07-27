@@ -306,7 +306,15 @@ class CategoryRecipeTest(unittest.TestCase):
         self.assertEqual(0, completed.returncode, completed.stderr)
         manifest = json.loads(completed.stdout)["manifest_data"]
         self.assertEqual("盘子", manifest["category"])
-        self.assertEqual(PLATE_FACTS | {"handheld_main": 6}, manifest["user_confirmed_facts"])
+        self.assertEqual(
+            PLATE_FACTS
+            | {
+                "main_image_count": 6,
+                "detail_image_count": 8,
+                "handheld_main": 6,
+            },
+            manifest["user_confirmed_facts"],
+        )
         self.assertFalse((ROOT / "manifests" / f"{product_id}.batch_manifest.json").exists())
 
         missing_width = [item for item in command if item not in {"--width-cm", "28"}]

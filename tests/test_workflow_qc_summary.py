@@ -26,6 +26,19 @@ class WorkflowQcSummaryTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp.name)
         (self.repo / "reports").mkdir()
+        (self.repo / "manifests").mkdir()
+        (self.repo / "manifests" / "cup.batch_manifest.json").write_text(
+            json.dumps(
+                {
+                    "product_id": "cup",
+                    "user_confirmed_facts": {
+                        "main_image_count": 6,
+                        "detail_image_count": 8,
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
 
     def tearDown(self) -> None:
         self.temp.cleanup()

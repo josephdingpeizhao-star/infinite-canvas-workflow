@@ -9,6 +9,8 @@
   "user_confirmed_facts": {
     "product_type": "",
     "height_cm": null,
+    "main_image_count": null,
+    "detail_image_count": null,
     "handheld_main": null,
     "handheld_detail": null,
     "allow_clear_water": null,

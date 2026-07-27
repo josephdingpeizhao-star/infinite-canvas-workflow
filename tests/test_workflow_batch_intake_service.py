@@ -51,6 +51,8 @@ def confirmed_facts() -> ConfirmedFacts:
     return ConfirmedFacts(
         product_type="餐具",
         height_cm=25,
+        main_image_count=6,
+        detail_image_count=8,
         handheld_main=2,
         handheld_detail=1,
         allow_clear_water=True,

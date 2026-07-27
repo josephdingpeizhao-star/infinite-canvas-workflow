@@ -51,6 +51,8 @@ def _facts() -> dict[str, object]:
         "length_cm": None,
         "width_cm": None,
         "height_cm": 8,
+        "main_image_count": 6,
+        "detail_image_count": 8,
         "handheld_main": 2,
         "handheld_detail": 1,
         "allow_clear_water": False,
@@ -312,6 +314,10 @@ class Nc01IsolatedNormalFlowTests(unittest.TestCase):
                 ROOT / "canvas-bridge" / "category_recipes.py",
                 repo / "canvas-bridge",
             )
+            shutil.copy2(
+                ROOT / "canvas-bridge" / "image_count_contract.py",
+                repo / "canvas-bridge",
+            )
             shutil.copytree(ROOT / "categories", repo / "categories")
             shutil.copy2(ROOT / "manifests" / "batch_manifest.template.json", manifests)
             shutil.copy2(ROOT / "manifests" / "asset_manifest.template.json", manifests)
@@ -365,6 +371,8 @@ class Nc01IsolatedNormalFlowTests(unittest.TestCase):
                 facts=batch_controller.ConfirmedFacts(
                     product_type="杯子",
                     height_cm=8,
+                    main_image_count=6,
+                    detail_image_count=8,
                     handheld_main=2,
                     handheld_detail=1,
                     allow_clear_water=False,

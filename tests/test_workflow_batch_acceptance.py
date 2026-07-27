@@ -54,6 +54,10 @@ class WorkflowBatchAcceptanceTest(unittest.TestCase):
             json.dumps(
                 {
                     "product_id": "cup",
+                    "user_confirmed_facts": {
+                        "main_image_count": 6,
+                        "detail_image_count": 8,
+                    },
                     "workspace": {"root": str(self.workspace)},
                     "outputs": {
                         "renders": [str(self.renders)],
@@ -103,7 +107,10 @@ class WorkflowBatchAcceptanceTest(unittest.TestCase):
         self.assertEqual(14, event["selection_count"])
         self.assertEqual(list(CONFIG_IDS), [item["config_id"] for item in event["selections"]])
         self.assertTrue(all(len(item["sha256"]) == 64 for item in event["selections"]))
-        self.assertEqual(acceptance.ACCEPTANCE_STATEMENT, event["final_review_statement"])
+        self.assertEqual(
+            payload["finalReviewStatement"],
+            event["final_review_statement"],
+        )
 
     def test_missing_config_is_rejected_without_writing_event(self) -> None:
         with self.assertRaises(acceptance.AcceptanceRejected) as ctx:

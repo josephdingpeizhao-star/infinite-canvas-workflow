@@ -17,14 +17,11 @@ from batch_recycle_state import (
     BatchLifecycleReadError,
     read_batch_lifecycle,
 )
+from codex_dev_downstream import manifest_config_ids
+from executor_contract import ExecutorExecutionError
 from workflow_production_projection import WorkflowProductionArtifact, artifact_from_path
 
 
-CONFIG_IDS = tuple(
-    [f"main_{index:02d}" for index in range(1, 7)]
-    + [f"detail_{index:02d}" for index in range(1, 9)]
-)
-CONFIG_ID_SET = frozenset(CONFIG_IDS)
 SOURCES = frozenset({"renders", "repaired"})
 ACCEPTANCE_EVENT = "batch_acceptance_closed"
 DELIVERY_EVENT = "delivery_packaged"
@@ -130,7 +127,10 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
 
 def _validated_acceptance(
     events: list[dict[str, Any]],
+    expected_ids: tuple[str, ...],
 ) -> tuple[dict[str, Any], list[dict[str, str]], str, dict[str, int]]:
+    expected_id_set = frozenset(expected_ids)
+    total_count = len(expected_ids)
     if any(event.get("event") == DELIVERY_EVENT for event in events):
         raise DeliveryRejected(
             "delivery_already_recorded",
@@ -148,9 +148,9 @@ def _validated_acceptance(
     raw_selections = event.get("selections")
     if (
         type(event.get("selection_count")) is not int
-        or event.get("selection_count") != len(CONFIG_IDS)
+        or event.get("selection_count") != total_count
         or not isinstance(raw_selections, list)
-        or len(raw_selections) != len(CONFIG_IDS)
+        or len(raw_selections) != total_count
         or not isinstance(event.get("request_id"), str)
         or not event.get("request_id")
         or not isinstance(event.get("ts"), str)
@@ -171,7 +171,7 @@ def _validated_acceptance(
         source = raw.get("source")
         sha256 = raw.get("sha256")
         if (
-            config_id not in CONFIG_ID_SET
+            config_id not in expected_id_set
             or source not in SOURCES
             or not isinstance(sha256, str)
             or len(sha256) != 64
@@ -186,12 +186,16 @@ def _validated_acceptance(
             {"config_id": config_id, "source": source, "sha256": sha256}
         )
     config_ids = [item["config_id"] for item in selections]
-    if len(set(config_ids)) != len(CONFIG_IDS) or set(config_ids) != CONFIG_ID_SET:
+    if (
+        len(set(config_ids)) != total_count
+        or set(config_ids) != expected_id_set
+    ):
         raise DeliveryRejected(
             "selections_invalid",
-            "交付门禁未通过：14 个关账图位必须齐全且不能重复。",
+            f"交付门禁未通过：{total_count} 个关账图位必须齐全且不能重复。",
         )
-    selections.sort(key=lambda item: CONFIG_IDS.index(item["config_id"]))
+    order = {config_id: index for index, config_id in enumerate(expected_ids)}
+    selections.sort(key=lambda item: order[item["config_id"]])
     canonical = json.dumps(
         selections,
         ensure_ascii=False,
@@ -272,11 +276,11 @@ def _display_name(config_id: str) -> str:
     return f"{'主图' if config_id.startswith('main_') else '详情'} {ordinal}"
 
 
-def _archive_names(batch_id: str) -> list[str]:
+def _archive_names(batch_id: str, expected_ids: tuple[str, ...]) -> list[str]:
     return [
         f"{batch_id}/delivery_manifest.json",
         f"{batch_id}/delivery_manifest.md",
-        *[f"{batch_id}/images/{config_id}.png" for config_id in CONFIG_IDS],
+        *[f"{batch_id}/images/{config_id}.png" for config_id in expected_ids],
     ]
 
 
@@ -285,6 +289,7 @@ def _complete_delivery(
     delivery_dir: Path,
     zip_path: Path,
     sidecar_path: Path,
+    expected_ids: tuple[str, ...],
 ) -> bool:
     try:
         if not delivery_dir.is_dir() or not zip_path.is_file() or not sidecar_path.is_file():
@@ -296,14 +301,14 @@ def _complete_delivery(
         if not images_dir.is_dir():
             return False
         image_files = {path.name for path in images_dir.iterdir() if path.is_file()}
-        if image_files != {f"{config_id}.png" for config_id in CONFIG_IDS}:
+        if image_files != {f"{config_id}.png" for config_id in expected_ids}:
             return False
         if any(not path.is_file() for path in images_dir.iterdir()):
             return False
         zip_sha256 = _sha256_path(zip_path)
         if sidecar_path.read_text(encoding="utf-8") != f"{zip_sha256}  {zip_path.name}\n":
             return False
-        expected_names = _archive_names(batch_id)
+        expected_names = _archive_names(batch_id, expected_ids)
         with zipfile.ZipFile(zip_path) as archive:
             if archive.namelist() != expected_names:
                 return False
@@ -351,7 +356,10 @@ def _manifest_payload(
             "file_name": f"{batch_id}.zip",
             "sha256_sidecar": f"../{batch_id}.zip.sha256",
             "compression": "deflate-9",
-            "entry_order": _archive_names(batch_id),
+        "entry_order": _archive_names(
+            batch_id,
+            tuple(item["config_id"] for item in selections),
+        ),
         },
         "items": items,
     }
@@ -471,6 +479,16 @@ def package_delivery(
     ):
         raise DeliveryRejected("request_invalid", "交付门禁未通过：打包时间无效。")
     batch_id, workspace = _validated_context(manifest)
+    try:
+        expected_ids = manifest_config_ids(
+            manifest,
+            manifest_path.resolve().parent.parent,
+        )
+    except ExecutorExecutionError:
+        raise DeliveryRejected(
+            "image_counts_invalid",
+            "交付门禁未通过：批次图片张数或编号清单无效。",
+        ) from None
     expected_journal = manifest_path.parent / f"{batch_id}.events.jsonl"
     if journal_path.resolve(strict=False) != expected_journal.resolve(strict=False):
         raise DeliveryRejected("journal_mismatch", "交付门禁未通过：批次账本不匹配。")
@@ -507,13 +525,22 @@ def package_delivery(
         with lock_handle:
             lock_handle.write(request_id)
         events = _read_events(journal_path)
-        acceptance, selections, selection_sha256, source_counts = _validated_acceptance(events)
+        acceptance, selections, selection_sha256, source_counts = _validated_acceptance(
+            events,
+            expected_ids,
+        )
         delivery_dir = deliveries_root / batch_id
         zip_path = deliveries_root / f"{batch_id}.zip"
         sidecar_path = deliveries_root / f"{batch_id}.zip.sha256"
         existing = delivery_dir.exists() or zip_path.exists() or sidecar_path.exists()
         if existing:
-            if _complete_delivery(batch_id, delivery_dir, zip_path, sidecar_path):
+            if _complete_delivery(
+                batch_id,
+                delivery_dir,
+                zip_path,
+                sidecar_path,
+                expected_ids,
+            ):
                 raise DeliveryRejected(
                     "delivery_already_exists",
                     "完整交付包已经存在，不会重复打包。",
@@ -536,7 +563,7 @@ def package_delivery(
             images_dir = delivery_dir / "images"
             images_dir.mkdir(parents=True, exist_ok=False)
             artifact_by_id = {artifact.config_id: artifact for artifact in artifacts}
-            for config_id in CONFIG_IDS:
+            for config_id in expected_ids:
                 artifact = artifact_by_id[config_id]
                 target = images_dir / f"{config_id}.png"
                 shutil.copyfile(artifact.path, target)
@@ -554,7 +581,7 @@ def package_delivery(
                 f"{batch_id}/delivery_manifest.md": markdown_path,
                 **{
                     f"{batch_id}/images/{config_id}.png": images_dir / f"{config_id}.png"
-                    for config_id in CONFIG_IDS
+                    for config_id in expected_ids
                 },
             }
             with zip_path.open("x+b") as raw_zip:
@@ -564,7 +591,7 @@ def package_delivery(
                     compression=zipfile.ZIP_DEFLATED,
                     compresslevel=9,
                 ) as archive:
-                    for name in _archive_names(batch_id):
+                    for name in _archive_names(batch_id, expected_ids):
                         _write_zip_entry(archive, name, archive_sources[name].read_bytes())
             zip_sha256 = _sha256_path(zip_path)
             sidecar_path.write_text(

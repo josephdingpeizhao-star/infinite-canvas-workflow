@@ -7,7 +7,7 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -19,6 +19,14 @@ from category_recipes import (
     load_manifest_category,
 )
 from executor_contract import ExecutorExecutionError
+from image_count_contract import default_image_counts, validate_image_count
+from image_count_contract import (
+    chinese_image_count,
+    config_ids,
+    detail_module_assignment_lines,
+    detail_module_groups,
+    pair_config_ids,
+)
 
 
 MAIN_REQUIRED_OVERRIDE_FIELDS = (
@@ -142,11 +150,6 @@ _VARIABLE_ALLOWED_TOP_LEVEL = {
     "notes",
 }
 _VARIABLE_ALLOWED_CONFIG_FIELDS = {"config_id", "per_image_overrides", "notes"}
-DETAIL_CHUNK_COUNT = 4
-DETAIL_CONFIG_IDS_BY_CHUNK = tuple(
-    tuple(f"detail_{index:02d}" for index in range(start, start + 2))
-    for start in range(1, 9, 2)
-)
 _FORBIDDEN_DOWNSTREAM_KEYS = {
     "product_id",
     "artifact_type",
@@ -176,6 +179,8 @@ class UserConfirmedRequirements:
     allow_clear_water: bool
     forbid_pouring_and_heating: bool
     missing_d_no_retake: bool
+    main_image_count: int | None = None
+    detail_image_count: int | None = None
     length_cm: int | None = None
     width_cm: int | None = None
     category: str = DEFAULT_CATEGORY_KEY
@@ -196,6 +201,19 @@ _CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "length_cm",
     "width_cm",
     "height_cm",
+    "handheld_main",
+    "handheld_detail",
+    "allow_clear_water",
+    "forbid_pouring_and_heating",
+    "missing_d_no_retake",
+)
+_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
+    "product_type",
+    "length_cm",
+    "width_cm",
+    "height_cm",
+    "main_image_count",
+    "detail_image_count",
     "handheld_main",
     "handheld_detail",
     "allow_clear_water",
@@ -238,6 +256,28 @@ def _validated_user_requirements(
         raise ValueError("missing category recipe")
     if not requirements.product_type:
         raise ValueError("invalid requirement")
+    default_main, default_detail = default_image_counts(recipe.form)
+    requirements = replace(
+        requirements,
+        main_image_count=(
+            default_main
+            if requirements.main_image_count is None
+            else validate_image_count(
+                requirements.main_image_count,
+                recipe.form,
+                "main",
+            )
+        ),
+        detail_image_count=(
+            default_detail
+            if requirements.detail_image_count is None
+            else validate_image_count(
+                requirements.detail_image_count,
+                recipe.form,
+                "detail",
+            )
+        ),
+    )
     field_metadata = {
         item["key"]: item for item in recipe.form["dimensions"]["fields"]
     }
@@ -258,15 +298,16 @@ def _validated_user_requirements(
             or value > metadata["maximum"]
         ):
             raise ValueError("invalid dimension")
-    for mode, value in (
-        ("main", requirements.handheld_main),
-        ("detail", requirements.handheld_detail),
+    for mode, value, image_count in (
+        ("main", requirements.handheld_main, requirements.main_image_count),
+        ("detail", requirements.handheld_detail, requirements.detail_image_count),
     ):
         metadata = recipe.form["handheld"][mode]
         if (
             type(value) is not int
             or value < metadata["minimum"]
-            or value > metadata["maximum"]
+            or image_count is None
+            or value > image_count
         ):
             raise ValueError("invalid handheld count")
     return requirements
@@ -278,12 +319,19 @@ def _parse_structured_user_requirements(
     *,
     explicit_category: bool,
 ) -> UserConfirmedRequirements:
-    expected_keys = (
-        _CATEGORY_USER_CONFIRMED_FACT_KEYS
-        if explicit_category
-        else _USER_CONFIRMED_FACT_KEYS
-    )
-    if not isinstance(raw, Mapping) or set(raw) != set(expected_keys):
+    if not isinstance(raw, Mapping):
+        raise ValueError("invalid structured requirements")
+    raw_keys = set(raw)
+    if explicit_category:
+        if raw_keys == set(_CATEGORY_USER_CONFIRMED_FACT_KEYS):
+            has_counts = False
+        elif raw_keys == set(_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS):
+            has_counts = True
+        else:
+            raise ValueError("invalid structured requirements")
+    elif raw_keys == set(_USER_CONFIRMED_FACT_KEYS):
+        has_counts = False
+    else:
         raise ValueError("invalid structured requirements")
     product_type = raw["product_type"]
     height_cm = raw["height_cm"]
@@ -291,6 +339,8 @@ def _parse_structured_user_requirements(
     width_cm = raw.get("width_cm")
     handheld_main = raw["handheld_main"]
     handheld_detail = raw["handheld_detail"]
+    main_image_count = raw["main_image_count"] if has_counts else None
+    detail_image_count = raw["detail_image_count"] if has_counts else None
     boolean_values = (
         raw["allow_clear_water"],
         raw["forbid_pouring_and_heating"],
@@ -303,6 +353,8 @@ def _parse_structured_user_requirements(
         or (width_cm is not None and type(width_cm) is not int)
         or type(handheld_main) is not int
         or type(handheld_detail) is not int
+        or (main_image_count is not None and type(main_image_count) is not int)
+        or (detail_image_count is not None and type(detail_image_count) is not int)
         or any(type(value) is not bool for value in boolean_values)
     ):
         raise ValueError("invalid structured requirement types")
@@ -315,6 +367,8 @@ def _parse_structured_user_requirements(
             allow_clear_water=boolean_values[0],
             forbid_pouring_and_heating=boolean_values[1],
             missing_d_no_retake=boolean_values[2],
+            main_image_count=main_image_count,
+            detail_image_count=detail_image_count,
             length_cm=length_cm,
             width_cm=width_cm,
             category=recipe.key,
@@ -367,6 +421,78 @@ def _requirements_recipe(requirements: UserConfirmedRequirements) -> CategoryRec
         )
     except CategoryRecipeError:
         raise ExecutorExecutionError("codex-dev 缺少有效的产品品类配方") from None
+
+
+def _requirements_image_counts(
+    requirements: UserConfirmedRequirements,
+) -> tuple[int, int]:
+    recipe = _requirements_recipe(requirements)
+    default_main, default_detail = default_image_counts(recipe.form)
+    try:
+        return (
+            validate_image_count(
+                default_main
+                if requirements.main_image_count is None
+                else requirements.main_image_count,
+                recipe.form,
+                "main",
+            ),
+            validate_image_count(
+                default_detail
+                if requirements.detail_image_count is None
+                else requirements.detail_image_count,
+                recipe.form,
+                "detail",
+            ),
+        )
+    except ValueError:
+        raise ExecutorExecutionError("codex-dev 缺少有效的图片张数") from None
+
+
+def _mode_image_count(
+    requirements: UserConfirmedRequirements,
+    mode: str,
+) -> int:
+    main_count, detail_count = _requirements_image_counts(requirements)
+    return main_count if mode == "main" else detail_count
+
+
+def requirements_config_ids(
+    requirements: UserConfirmedRequirements,
+) -> tuple[str, ...]:
+    main_count, detail_count = _requirements_image_counts(requirements)
+    return config_ids("main", main_count) + config_ids("detail", detail_count)
+
+
+def manifest_config_ids(
+    manifest: Mapping[str, Any],
+    repository_root: Path | None = None,
+) -> tuple[str, ...]:
+    facts = manifest.get("user_confirmed_facts")
+    if facts is not None and not isinstance(facts, Mapping):
+        raise ExecutorExecutionError("codex-dev 缺少有效的图片张数")
+    has_main = isinstance(facts, Mapping) and "main_image_count" in facts
+    has_detail = isinstance(facts, Mapping) and "detail_image_count" in facts
+    if has_main != has_detail:
+        raise ExecutorExecutionError("codex-dev 缺少有效的图片张数")
+    if has_main and isinstance(facts, Mapping):
+        try:
+            return config_ids("main", facts["main_image_count"]) + config_ids(
+                "detail",
+                facts["detail_image_count"],
+            )
+        except (KeyError, TypeError, ValueError):
+            raise ExecutorExecutionError("codex-dev 缺少有效的图片张数") from None
+    try:
+        root = repository_root or Path(__file__).resolve().parent.parent
+        recipe = load_manifest_category(root, manifest)
+        main_count, detail_count = default_image_counts(recipe.form)
+        return config_ids("main", main_count) + config_ids(
+            "detail",
+            detail_count,
+        )
+    except (CategoryRecipeError, TypeError, ValueError):
+        raise ExecutorExecutionError("codex-dev 缺少有效的图片张数") from None
 
 
 def _confirmed_dimensions(
@@ -453,6 +579,9 @@ def load_skill_runtime_package(
     filename: str,
     label: str,
     category_recipe: CategoryRecipe | None = None,
+    *,
+    requirements: UserConfirmedRequirements | None = None,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Load category-owned runtime rules; generic Skill text remains in .agents."""
 
@@ -467,7 +596,94 @@ def load_skill_runtime_package(
         value = recipe.runtime_packages[runtime_key]
     except (CategoryRecipeError, KeyError):
         raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label}运行规则")
-    return dict(value)
+    package = dict(value)
+    if requirements is None or mode not in {"main", "detail"}:
+        return package
+    main_count, detail_count = _requirements_image_counts(requirements)
+    default_main, default_detail = default_image_counts(recipe.form)
+    if (main_count, detail_count) == (default_main, default_detail):
+        return package
+
+    def render_text(text: str) -> str:
+        rendered = text.replace(
+            (
+                f"主图默认仍生成 {default_main} 套变量配置；详情图默认按"
+                f"【标准完整详情页模式】生成 {default_detail} 套变量配置并覆盖模块01至模块08。"
+            ),
+            (
+                f"本批主图必须生成 {main_count} 套变量配置；本批详情图必须生成 "
+                f"{detail_count} 套变量配置，并按【详情页模块覆盖计划】覆盖模块01至模块08。"
+            ),
+        )
+        rendered = rendered.replace(
+            f"目标是产出 {default_main} 套或指定数量的【单张变量配置】。",
+            f"目标是产出 {_mode_image_count(requirements, mode)} 套【单张变量配置】。",
+        )
+        if mode == "main":
+            replacements = {
+                f"请为该产品生成 {default_main} 套不同的": f"请为该产品生成 {main_count} 套不同的",
+                f"生成 {default_main} 套【主图单张变量配置】时": f"生成 {main_count} 套【主图单张变量配置】时",
+                f"本节用于在 {default_main} 套主图变量配置中": f"本节用于在 {main_count} 套主图变量配置中",
+                f"生成 {default_main} 套变量配置前": f"生成 {main_count} 套变量配置前",
+                f"单品批次的 {default_main} 套主图变量配置中": f"单品批次的 {main_count} 套主图变量配置中",
+                f"一次性生成 {default_main} 套淘宝天猫电商主图": f"一次性生成 {main_count} 套淘宝天猫电商主图",
+                f"{default_main} 张主图之间": f"{main_count} 张主图之间",
+                f"{default_main} 套主图变量配置的": f"{main_count} 套主图变量配置的",
+                f"不得让 {default_main} 套配置默认全部": f"不得让 {main_count} 套配置默认全部",
+            }
+            for source, target in replacements.items():
+                rendered = rendered.replace(source, target)
+        else:
+            opening = (
+                f"默认按【标准完整详情页模式】生成 {default_detail} 套淘宝天猫详情图"
+                "【单张变量配置】"
+            )
+            rendered = rendered.replace(
+                opening,
+                (
+                    f"按【详情页模块覆盖计划】生成 {detail_count} 套淘宝天猫详情图"
+                    "【单张变量配置】"
+                ),
+            )
+            plan_pattern = re.compile(
+                rf"标准完整详情页模式默认 {default_detail} 套：\n"
+                r".*?(?=\n\n旧版 7 套兼容模式：)",
+                flags=re.DOTALL,
+            )
+            plan = (
+                f"本批详情图共 {detail_count} 套，模块分配如下：\n"
+                + "\n".join(detail_module_assignment_lines(detail_count))
+            )
+            rendered = plan_pattern.sub(plan, rendered)
+            replacements = {
+                f"标准完整详情页模式下 {default_detail} 张详情图之间构图必须明显不同；": (
+                    f"本批 {detail_count} 张详情图之间构图必须明显不同；"
+                ),
+                f"本节用于在标准 {default_detail} 套或旧版 7 套详情图变量配置中": (
+                    f"本节用于在本批 {detail_count} 套详情图变量配置中"
+                ),
+                f"默认一次性生成 {default_detail} 套淘宝天猫电商详情图【单张变量配置】，并覆盖模块01至模块08。": (
+                    f"一次性生成 {detail_count} 套淘宝天猫电商详情图【单张变量配置】，"
+                    "并按【详情页模块覆盖计划】覆盖模块01至模块08。"
+                ),
+                f"{default_detail} 张详情图之间必须形成明确差异；": (
+                    f"{detail_count} 张详情图之间必须形成明确差异；"
+                ),
+            }
+            for source, target in replacements.items():
+                rendered = rendered.replace(source, target)
+        return rendered
+
+    def render_value(item: Any) -> Any:
+        if isinstance(item, str):
+            return render_text(item)
+        if isinstance(item, list):
+            return [render_value(child) for child in item]
+        if isinstance(item, dict):
+            return {key: render_value(child) for key, child in item.items()}
+        return item
+
+    return render_value(package)
 
 
 def qualified_angle_assets(angle_doc: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -1262,6 +1478,8 @@ def build_variable_config_prompt(
         f"runtime_rule_slices/{skill_name}.runtime_rule_slices.json",
         label,
         recipe,
+        requirements=requirements,
+        mode=mode,
     )
     _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
@@ -1299,6 +1517,9 @@ def build_variable_config_prompt(
             requirements.handheld_main if mode == "main" else requirements.handheld_detail
         ),
     )
+    image_count = _mode_image_count(requirements, mode)
+    identifiers = config_ids(mode, image_count)
+    count_word = chinese_image_count(image_count)
     if mode == "main":
         category_prompt = recipe.render_prompt(
             "main_prompt",
@@ -1306,7 +1527,7 @@ def build_variable_config_prompt(
         ).rstrip("\r\n")
         return f"""你正在为单品批次 {product_id} 生成主图变量配置，且只处理 main_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
-必须生成且只生成 main_01 至 main_06 六项，输出画布比例全部为 1:1，恰好 {requirements.handheld_main} 项启用手持。
+必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项，输出画布比例全部为 1:1，恰好 {requirements.handheld_main} 项启用手持。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(MAIN_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
@@ -1342,9 +1563,17 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
         "detail_prompt",
         **prompt_values,
     ).rstrip("\r\n")
+    module_groups = detail_module_groups(image_count)
+    if module_groups == tuple((index,) for index in range(1, len(module_groups) + 1)):
+        module_clause = "标准模块归属依次且唯一为模块01至模块08"
+    else:
+        module_clause = (
+            "标准模块归属必须逐项遵守【详情页模块覆盖计划】："
+            + "；".join(detail_module_assignment_lines(image_count))
+        )
     return f"""你正在为单品批次 {product_id} 生成详情图变量配置，且只处理 detail_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
-必须生成且只生成 detail_01 至 detail_08 八项；标准模块归属依次且唯一为模块01至模块08；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。
+必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项；{module_clause}；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
@@ -1384,32 +1613,38 @@ def build_detail_variable_config_chunk_prompt(
     base_prompt: str,
     chunk_index: int,
     *,
+    requirements: UserConfirmedRequirements,
     repair: bool = False,
     structure_correction: bool = False,
 ) -> str:
     """Request one bounded detail-config chunk from the same Codex thread."""
 
-    if not 1 <= chunk_index <= DETAIL_CHUNK_COUNT:
+    batches = pair_config_ids(
+        "detail",
+        _mode_image_count(requirements, "detail"),
+    )
+    chunk_count = len(batches)
+    if not 1 <= chunk_index <= chunk_count:
         raise ExecutorExecutionError("codex-dev 收到无效的详情图变量配置分段编号")
     if repair and structure_correction:
         raise ExecutorExecutionError("codex-dev 收到冲突的详情图变量配置恢复请求")
-    expected_ids = DETAIL_CONFIG_IDS_BY_CHUNK[chunk_index - 1]
+    expected_ids = batches[chunk_index - 1]
     allowed_keys = ["chunk_index", "chunk_count", "configs"]
     if chunk_index == 1:
         allowed_keys.extend(("common_constraints", "notes"))
-    if chunk_index == DETAIL_CHUNK_COUNT:
+    if chunk_index == chunk_count:
         allowed_keys.append("handheld_count_summary")
 
     if structure_correction:
         opening = (
-            f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{DETAIL_CHUNK_COUNT} 段未通过包装格式门禁；"
-            f"请完整重发第 {chunk_index}/{DETAIL_CHUNK_COUNT} 段。不得引用、解释或局部修补上一段正文，"
+            f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过包装格式门禁；"
+            f"请完整重发第 {chunk_index}/{chunk_count} 段。不得引用、解释或局部修补上一段正文，"
             "不得改变配置内容、段号、配置编号或增加商品事实。"
         )
     elif repair:
         opening = (
-            f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{DETAIL_CHUNK_COUNT} 段未通过传输完整性门禁；"
-            f"请完整重发第 {chunk_index}/{DETAIL_CHUNK_COUNT} 段。不得修补、引用或解释损坏正文。"
+            f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过传输完整性门禁；"
+            f"请完整重发第 {chunk_index}/{chunk_count} 段。不得修补、引用或解释损坏正文。"
         )
     elif chunk_index == 1:
         opening = base_prompt + "\n\n"
@@ -1418,12 +1653,16 @@ def build_detail_variable_config_chunk_prompt(
 
     return (
         opening
-        + f"\n本轮只返回第 {chunk_index}/{DETAIL_CHUNK_COUNT} 段，且只包含配置 "
+        + f"\n本轮只返回第 {chunk_index}/{chunk_count} 段，且只包含配置 "
         + "、".join(expected_ids)
         + "。"
         + f"顶层键必须恰好为：{json.dumps(allowed_keys, ensure_ascii=False)}。"
-        + f"chunk_index 必须为 {chunk_index}，chunk_count 必须为 {DETAIL_CHUNK_COUNT}。"
-        + "configs 必须按上述顺序包含两项，每项只包含 config_id、per_image_overrides、notes。"
+        + f"chunk_index 必须为 {chunk_index}，chunk_count 必须为 {chunk_count}。"
+        + (
+            "configs 必须按上述顺序包含"
+            f"{chinese_image_count(len(expected_ids))}项，每项只包含 "
+            "config_id、per_image_overrides、notes。"
+        )
         + (
             "common_constraints 必须是非空 JSON 对象；notes 必须是 JSON 字符串，不能是对象或数组，"
             "也不能把 handheld_count_summary 放入 notes；两者只在本段返回。"
@@ -1431,11 +1670,23 @@ def build_detail_variable_config_chunk_prompt(
             else ""
         )
         + (
-            "handheld_count_summary 必须是 JSON 对象，只在本段返回，并汇总完整八项配置。"
-            if chunk_index == DETAIL_CHUNK_COUNT
+            "handheld_count_summary 必须是 JSON 对象，只在本段返回，并汇总完整"
+            f"{chinese_image_count(_mode_image_count(requirements, 'detail'))}项配置。"
+            if chunk_index == chunk_count
             else ""
         )
         + "只返回一个完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
+    )
+
+
+def detail_variable_config_chunk_count(
+    requirements: UserConfirmedRequirements,
+) -> int:
+    return len(
+        pair_config_ids(
+            "detail",
+            _mode_image_count(requirements, "detail"),
+        )
     )
 
 
@@ -1511,7 +1762,12 @@ def parse_detail_variable_config_chunk(
 ) -> dict[str, Any]:
     """Validate one chunk before any bounded transport or envelope recovery."""
 
-    if not 1 <= chunk_index <= DETAIL_CHUNK_COUNT:
+    batches = pair_config_ids(
+        "detail",
+        _mode_image_count(requirements, "detail"),
+    )
+    chunk_count = len(batches)
+    if not 1 <= chunk_index <= chunk_count:
         raise ExecutorExecutionError("codex-dev 收到无效的详情图变量配置分段编号")
     candidate = text.strip()
     if "\ufffd" in candidate:
@@ -1534,12 +1790,12 @@ def parse_detail_variable_config_chunk(
 
     _reject_unicode_damage_or_forbidden_keys(value, "详情图变量配置分段")
 
-    if value.get("chunk_index") != chunk_index or value.get("chunk_count") != DETAIL_CHUNK_COUNT:
+    if value.get("chunk_index") != chunk_index or value.get("chunk_count") != chunk_count:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段编号异常")
 
     configs = value.get("configs")
-    expected_ids = list(DETAIL_CONFIG_IDS_BY_CHUNK[chunk_index - 1])
-    if not isinstance(configs, list) or len(configs) != 2:
+    expected_ids = list(batches[chunk_index - 1])
+    if not isinstance(configs, list) or len(configs) != len(expected_ids):
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段覆盖异常")
     actual_ids: list[str] = []
     for raw in configs:
@@ -1562,7 +1818,7 @@ def parse_detail_variable_config_chunk(
     expected_keys = {"chunk_index", "chunk_count", "configs"}
     if chunk_index == 1:
         expected_keys.update(("common_constraints", "notes"))
-    if chunk_index == DETAIL_CHUNK_COUNT:
+    if chunk_index == chunk_count:
         expected_keys.add("handheld_count_summary")
     if set(value) != expected_keys:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段结构异常")
@@ -1577,15 +1833,18 @@ def parse_detail_variable_config_chunk(
 
 def assemble_detail_variable_config_chunks(
     chunks: list[Mapping[str, Any]],
+    *,
+    requirements: UserConfirmedRequirements,
 ) -> dict[str, Any]:
     """Rebuild the original full response in memory after every chunk passes."""
 
-    if len(chunks) != DETAIL_CHUNK_COUNT:
+    expected_ids = list(
+        config_ids("detail", _mode_image_count(requirements, "detail"))
+    )
+    if len(chunks) != len(pair_config_ids("detail", len(expected_ids))):
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段数量异常")
     configs = [config for chunk in chunks for config in chunk["configs"]]
-    if [str(config.get("config_id") or "") for config in configs] != [
-        f"detail_{index:02d}" for index in range(1, 9)
-    ]:
+    if [str(config.get("config_id") or "") for config in configs] != expected_ids:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段覆盖异常")
     return {
         "common_constraints": dict(chunks[0]["common_constraints"]),
@@ -1652,7 +1911,9 @@ def _validate_detail_chunk_business_content(
         raise ExecutorExecutionError(f"codex-dev 收到的{label}数量或结构异常")
     qualified = qualified_angle_assets(angle_inventory)
     enabled_handheld = 0
-    start_index = (chunk_index - 1) * 2
+    start_index = sum(len(chunk["configs"]) for chunk in prior_chunks)
+    detail_count = _mode_image_count(requirements, "detail")
+    groups = detail_module_groups(detail_count)
     for offset, raw in enumerate(value["configs"]):
         overrides = raw["per_image_overrides"]
         if set(overrides) != set(DETAIL_REQUIRED_OVERRIDE_FIELDS):
@@ -1682,11 +1943,15 @@ def _validate_detail_chunk_business_content(
             raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
 
         config_index = start_index + offset
-        expected_module = f"模块{config_index + 1:02d}"
+        expected_modules = groups[config_index]
         module_assignment = overrides["标准模块归属"].strip()
-        if not re.fullmatch(rf"{re.escape(expected_module)}(?:\s+.+)?", module_assignment):
+        observed_modules = tuple(
+            int(module)
+            for module in re.findall(r"模块(0[1-8])", module_assignment)
+        )
+        if observed_modules != expected_modules:
             raise ExecutorExecutionError(f"codex-dev 收到的{label}模块覆盖异常")
-        if config_index == 4:
+        if 5 in expected_modules:
             size_info = overrides["尺寸标注信息"]
             size_rule = overrides["尺寸标注图规则"]
             if handheld or f"高度约 {requirements.height_cm} 厘米" not in size_info:
@@ -1704,13 +1969,14 @@ def _validate_detail_chunk_business_content(
     if enabled_handheld > requirements.handheld_detail:
         raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量异常")
 
-    if chunk_index == DETAIL_CHUNK_COUNT:
+    chunk_count = len(pair_config_ids("detail", detail_count))
+    if chunk_index == chunk_count:
         all_configs = [
             raw
             for chunk in (*prior_chunks, value)
             for raw in chunk["configs"]
         ]
-        if len(all_configs) != 8:
+        if len(all_configs) != detail_count:
             raise ExecutorExecutionError(f"codex-dev 收到的{label}分段覆盖异常")
         enabled_ids = [
             str(raw.get("config_id") or "")
@@ -1727,7 +1993,7 @@ def _validate_detail_chunk_business_content(
             summary,
             mode="detail",
             expected_handheld=requirements.handheld_detail,
-            expected_count=8,
+            expected_count=detail_count,
             enabled_ids=enabled_ids,
             label=label,
         )
@@ -1742,7 +2008,7 @@ def detail_chunk_business_fingerprint(
     payload: dict[str, Any] = {"configs": value["configs"]}
     if chunk_index == 1:
         payload["common_constraints"] = value["common_constraints"]
-    if chunk_index == DETAIL_CHUNK_COUNT:
+    if "handheld_count_summary" in value:
         payload["handheld_count_summary"] = value["handheld_count_summary"]
     return stable_json_sha256(payload)
 
@@ -1823,7 +2089,7 @@ def parse_variable_config_response(
     common = value.get("common_constraints")
     configs = value.get("configs")
     summary = value.get("handheld_count_summary")
-    expected_count = 6 if is_main else 8
+    expected_count = _mode_image_count(requirements, mode)
     if (
         not isinstance(common, dict)
         or not common
@@ -1834,8 +2100,7 @@ def parse_variable_config_response(
     if not isinstance(summary, dict):
         raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量说明异常")
 
-    prefix = "main" if is_main else "detail"
-    expected_ids = [f"{prefix}_{index:02d}" for index in range(1, expected_count + 1)]
+    expected_ids = list(config_ids(mode, expected_count))
     required_fields = MAIN_REQUIRED_OVERRIDE_FIELDS if is_main else DETAIL_REQUIRED_OVERRIDE_FIELDS
     qualified = qualified_angle_assets(angle_inventory)
     normalized_configs: list[dict[str, Any]] = []
@@ -1872,11 +2137,15 @@ def parse_variable_config_response(
         if handheld and not any(kind in handheld_declaration for kind in ("静态握持", "动态拿起")):
             raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
         if not is_main:
-            expected_module = f"模块{index + 1:02d}"
+            expected_modules = detail_module_groups(expected_count)[index]
             module_assignment = overrides["标准模块归属"].strip()
-            if not re.fullmatch(rf"{re.escape(expected_module)}(?:\s+.+)?", module_assignment):
+            observed_modules = tuple(
+                int(value)
+                for value in re.findall(r"模块(0[1-8])", module_assignment)
+            )
+            if observed_modules != expected_modules:
                 raise ExecutorExecutionError(f"codex-dev 收到的{label}模块覆盖异常")
-            if index == 4:
+            if 5 in expected_modules:
                 size_info = overrides["尺寸标注信息"]
                 size_rule = overrides["尺寸标注图规则"]
                 if handheld or f"高度约 {requirements.height_cm} 厘米" not in size_info:
@@ -1947,6 +2216,8 @@ def build_final_prompt_batch_prompt(
         "runtime_rule_slices/final-prompt-compiler.runtime_rule_slices.json",
         "最终提示词",
         recipe,
+        requirements=requirements,
+        mode=mode,
     )
     _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
@@ -1959,6 +2230,7 @@ def build_final_prompt_batch_prompt(
         variable_config,
         mode=mode,
         product_id=product_id,
+        expected_count=_mode_image_count(requirements, mode),
     )
     expected_ids = [str(config["config_id"]) for config in configs]
     expected_ratio = "1:1" if mode == "main" else "3:4"
@@ -2100,9 +2372,9 @@ def _validate_variable_config_document(
     *,
     mode: str,
     product_id: str,
+    expected_count: int,
 ) -> list[dict[str, Any]]:
-    expected_count = 6 if mode == "main" else 8
-    expected_ids = [f"{mode}_{index:02d}" for index in range(1, expected_count + 1)]
+    expected_ids = list(config_ids(mode, expected_count))
     if (
         document.get("product_id") != product_id
         or document.get("artifact_type") != f"{mode}_variable_config"
@@ -2161,7 +2433,12 @@ def parse_final_prompt_batch_response(
     )
     _reject_scene_policy_violations(value, requirements, label)
 
-    configs = _validate_variable_config_document(variable_config, mode=mode, product_id=product_id)
+    configs = _validate_variable_config_document(
+        variable_config,
+        mode=mode,
+        product_id=product_id,
+        expected_count=_mode_image_count(requirements, mode),
+    )
     expected_ids = [config["config_id"] for config in configs]
     if len(value["prompts"]) != len(expected_ids):
         raise ExecutorExecutionError(f"codex-dev 收到的{label}数量异常")
@@ -2236,10 +2513,15 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def final_prompt_bundle_targets(output_dir: Path) -> tuple[Path, ...]:
-    ids = [f"main_{index:02d}" for index in range(1, 7)] + [
-        f"detail_{index:02d}" for index in range(1, 9)
-    ]
+def final_prompt_bundle_targets(
+    output_dir: Path,
+    *,
+    requirements: UserConfirmedRequirements,
+) -> tuple[Path, ...]:
+    main_count, detail_count = _requirements_image_counts(requirements)
+    ids = list(config_ids("main", main_count)) + list(
+        config_ids("detail", detail_count)
+    )
     targets: list[Path] = []
     for config_id in ids:
         targets.extend(
@@ -2269,6 +2551,7 @@ def build_final_prompt_bundle(
     variable_configs: Mapping[str, tuple[Mapping[str, Any], Path]],
     upstream_paths: Mapping[str, Path],
     angle_inventory: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
 ) -> dict[Path, bytes]:
     """Build all prompt-only artifacts in memory before the exclusive commit."""
 
@@ -2287,7 +2570,12 @@ def build_final_prompt_bundle(
     index_items: list[dict[str, Any]] = []
     for mode in ("main", "detail"):
         document, source_path = variable_configs[mode]
-        configs = _validate_variable_config_document(document, mode=mode, product_id=product_id)
+        configs = _validate_variable_config_document(
+            document,
+            mode=mode,
+            product_id=product_id,
+            expected_count=_mode_image_count(requirements, mode),
+        )
         source_sha256 = _file_sha256(source_path)
         prompts = prompt_batches[mode]
         if set(prompts) != {config["config_id"] for config in configs}:
@@ -2353,7 +2641,12 @@ def build_final_prompt_bundle(
     }
     files[output_dir / "final_prompt_index.json"] = _json_bytes(index)
     files[output_dir / "final_prompt_index.md"] = _markdown_bytes("Final Prompt Index", index)
-    if set(files) != set(final_prompt_bundle_targets(output_dir)):
+    if set(files) != set(
+        final_prompt_bundle_targets(
+            output_dir,
+            requirements=requirements,
+        )
+    ):
         raise ExecutorExecutionError("codex-dev 无法构建完整的最终提示词批次")
     return files
 

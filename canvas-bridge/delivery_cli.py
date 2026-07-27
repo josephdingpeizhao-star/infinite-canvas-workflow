@@ -147,7 +147,10 @@ def _run_active_delivery(
     except OSError:
         output.write("交付包已生成，但账本回执写入失败；请人工核对，勿重复运行。\n")
         return 1
-    output.write("交付打包完成：14 张定稿、两份清单、ZIP 和校验文件均已生成。\n")
+    output.write(
+        f"交付打包完成：{result.item_count} 张定稿、"
+        "两份清单、ZIP 和校验文件均已生成。\n"
+    )
     return 0
 
 

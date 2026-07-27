@@ -383,6 +383,18 @@ def main() -> int:
     negative_prompt = product_identity.get("negative_prompt_constraints", COMMON_NEGATIVE_PROMPT)
     main_configs = expanded_configs(main_doc)
     detail_configs = expanded_configs(detail_doc)
+    try:
+        expected_ids = prompt_integrity.manifest_config_ids(manifest, ROOT)
+    except prompt_integrity.ExecutorExecutionError as exc:
+        raise ScriptError("batch manifest image counts are invalid") from exc
+    observed_ids = tuple(
+        str(item.get("config_id") or "")
+        for item in main_configs + detail_configs
+    )
+    if observed_ids != expected_ids:
+        raise ScriptError(
+            "variable config ids do not match batch manifest image counts"
+        )
     size_lock = size_lock_from_config(main_configs + detail_configs)
     main_refs = config_reference_lookup(main_doc, main_config_path)
     detail_refs = config_reference_lookup(detail_doc, detail_config_path)

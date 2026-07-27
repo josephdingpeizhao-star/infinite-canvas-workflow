@@ -16,6 +16,11 @@ from category_recipes import (  # noqa: E402
     CategoryRecipeError,
     load_category_recipe,
 )
+from image_count_contract import (  # noqa: E402
+    ImageCountContractError,
+    image_count_spec,
+    validate_image_count,
+)
 
 ARTIFACT_DIRS = [
     "identity",
@@ -207,6 +212,16 @@ def main() -> int:
     parser.add_argument("--length-cm", type=positive_integer)
     parser.add_argument("--width-cm", type=positive_integer)
     parser.add_argument("--height-cm", required=True, type=positive_integer)
+    parser.add_argument(
+        "--main-count",
+        type=int,
+        help="Main-image count. Omit to use the selected category default.",
+    )
+    parser.add_argument(
+        "--detail-count",
+        type=int,
+        help="Detail-image count. Omit to use the selected category default.",
+    )
     parser.add_argument("--handheld-main", required=True, type=int)
     parser.add_argument("--handheld-detail", required=True, type=int)
     parser.add_argument("--allow-clear-water", required=True, type=strict_boolean)
@@ -234,6 +249,28 @@ def main() -> int:
     except CategoryRecipeError as exc:
         print(f"产品品类配方不可用：{exc}")
         return 2
+    try:
+        main_count = validate_image_count(
+            (
+                image_count_spec(recipe.form, "main").default
+                if args.main_count is None
+                else args.main_count
+            ),
+            recipe.form,
+            "main",
+        )
+        detail_count = validate_image_count(
+            (
+                image_count_spec(recipe.form, "detail").default
+                if args.detail_count is None
+                else args.detail_count
+            ),
+            recipe.form,
+            "detail",
+        )
+    except ImageCountContractError as exc:
+        print(str(exc))
+        return 2
     dimensions = {
         "length_cm": args.length_cm,
         "width_cm": args.width_cm,
@@ -250,13 +287,16 @@ def main() -> int:
         if value is not None and not field["minimum"] <= value <= field["maximum"]:
             print(f"{field['key']} is outside the selected category range")
             return 2
-    for mode, value in (
-        ("main", args.handheld_main),
-        ("detail", args.handheld_detail),
+    for mode, value, image_count in (
+        ("main", args.handheld_main, main_count),
+        ("detail", args.handheld_detail, detail_count),
     ):
         bounds = recipe.form["handheld"][mode]
-        if type(value) is not int or not bounds["minimum"] <= value <= bounds["maximum"]:
-            print(f"handheld-{mode} is outside the selected category range")
+        if type(value) is not int or not bounds["minimum"] <= value <= image_count:
+            print(
+                f"handheld-{mode} must be an integer from "
+                f"{bounds['minimum']} through the selected {mode} image count"
+            )
             return 2
 
     manifest = load_template(root)
@@ -272,6 +312,8 @@ def main() -> int:
         "length_cm": args.length_cm,
         "width_cm": args.width_cm,
         "height_cm": args.height_cm,
+        "main_image_count": main_count,
+        "detail_image_count": detail_count,
         "handheld_main": args.handheld_main,
         "handheld_detail": args.handheld_detail,
         "allow_clear_water": args.allow_clear_water,

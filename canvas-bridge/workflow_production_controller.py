@@ -15,10 +15,11 @@ from typing import Any, Mapping
 
 import batch_editor
 import run_controller
+from category_recipes import DEFAULT_CATEGORY_KEY, load_category_recipe
+from image_count_contract import default_image_counts
 
 
 PRODUCTION_REQUESTED_OUTPUTS = ("main", "detail", "final_prompts", "qc_reports")
-PRODUCTION_TOTAL_IMAGES = 14
 
 
 class ProductionGateError(ValueError):
@@ -31,6 +32,21 @@ class ProductionSelection:
     card_id: str
     batch_id: str
     material_count: int
+
+
+def _default_total_images() -> int:
+    recipe = load_category_recipe(
+        Path(__file__).resolve().parent.parent,
+        DEFAULT_CATEGORY_KEY,
+    )
+    return sum(default_image_counts(recipe.form))
+
+
+def _validated_total_count(total_count: int | None) -> int:
+    value = _default_total_images() if total_count is None else total_count
+    if type(value) is not int or not 2 <= value <= 60:
+        raise ProductionGateError("批次图片总数异常，真实制作已停止。")
+    return value
 
 
 def _node_id(node: Mapping[str, Any]) -> str:
@@ -123,14 +139,20 @@ def apply_production_requested_outputs(manifest_path: Path) -> dict[str, Any]:
     return {"changed": True, "requested_outputs": canonical, **result}
 
 
-def next_gated_command(route: Mapping[str, Any], *, accepted_render_count: int) -> str | None:
+def next_gated_command(
+    route: Mapping[str, Any],
+    *,
+    accepted_render_count: int,
+    total_count: int | None = None,
+) -> str | None:
     """Choose existing run-controller syntax; never authorise a step here."""
 
-    if not 0 <= accepted_render_count <= PRODUCTION_TOTAL_IMAGES:
+    expected_total = _validated_total_count(total_count)
+    if not 0 <= accepted_render_count <= expected_total:
         raise ProductionGateError("正式图片计数异常，真实制作已停止。")
     stage = str(route.get("current_stage") or "")
     if stage == "needs_qc_reports":
-        if accepted_render_count >= PRODUCTION_TOTAL_IMAGES:
+        if accepted_render_count >= expected_total:
             return "run: qc"
         return "retry: renders"
     if stage == "ready":
@@ -150,7 +172,13 @@ def resolve_gated_step(command_text: str, route: dict[str, Any], integrity: dict
         raise ProductionGateError(str(exc)) from exc
 
 
-def human_step_message(step: str, *, produced_count: int = 0) -> str:
+def human_step_message(
+    step: str,
+    *,
+    produced_count: int = 0,
+    total_count: int | None = None,
+) -> str:
+    expected_total = _validated_total_count(total_count)
     if step in {"identity", "style_master"}:
         return "机器正在理解产品和想要的风格…"
     if step == "angle_inventory":
@@ -162,7 +190,10 @@ def human_step_message(step: str, *, produced_count: int = 0) -> str:
     if step == "integrity":
         return "正在做出图前的最后检查…"
     if step == "renders":
-        return f"正在制作第 {min(PRODUCTION_TOTAL_IMAGES, produced_count + 1)}/{PRODUCTION_TOTAL_IMAGES} 张…"
+        return (
+            f"正在制作第 {min(expected_total, produced_count + 1)}/"
+            f"{expected_total} 张…"
+        )
     if step == "qc":
-        return "正在逐张质检 14 张成图…"
+        return f"正在逐张质检 {expected_total} 张成图…"
     return "机器正在继续处理…"

@@ -51,6 +51,8 @@ class BatchIntakeGateError(ValueError):
 class ConfirmedFacts:
     product_type: str
     height_cm: int
+    main_image_count: int
+    detail_image_count: int
     handheld_main: int
     handheld_detail: int
     allow_clear_water: bool
@@ -65,6 +67,8 @@ class ConfirmedFacts:
             "length_cm": self.length_cm,
             "width_cm": self.width_cm,
             "height_cm": self.height_cm,
+            "main_image_count": self.main_image_count,
+            "detail_image_count": self.detail_image_count,
             "handheld_main": self.handheld_main,
             "handheld_detail": self.handheld_detail,
             "allow_clear_water": self.allow_clear_water,
@@ -169,6 +173,12 @@ def _parse_facts(
     request_id: str,
 ) -> ConfirmedFacts:
     try:
+        if (
+            not isinstance(raw, Mapping)
+            or "main_image_count" not in raw
+            or "detail_image_count" not in raw
+        ):
+            raise ExecutorExecutionError("image counts missing")
         parsed = parse_user_confirmed_requirements(
             {"category": category, "user_confirmed_facts": raw},
             repository_root,
@@ -178,7 +188,7 @@ def _parse_facts(
     except ExecutorExecutionError:
         raise _error(
             "invalid_facts",
-            "商品信息没有填写完整，请检查品类、必填尺寸、手持数量和高级选项。",
+            "商品信息没有填写完整，请检查品类、必填尺寸、图片张数、手持数量和高级选项。",
             info_node_id=info_node_id,
             request_id=request_id,
         ) from None
@@ -187,6 +197,8 @@ def _parse_facts(
         length_cm=parsed.length_cm,
         width_cm=parsed.width_cm,
         height_cm=parsed.height_cm,
+        main_image_count=parsed.main_image_count,
+        detail_image_count=parsed.detail_image_count,
         handheld_main=parsed.handheld_main,
         handheld_detail=parsed.handheld_detail,
         allow_clear_water=parsed.allow_clear_water,

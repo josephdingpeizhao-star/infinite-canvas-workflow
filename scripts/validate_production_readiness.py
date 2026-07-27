@@ -363,11 +363,30 @@ def check_schemas(root: Path, errors: list[dict[str, str]]) -> list[dict[str, An
             for key in missing_keys({key: True for key in required}, needed):
                 errors.append({"path": schema_path, "message": f"routing_decision missing required key: {key}"})
 
-        if schema_path.endswith("main_variable_config.schema.json") and property_const(schema, "config_count") != 6:
-            errors.append({"path": schema_path, "message": "main_variable_config config_count must be constrained to 6"})
-
-        if schema_path.endswith("detail_variable_config.schema.json") and property_const(schema, "config_count") != 8:
-            errors.append({"path": schema_path, "message": "detail_variable_config config_count must be constrained to 8"})
+        if schema_path.endswith(
+            (
+                "main_variable_config.schema.json",
+                "detail_variable_config.schema.json",
+            )
+        ):
+            count_property = properties.get("config_count") or {}
+            configs_property = properties.get("configs") or {}
+            if (
+                count_property.get("type") != "integer"
+                or count_property.get("minimum") != 1
+                or count_property.get("maximum") != 30
+                or configs_property.get("minItems") != 1
+                or configs_property.get("maxItems") != 30
+            ):
+                errors.append(
+                    {
+                        "path": schema_path,
+                        "message": (
+                            "variable config count and configs must both allow "
+                            "the manifest-driven range 1 through 30"
+                        ),
+                    }
+                )
 
         if schema_path.endswith("final_prompt.schema.json"):
             if "upstream_artifacts" not in required or "variable_config" not in required:

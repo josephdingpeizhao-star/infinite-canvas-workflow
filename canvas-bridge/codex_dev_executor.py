@@ -21,13 +21,13 @@ from typing import Any, Callable, Mapping, Protocol
 
 from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_category
 from codex_dev_downstream import (
-    DETAIL_CHUNK_COUNT,
     DetailChunkEnvelopeCorrection,
     DetailChunkTransportCorruption,
     artifact_file_under_root,
     assemble_detail_variable_config_chunks,
     build_detail_variable_config_chunk_prompt,
     detail_chunk_business_fingerprint,
+    detail_variable_config_chunk_count,
     build_final_prompt_batch_prompt,
     build_final_prompt_bundle,
     build_variable_config_prompt,
@@ -881,9 +881,14 @@ class CodexDevExecutor:
         recovery_attempts = 0
         structure_correction_attempts = 0
         thread_id = ""
-        for chunk_index in range(1, DETAIL_CHUNK_COUNT + 1):
+        chunk_count = detail_variable_config_chunk_count(requirements)
+        for chunk_index in range(1, chunk_count + 1):
             expected_business_fingerprint = ""
-            prompt = build_detail_variable_config_chunk_prompt(base_prompt, chunk_index)
+            prompt = build_detail_variable_config_chunk_prompt(
+                base_prompt,
+                chunk_index,
+                requirements=requirements,
+            )
             turn = (
                 self._run_transport(prompt, ())
                 if chunk_index == 1
@@ -921,6 +926,7 @@ class CodexDevExecutor:
                     repair_prompt = build_detail_variable_config_chunk_prompt(
                         base_prompt,
                         chunk_index,
+                        requirements=requirements,
                         repair=True,
                     )
                     turn = self._continue_transport(thread_id, repair_prompt, ())
@@ -938,6 +944,7 @@ class CodexDevExecutor:
                     correction_prompt = build_detail_variable_config_chunk_prompt(
                         base_prompt,
                         chunk_index,
+                        requirements=requirements,
                         structure_correction=True,
                     )
                     turn = self._continue_transport(thread_id, correction_prompt, ())
@@ -947,7 +954,10 @@ class CodexDevExecutor:
                         )
             chunks.append(chunk)
 
-        assembled_response = assemble_detail_variable_config_chunks(chunks)
+        assembled_response = assemble_detail_variable_config_chunks(
+            chunks,
+            requirements=requirements,
+        )
         artifact = parse_variable_config_response(
             json.dumps(assembled_response, ensure_ascii=False),
             mode="detail",
@@ -989,13 +999,18 @@ class CodexDevExecutor:
             "final_prompt_index.json",
         )
         output_dir = index_path.parent
-        if any(path.exists() for path in final_prompt_bundle_targets(output_dir)):
-            raise ExecutorExecutionError("正式最终提示词已存在，codex-dev 不会覆盖")
-
         requirements = parse_user_confirmed_requirements(
             self.context.manifest,
             self.repository_root,
         )
+        if any(
+            path.exists()
+            for path in final_prompt_bundle_targets(
+                output_dir,
+                requirements=requirements,
+            )
+        ):
+            raise ExecutorExecutionError("正式最终提示词已存在，codex-dev 不会覆盖")
         identity, identity_path = load_typed_artifact(
             self.context.manifest,
             "product_identity_archive",
@@ -1092,6 +1107,7 @@ class CodexDevExecutor:
                 "angle_inventory": angle_path,
             },
             angle_inventory=angle_inventory,
+            requirements=requirements,
         )
         write_bundle_exclusive(bundle, "最终提示词")
         return ExecutionResult(
@@ -1112,6 +1128,9 @@ class CodexDevExecutor:
         chunks: list[Mapping[str, Any]] = []
         recovery_attempts = 0
         thread_ids: list[str] = []
+        chunk_count = plan.chunk_count
+        if type(chunk_count) is not int:
+            raise ExecutorExecutionError("codex-dev QC 分批计划无效")
         for batch in plan.batches:
             attachments = self._qc_attachments(qc_batch_attachment_paths(batch))
             prompt = build_qc_batch_prompt(plan, batch)
@@ -1141,7 +1160,7 @@ class CodexDevExecutor:
                             "codex-dev 收到无效的 QC 组内线程返回"
                         )
             chunks.append(chunk)
-            self._emit_qc_progress(len(chunks), 8)
+            self._emit_qc_progress(len(chunks), chunk_count)
 
         summary_turn = self._run_transport(
             build_qc_summary_prompt(plan, tuple(chunks)),
@@ -1171,7 +1190,7 @@ class CodexDevExecutor:
                         "codex-dev 收到无效的 QC 组内线程返回"
                     )
 
-        self._emit_qc_progress(8, 8)
+        self._emit_qc_progress(chunk_count, chunk_count)
         report = assemble_qc_report(plan, tuple(chunks), summary)
         output_path = write_qc_report_exclusive(plan, report)
         detail = "QC 报告已生成"
@@ -1183,7 +1202,7 @@ class CodexDevExecutor:
             provider=self.name,
             metadata={
                 "thread_ids": thread_ids,
-                "batch_count": 8,
+                "batch_count": chunk_count,
                 "recovery_attempts": recovery_attempts,
             },
         )

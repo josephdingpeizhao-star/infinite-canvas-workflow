@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import struct
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from category_recipes import DEFAULT_CATEGORY_KEY, load_category_recipe
+from image_count_contract import default_image_counts
+
 
 OUTPUT_NODE_PREFIX = "wfprod-output:"
 REPAIRED_NODE_PREFIX = "wfprod-repaired:"
 OUTPUT_SOURCES = frozenset({"renders", "repaired"})
+_CONFIG_ID = re.compile(r"^(main|detail)_([0-9]{2})$")
 
 
 @dataclass(frozen=True)
@@ -54,11 +59,9 @@ def artifact_from_path(
     if source not in OUTPUT_SOURCES:
         raise ValueError("图片来源不在白名单")
     config_id = path.stem
-    if not (
-        config_id in {f"main_{index:02d}" for index in range(1, 7)}
-        or config_id in {f"detail_{index:02d}" for index in range(1, 9)}
-    ):
-        raise ValueError("正式图片名称不在 6+8 白名单")
+    match = _CONFIG_ID.fullmatch(config_id)
+    if match is None or not 1 <= int(match.group(2)) <= 30:
+        raise ValueError("正式图片名称不在支持的编号范围")
     width, height = read_png_dimensions(path)
     data = path.read_bytes()
     return WorkflowProductionArtifact(
@@ -164,11 +167,22 @@ def _output_proof(
     artifact: WorkflowProductionArtifact,
     base_url: str,
     machine_id: str | None = None,
+    main_count: int | None = None,
 ) -> dict[str, Any]:
+    if main_count is None:
+        recipe = load_category_recipe(
+            Path(__file__).resolve().parent.parent,
+            DEFAULT_CATEGORY_KEY,
+        )
+        main_count = default_image_counts(recipe.form)[0]
     proof: dict[str, Any] = {
         "batchId": artifact.batch_id,
         "configId": artifact.config_id,
-        "index": artifact.ordinal if artifact.kind == "main" else artifact.ordinal + 6,
+        "index": (
+            artifact.ordinal
+            if artifact.kind == "main"
+            else artifact.ordinal + main_count
+        ),
         "source": artifact.source,
         "sha256": artifact.sha256,
         "downloadUrl": _download_url(base_url, artifact),
@@ -183,6 +197,8 @@ def build_render_source_backfill_op(
     node: dict[str, Any],
     artifact: WorkflowProductionArtifact,
     base_url: str,
+    *,
+    main_count: int | None = None,
 ) -> dict[str, Any]:
     if artifact.source != "renders":
         raise ValueError("仅允许为正式图补齐来源")
@@ -198,7 +214,7 @@ def build_render_source_backfill_op(
     )
     if valid:
         updated = dict(proof)
-        updated.update(_output_proof(artifact, base_url))
+        updated.update(_output_proof(artifact, base_url, main_count=main_count))
         updated.pop("sourceBackfillStatus", None)
         updated.pop("sourceBackfillCode", None)
     else:
@@ -218,6 +234,8 @@ def build_output_projection_ops(
     existing_nodes: list[dict[str, Any]],
     artifact: WorkflowProductionArtifact,
     base_url: str,
+    *,
+    main_count: int | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     machine_id = str(machine.get("id") or "")
     if not machine_id:
@@ -232,7 +250,12 @@ def build_output_projection_ops(
     )
     label_prefix = "返修·" if artifact.source == "repaired" else "真实 · "
     label = f"{label_prefix}{'主图' if artifact.kind == 'main' else '详情'} {artifact.ordinal}"
-    output_metadata = _output_proof(artifact, base_url, machine_id)
+    output_metadata = _output_proof(
+        artifact,
+        base_url,
+        machine_id,
+        main_count=main_count,
+    )
     metadata = {
         "content": "",
         "status": "loading",

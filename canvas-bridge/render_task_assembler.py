@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from codex_dev_downstream import manifest_config_ids
 from executor_contract import ImageGenerationTask
+from executor_contract import ExecutorExecutionError
 
 
 NEGATIVE_PROMPT_SEPARATOR = "\n\n--- negative_prompt（以下内容必须避免）---\n"
@@ -125,6 +127,13 @@ def assemble_render_tasks(
     final_prompt_index_path: Path,
 ) -> RenderTaskPlan:
     product_id = str(manifest.get("product_id") or "")
+    try:
+        expected_ids = manifest_config_ids(
+            manifest,
+            Path(__file__).resolve().parent.parent,
+        )
+    except ExecutorExecutionError:
+        raise RenderTaskAssemblyError("manifest 图片张数无效") from None
     workspace = manifest.get("workspace")
     outputs = manifest.get("outputs")
     artifacts = manifest.get("artifacts")
@@ -150,7 +159,7 @@ def assemble_render_tasks(
         or index.get("uses_upstream_prompt_files_as_visual_requirements") is not False
         or not isinstance(items, list)
         or index.get("prompt_count") != len(items)
-        or not items
+        or len(items) != len(expected_ids)
     ):
         raise RenderTaskAssemblyError("最终提示词索引契约无效")
 
@@ -158,6 +167,7 @@ def assemble_render_tasks(
     planned: list[str] = []
     skipped: list[str] = []
     seen_ids: set[str] = set()
+    observed_ids: list[str] = []
     seen_prompts: set[Path] = set()
     for item in items:
         if not isinstance(item, Mapping):
@@ -169,6 +179,7 @@ def assemble_render_tasks(
         if config_id in seen_ids:
             raise RenderTaskAssemblyError("最终提示词索引包含重复 config_id")
         seen_ids.add(config_id)
+        observed_ids.append(config_id)
         if output_type not in OUTPUT_TYPE_TO_ASPECT or not config_id.startswith(f"{output_type}_"):
             raise RenderTaskAssemblyError("最终提示词索引输出类型无效")
 
@@ -219,6 +230,9 @@ def assemble_render_tasks(
             )
         )
         planned.append(config_id)
+
+    if tuple(observed_ids) != expected_ids:
+        raise RenderTaskAssemblyError("最终提示词索引与批次登记张数不一致")
 
     try:
         renders_dir.mkdir(parents=True, exist_ok=True)

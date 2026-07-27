@@ -17,14 +17,13 @@ from category_recipes import (
 from codex_dev_downstream import (
     artifact_file_under_root,
     load_typed_artifact,
+    manifest_config_ids,
     write_json_exclusive,
 )
 from executor_contract import ExecutorExecutionError
+from image_count_contract import default_image_counts
 
 
-MAIN_CONFIG_IDS = tuple(f"main_{index:02d}" for index in range(1, 7))
-DETAIL_CONFIG_IDS = tuple(f"detail_{index:02d}" for index in range(1, 9))
-QC_CONFIG_IDS = MAIN_CONFIG_IDS + DETAIL_CONFIG_IDS
 COMMON_ASSET_CHECK_ITEMS = (
     "product_identity",
     "product_color",
@@ -108,6 +107,7 @@ class QcAsset:
 class QcBatch:
     index: int
     assets: tuple[QcAsset, ...]
+    chunk_count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -118,10 +118,45 @@ class QcPlan:
     batches: tuple[QcBatch, ...]
     rule_documents: tuple[QcRuleDocument, ...]
     documents: Mapping[str, Any]
+    chunk_count: int | None = None
 
 
 class QcTransportCorruption(Exception):
     """A response can be retried because transport damage is structurally evident."""
+
+
+def _default_qc_chunk_count() -> int:
+    try:
+        recipe = load_category_recipe(
+            Path(__file__).resolve().parent.parent,
+            DEFAULT_CATEGORY_KEY,
+        )
+        main_count, detail_count = default_image_counts(recipe.form)
+    except (CategoryRecipeError, ValueError):
+        raise ExecutorExecutionError("codex-dev 无法读取默认 QC 分批规则") from None
+    return qc_chunk_count(main_count + detail_count)
+
+
+def qc_chunk_count(asset_count: int) -> int:
+    """Use the existing at-most-two-assets batches plus one final summary."""
+
+    if type(asset_count) is not int or not 2 <= asset_count <= 60:
+        raise ExecutorExecutionError("codex-dev QC 图片总数无效")
+    return (asset_count + 1) // 2 + 1
+
+
+def _plan_chunk_count(plan: QcPlan) -> int:
+    value = plan.chunk_count
+    if type(value) is int and value >= 2:
+        return value
+    return _default_qc_chunk_count()
+
+
+def _batch_chunk_count(batch: QcBatch) -> int:
+    value = batch.chunk_count
+    if type(value) is int and value >= 2:
+        return value
+    return _default_qc_chunk_count()
 
 
 def build_qc_summary_prompt(
@@ -131,18 +166,21 @@ def build_qc_summary_prompt(
     repair: bool = False,
 ) -> str:
     checked_assets = [asset.asset_id for asset in plan.assets]
+    chunk_count = _plan_chunk_count(plan)
+    asset_batch_count = chunk_count - 1
     if repair:
         return (
-            "上一条第 8 批全批总结疑似在传输中截断或出现 U+FFFD。"
+            f"上一条第 {chunk_count} 批全批总结疑似在传输中截断或出现 U+FFFD。"
             "请重新发送完整 JSON 对象，不要解释、不要 Markdown，业务判断不得改变。"
-            f"chunk_index 必须为 8，chunk_count 必须为 8，checked_assets 必须严格为 "
+            f"chunk_index 必须为 {chunk_count}，chunk_count 必须为 {chunk_count}，"
+            "checked_assets 必须严格为 "
             f"{json.dumps(checked_assets, ensure_ascii=False)}。"
         )
-    if len(chunks) != 7:
+    if len(chunks) != asset_batch_count:
         raise ExecutorExecutionError("codex-dev 无法构建完整的 QC 全批总结")
     shape = {
-        "chunk_index": 8,
-        "chunk_count": 8,
+        "chunk_index": chunk_count,
+        "chunk_count": chunk_count,
         "checked_assets": checked_assets,
         "results": [
             {
@@ -154,15 +192,15 @@ def build_qc_summary_prompt(
         "issues": [],
         "repair_targets": [],
     }
-    return f"""这是单品批次 {plan.product_id} 的第 8/8 批全批总结，不附加图片。
-只基于下方已通过结构校验的前 7 批结果复核全批一致性，不得推翻逐图结论，不得新增生成方向。
+    return f"""这是单品批次 {plan.product_id} 的第 {chunk_count}/{chunk_count} 批全批总结，不附加图片。
+只基于下方已通过结构校验的前 {asset_batch_count} 批结果复核全批一致性，不得推翻逐图结论，不得新增生成方向。
 必须且只返回这些总结检查项，各一次：{json.dumps(SUMMARY_CHECK_ITEMS, ensure_ascii=False)}。
 status 只允许 {json.dumps(sorted(QC_STATUSES), ensure_ascii=False)}；severity 只允许 {json.dumps(sorted(QC_SEVERITIES), ensure_ascii=False)}。
 只返回一个 JSON 对象，不要 Markdown、代码围栏或解释。顶层只允许 chunk_index、chunk_count、checked_assets、results、issues、repair_targets。
-results 每项只允许 check_item、status、notes。issues 与 repair_targets 的字段及枚举沿用前 7 批，affected_asset 必须指向本批 14 张图之一，ID 不得与前 7 批重复。
+results 每项只允许 check_item、status、notes。issues 与 repair_targets 的字段及枚举沿用前 {asset_batch_count} 批，affected_asset 必须指向本批 {len(plan.assets)} 张图之一，ID 不得与前 {asset_batch_count} 批重复。
 不得返回 new_generation_direction、creative_direction、generation_prompt、final_prompt 或其他字段。
 
-【前 7 批已校验结果】
+【前 {asset_batch_count} 批已校验结果】
 {json.dumps(chunks, ensure_ascii=False, sort_keys=True)}
 
 【返回结构示例；只示意字段，不代表实际结论】
@@ -176,7 +214,8 @@ def parse_qc_summary_response(
     *,
     prior_chunks: tuple[Mapping[str, Any], ...],
 ) -> dict[str, Any]:
-    if len(prior_chunks) != 7:
+    chunk_count = _plan_chunk_count(plan)
+    if len(prior_chunks) != chunk_count - 1:
         raise ExecutorExecutionError("codex-dev 无法校验不完整的 QC 全批总结")
     value = _parse_qc_json_object(text, "QC 全批总结")
     allowed_top = {
@@ -191,8 +230,8 @@ def parse_qc_summary_response(
     if set(value) != allowed_top:
         raise ExecutorExecutionError("codex-dev 收到的 QC 全批总结包含未声明字段")
     if (
-        value.get("chunk_index") != 8
-        or value.get("chunk_count") != 8
+        value.get("chunk_index") != chunk_count
+        or value.get("chunk_count") != chunk_count
         or value.get("checked_assets") != expected_assets
     ):
         raise ExecutorExecutionError("codex-dev 收到的 QC 全批总结身份无效")
@@ -282,20 +321,21 @@ def assemble_qc_report(
     chunks: tuple[Mapping[str, Any], ...],
     summary: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if len(chunks) != 7:
+    chunk_count = _plan_chunk_count(plan)
+    if len(chunks) != chunk_count - 1:
         raise ExecutorExecutionError("codex-dev 无法装配不完整的 QC 报告")
     expected_assets = [asset.asset_id for asset in plan.assets]
     for index, (batch, chunk) in enumerate(zip(plan.batches, chunks), start=1):
         if (
             batch.index != index
             or chunk.get("chunk_index") != index
-            or chunk.get("chunk_count") != 8
+            or chunk.get("chunk_count") != chunk_count
             or chunk.get("checked_assets") != [asset.asset_id for asset in batch.assets]
         ):
             raise ExecutorExecutionError("codex-dev 无法装配身份异常的 QC 报告")
     if (
-        summary.get("chunk_index") != 8
-        or summary.get("chunk_count") != 8
+        summary.get("chunk_index") != chunk_count
+        or summary.get("chunk_count") != chunk_count
         or summary.get("checked_assets") != expected_assets
     ):
         raise ExecutorExecutionError("codex-dev 无法装配身份异常的 QC 报告")
@@ -319,7 +359,7 @@ def assemble_qc_report(
             for item in chunk["repair_targets"]
         ],
         "adds_new_generation_direction": False,
-        "notes": "QC 仅判断现有 14 张图片并给出返修归因；未新增生成方向。",
+        "notes": f"QC 仅判断现有 {len(plan.assets)} 张图片并给出返修归因；未新增生成方向。",
     }
     if "\ufffd" in json.dumps(report, ensure_ascii=False):
         raise ExecutorExecutionError("codex-dev 拒绝写入包含损坏字符的 QC 报告")
@@ -435,9 +475,10 @@ def parse_qc_batch_response(
     if set(value) != allowed_top:
         raise ExecutorExecutionError("codex-dev 收到的 QC 批次包含未声明字段")
     expected_assets = [asset.asset_id for asset in batch.assets]
+    chunk_count = _batch_chunk_count(batch)
     if (
         value.get("chunk_index") != batch.index
-        or value.get("chunk_count") != 8
+        or value.get("chunk_count") != chunk_count
         or value.get("checked_assets") != expected_assets
     ):
         raise ExecutorExecutionError("codex-dev 收到的 QC 批次身份无效")
@@ -605,11 +646,12 @@ def build_qc_batch_prompt(plan: QcPlan, batch: QcBatch, *, repair: bool = False)
     """Build the JSON-only instruction for one two-asset QC batch."""
 
     checked_assets = [asset.asset_id for asset in batch.assets]
+    chunk_count = _plan_chunk_count(plan)
     if repair:
         return (
             f"上一条第 {batch.index} 批返回疑似在传输中截断或出现 U+FFFD。"
             "请在同一线程中重新发送完整 JSON 对象，不要解释、不要 Markdown，业务判断不得改变。"
-            f"chunk_index 必须为 {batch.index}，chunk_count 必须为 8，"
+            f"chunk_index 必须为 {batch.index}，chunk_count 必须为 {chunk_count}，"
             f"checked_assets 必须严格为 {json.dumps(checked_assets, ensure_ascii=False)}。"
         )
 
@@ -635,7 +677,7 @@ def build_qc_batch_prompt(plan: QcPlan, batch: QcBatch, *, repair: bool = False)
 
     result_shape = {
         "chunk_index": batch.index,
-        "chunk_count": 8,
+        "chunk_count": chunk_count,
         "checked_assets": checked_assets,
         "results": [
             {
@@ -668,7 +710,7 @@ def build_qc_batch_prompt(plan: QcPlan, batch: QcBatch, *, repair: bool = False)
     rules = "\n\n".join(
         f"【{document.name}】\n{document.text}" for document in plan.rule_documents
     )
-    return f"""你正在对单品批次 {plan.product_id} 的第 {batch.index}/8 批执行只读 QC 判断。
+    return f"""你正在对单品批次 {plan.product_id} 的第 {batch.index}/{chunk_count} 批执行只读 QC 判断。
 本批只检查 {json.dumps(checked_assets, ensure_ascii=False)}；附件顺序与下方 asset_context 一一对应。
 只判断现有图片是否满足正式上游约束，不生成图片、不修改图片、不改写最终提示词，不得新增生成方向。
 不得虚构尺寸、容量、重量、材质、认证、品牌或型号；无法由图片与正式产物确认时使用 needs_review。
@@ -776,8 +818,8 @@ def _load_variable_configs(
     *,
     mode: str,
     product_id: str,
+    expected_ids: tuple[str, ...],
 ) -> tuple[dict[str, Any], dict[str, Mapping[str, Any]]]:
-    expected_ids = MAIN_CONFIG_IDS if mode == "main" else DETAIL_CONFIG_IDS
     document, _path = load_typed_artifact(
         manifest,
         f"{mode}_variable_configs",
@@ -850,12 +892,47 @@ def _validate_reference_image(path: Path) -> None:
 def _load_rule_documents(
     repository_root: Path,
     category_key: str = DEFAULT_CATEGORY_KEY,
+    *,
+    image_counts: tuple[int, int] | None = None,
 ) -> tuple[QcRuleDocument, ...]:
     skill_root = repository_root.resolve() / ".agents" / "skills" / "qc-inspector"
     try:
         recipe = load_category_recipe(repository_root, category_key)
     except CategoryRecipeError:
         raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则") from None
+
+    def render_counts(text: str) -> str:
+        if image_counts is None:
+            return text
+        default_main, default_detail = default_image_counts(recipe.form)
+        main_count, detail_count = image_counts
+        if (main_count, detail_count) == (default_main, default_detail):
+            return text
+        rendered = text.replace(
+            (
+                f"主图默认仍生成 {default_main} 套变量配置；详情图默认按"
+                f"【标准完整详情页模式】生成 {default_detail} 套变量配置并覆盖模块01至模块08。"
+            ),
+            (
+                f"本批主图必须生成 {main_count} 套变量配置；本批详情图必须生成 "
+                f"{detail_count} 套变量配置，并按【详情页模块覆盖计划】覆盖模块01至模块08。"
+            ),
+        )
+        replacements = {
+            f"目标是产出 {default_main} 套或指定数量的【单张变量配置】。": (
+                f"目标是产出本批登记的 {main_count} 张主图与 {detail_count} 张详情图对应配置。"
+            ),
+            f'"请生成 {default_main} 套"': f'"请生成 {main_count} 套"',
+            f"生成 {default_main} 套变量配置时": f"生成 {main_count} 套主图变量配置时",
+            f"凑够 {default_main} 套变量配置": f"凑够 {main_count} 套主图变量配置",
+            f"主图固定 {default_main} 张、详情图固定 {default_detail} 张": (
+                f"本批主图 {main_count} 张、详情图 {detail_count} 张"
+            ),
+        }
+        for source, target in replacements.items():
+            rendered = rendered.replace(source, target)
+        return rendered
+
     sources = (
         ("SKILL.md", skill_root / "SKILL.md", None),
         (
@@ -884,7 +961,7 @@ def _load_rule_documents(
                 raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则") from None
         else:
             resolved = repository_root.resolve() / "categories" / category_key
-            text = str(recipe_text)
+            text = render_counts(str(recipe_text))
         if not text.strip():
             raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则")
         if name == "qc-inspector.runtime_rule_slices.json":
@@ -922,8 +999,17 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
 
     try:
         category_recipe = load_manifest_category(repository_root, manifest)
+        expected_ids = manifest_config_ids(manifest, repository_root)
     except CategoryRecipeError as exc:
         raise ExecutorExecutionError(f"codex-dev 无法加载产品品类配方：{exc}") from None
+    except ExecutorExecutionError:
+        raise ExecutorExecutionError("codex-dev 缺少有效的图片张数") from None
+    main_config_ids = tuple(
+        config_id for config_id in expected_ids if config_id.startswith("main_")
+    )
+    detail_config_ids = tuple(
+        config_id for config_id in expected_ids if config_id.startswith("detail_")
+    )
     schema = _load_qc_report_schema(repository_root)
 
     inputs_root = _workspace_root(manifest, "inputs_root")
@@ -933,7 +1019,7 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
     if not renders_dir.is_relative_to(outputs_root):
         raise ExecutorExecutionError("QC 渲染图位置不在 manifest.workspace.outputs_root 内")
     expected_render_paths = {
-        (renders_dir / f"{config_id}.png").resolve() for config_id in QC_CONFIG_IDS
+        (renders_dir / f"{config_id}.png").resolve() for config_id in expected_ids
     }
     try:
         actual_render_paths = {entry.resolve() for entry in renders_dir.iterdir()}
@@ -971,10 +1057,16 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
         "角度槽位入库表",
     )
     main_document, main_configs = _load_variable_configs(
-        manifest, mode="main", product_id=product_id
+        manifest,
+        mode="main",
+        product_id=product_id,
+        expected_ids=main_config_ids,
     )
     detail_document, detail_configs = _load_variable_configs(
-        manifest, mode="detail", product_id=product_id
+        manifest,
+        mode="detail",
+        product_id=product_id,
+        expected_ids=detail_config_ids,
     )
     final_index, _index_path = load_typed_artifact(
         manifest,
@@ -984,7 +1076,7 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
         "最终提示词索引",
     )
     items = final_index.get("items")
-    if final_index.get("prompt_count") != len(QC_CONFIG_IDS) or not isinstance(items, list):
+    if final_index.get("prompt_count") != len(expected_ids) or not isinstance(items, list):
         raise ExecutorExecutionError("codex-dev 检测到最终提示词索引结构异常")
 
     configs = {**main_configs, **detail_configs}
@@ -999,7 +1091,7 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
         if not isinstance(config_id, str) or output_type not in {"main", "detail"}:
             raise ExecutorExecutionError("codex-dev 检测到最终提示词索引结构异常")
         observed_ids.append(config_id)
-        expected_type = "main" if config_id in MAIN_CONFIG_IDS else "detail"
+        expected_type = "main" if config_id in main_config_ids else "detail"
         if config_id not in configs or output_type != expected_type:
             raise ExecutorExecutionError("codex-dev 检测到最终提示词绑定关系异常")
 
@@ -1068,10 +1160,15 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
             )
         )
 
-    if tuple(observed_ids) != QC_CONFIG_IDS or len(set(observed_ids)) != len(QC_CONFIG_IDS):
+    if tuple(observed_ids) != expected_ids or len(set(observed_ids)) != len(expected_ids):
         raise ExecutorExecutionError("codex-dev 检测到最终提示词索引覆盖异常")
+    chunk_count = qc_chunk_count(len(assets))
     batches = tuple(
-        QcBatch(index=index // 2 + 1, assets=tuple(assets[index : index + 2]))
+        QcBatch(
+            index=index // 2 + 1,
+            assets=tuple(assets[index : index + 2]),
+            chunk_count=chunk_count,
+        )
         for index in range(0, len(assets), 2)
     )
     plan = QcPlan(
@@ -1079,7 +1176,11 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
         output_path=output_path,
         assets=tuple(assets),
         batches=batches,
-        rule_documents=_load_rule_documents(repository_root, category_recipe.key),
+        rule_documents=_load_rule_documents(
+            repository_root,
+            category_recipe.key,
+            image_counts=(len(main_config_ids), len(detail_config_ids)),
+        ),
         documents={
             "product_identity_archive": identity,
             "style_master": style_master,
@@ -1090,6 +1191,7 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
             "final_prompts": final_prompt_documents,
             "qc_report_schema": schema,
         },
+        chunk_count=chunk_count,
     )
     _validate_qc_batch_limits(plan)
     return plan
