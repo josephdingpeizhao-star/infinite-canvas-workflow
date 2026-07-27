@@ -11,6 +11,7 @@ from launcher.logging_utils import configure_launcher_logger
 from launcher.orchestrator import (
     StopController,
     build_service_specs,
+    build_watchdog_spec,
     configured_log_dir,
     configured_state_path,
 )
@@ -48,11 +49,16 @@ def main() -> int:
             backups=int(runtime["log_backups"]),
         )
         logger.info("开始停止无限画布工作台")
+        pythonw_path = _resolve_pythonw()
         result = StopController(
             specs=build_service_specs(
                 config,
                 launcher_dir=LAUNCHER_DIR,
-                pythonw_path=_resolve_pythonw(),
+                pythonw_path=pythonw_path,
+            ),
+            watchdog_spec=build_watchdog_spec(
+                launcher_dir=LAUNCHER_DIR,
+                pythonw_path=pythonw_path,
             ),
             process_manager=WindowsProcessManager(),
             state_store=StateStore(configured_state_path(config)),

@@ -17,6 +17,13 @@
     "url": "http://localhost:3000/canvas/hPbkNXg3WA0p2i46VOh3s",
     "command": []
   },
+  "watchdog": {
+    "enabled": true,
+    "disconnect_grace_seconds": 600,
+    "poll_seconds": 15,
+    "batch_lock_root": "~/.infinite-canvas/batch-operation-locks",
+    "suspend_gap_threshold_seconds": 60
+  },
   "services": {
     "agent": {
       "label": "canvas-agent",

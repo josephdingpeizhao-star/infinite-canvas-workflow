@@ -111,6 +111,24 @@ def validate_config(config: dict[str, Any]) -> None:
     elif not isinstance(command, list):
         raise LauncherConfigError("启动配置 browser.command 必须是命令数组")
 
+    watchdog = _required(config, "watchdog", "root", dict)
+    enabled = _required(watchdog, "enabled", "watchdog", bool)
+    if type(enabled) is not bool:
+        raise LauncherConfigError("启动配置 watchdog.enabled 必须是 true 或 false")
+    for key in (
+        "disconnect_grace_seconds",
+        "poll_seconds",
+        "suspend_gap_threshold_seconds",
+    ):
+        _positive_number(watchdog, key, "watchdog")
+    lock_root = _required(watchdog, "batch_lock_root", "watchdog", str)
+    if not lock_root.strip():
+        raise LauncherConfigError("启动配置 watchdog.batch_lock_root 不能为空")
+    if watchdog["suspend_gap_threshold_seconds"] <= watchdog["poll_seconds"]:
+        raise LauncherConfigError(
+            "启动配置 watchdog.suspend_gap_threshold_seconds 必须大于 watchdog.poll_seconds"
+        )
+
     services = _required(config, "services", "root", dict)
     for name in ("agent", "workbench"):
         if name not in services:

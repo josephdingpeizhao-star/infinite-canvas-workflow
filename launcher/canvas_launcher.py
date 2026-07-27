@@ -11,6 +11,7 @@ from launcher.logging_utils import configure_launcher_logger
 from launcher.orchestrator import (
     LauncherController,
     build_service_specs,
+    build_watchdog_spec,
     configured_log_dir,
     configured_state_path,
     make_http_health_checker,
@@ -55,6 +56,14 @@ def main() -> int:
         specs = build_service_specs(config, launcher_dir=LAUNCHER_DIR, pythonw_path=pythonw_path)
         controller = LauncherController(
             specs=specs,
+            watchdog_spec=(
+                build_watchdog_spec(
+                    launcher_dir=LAUNCHER_DIR,
+                    pythonw_path=pythonw_path,
+                )
+                if config["watchdog"]["enabled"]
+                else None
+            ),
             process_manager=WindowsProcessManager(),
             state_store=StateStore(configured_state_path(config)),
             health_checker=make_http_health_checker(float(runtime["health_request_timeout_seconds"])),
