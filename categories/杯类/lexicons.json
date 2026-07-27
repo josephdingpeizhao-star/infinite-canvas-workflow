@@ -1,0 +1,38 @@
+{
+  "product_subject_terms": ["杯子", "杯", "水杯", "水壶", "壶"],
+  "product_material_context_markers": [
+    "产品", "商品", "本品", "主体", "本体",
+    "杯身", "杯体", "杯口", "壶身", "壶体", "壶口", "内壁", "外壁"
+  ],
+  "protected_structure_terms": [
+    "杯身", "杯体", "杯口", "杯沿", "杯底",
+    "壶身", "壶体", "壶口", "壶底", "壶柄", "提梁", "壶嘴", "壶盖",
+    "出水口", "滤网", "密封圈", "底足", "内壁", "外壁"
+  ],
+  "ambiguous_product_or_prop_terms": ["托盘", "滤网", "壶垫"],
+  "unsupported_fact_terms": [
+    "陶瓷", "玻璃", "不锈钢", "塑料", "食品级", "耐热温度", "认证", "认证编号"
+  ],
+  "material_prompt_examples": ["陶瓷", "玻璃", "不锈钢", "塑料"],
+  "scene_content_terms": ["清水"],
+  "prohibited_action_terms": ["倾倒", "倒水", "倒出", "加热", "沸腾", "炉灶", "热水"],
+  "final_forbidden_action_terms": ["倾倒", "加热", "沸腾", "热水动作"],
+  "competing_dimension_terms": [
+    "壶身宽", "产品宽", "整壶宽", "宽度", "宽",
+    "壶长", "壶深", "壶厚", "壶身长", "壶身深", "壶身厚",
+    "长度", "长", "深度", "深", "厚度", "厚", "直径", "口径",
+    "容量", "容积", "重量", "净重"
+  ],
+  "handheld_phrase": "自然握住把手、轻扶壶身或轻微拿起",
+  "optional_dimension_prompts": {
+    "main": "用户另已确认{dimensions}，可用于补充比例约束，但不得改写已确认高度。",
+    "detail": "用户另已确认{dimensions}；模块05可同时标注这些已确认尺寸，其他模块仍不得启用尺寸标注。",
+    "final": "同时完整保留用户另已确认的{dimensions}。"
+  },
+  "scene_rules": {
+    "no_water_forbid_actions": "只允许空置，不得出现清水或其他内容物；禁止倾倒、沸腾、炉灶加热、热水动作。",
+    "water_forbid_actions": "允许空壶或清水静置；禁止倾倒、沸腾、炉灶加热、热水动作。",
+    "no_water_allow_actions": "只允许空置，不得出现清水或其他内容物。",
+    "water_allow_actions": "允许空壶或清水静置。"
+  }
+}

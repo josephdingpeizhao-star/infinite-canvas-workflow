@@ -1,0 +1,41 @@
+{
+  "product_subject_terms": [
+    "盘子", "盘", "餐盘", "菜盘", "平盘", "深盘", "浅盘", "汤盘",
+    "点心盘", "沙拉盘", "展示盘", "碟子", "碟", "小碟"
+  ],
+  "product_material_context_markers": [
+    "产品", "商品", "本品", "主体", "本体",
+    "盘身", "盘体", "盘面", "盘心", "盘沿", "盘边", "盘缘", "盘口",
+    "盘壁", "盘底", "底部", "底足", "圈足", "内壁", "外壁",
+    "碟身", "碟面", "碟沿", "碟边", "碟底"
+  ],
+  "protected_structure_terms": [
+    "盘身", "盘体", "盘面", "盘心", "盘沿", "盘边", "盘缘", "盘口",
+    "盘壁", "盘底", "底部", "底足", "圈足", "内壁", "外壁",
+    "碟身", "碟面", "碟沿", "碟边", "碟底"
+  ],
+  "ambiguous_product_or_prop_terms": ["托盘", "餐盘", "盘", "碟"],
+  "unsupported_fact_terms": [
+    "陶瓷", "玻璃", "不锈钢", "塑料", "食品级", "耐热温度", "认证", "认证编号"
+  ],
+  "material_prompt_examples": ["陶瓷", "玻璃", "不锈钢", "塑料"],
+  "scene_content_terms": ["清水"],
+  "prohibited_action_terms": ["倾倒", "倒水", "倒出", "加热", "沸腾", "炉灶", "热水"],
+  "final_forbidden_action_terms": ["倾倒", "加热", "沸腾", "热水动作"],
+  "competing_dimension_terms": [
+    "长度", "长", "宽度", "宽", "高度", "高", "深度", "深", "厚度", "厚",
+    "直径", "口径", "容量", "容积", "重量", "净重"
+  ],
+  "handheld_phrase": "托住盘底或底足、轻扶盘沿外侧或双手自然托住盘身外缘",
+  "optional_dimension_prompts": {
+    "main": "",
+    "detail": "",
+    "final": ""
+  },
+  "scene_rules": {
+    "no_water_forbid_actions": "只允许空置，不得出现清水或其他内容物；禁止倾倒、沸腾、炉灶加热、热水动作。",
+    "water_forbid_actions": "允许空盘或清水静置；禁止倾倒、沸腾、炉灶加热、热水动作。",
+    "no_water_allow_actions": "只允许空置，不得出现清水或其他内容物。",
+    "water_allow_actions": "允许空盘或清水静置。"
+  }
+}

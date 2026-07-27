@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "category-recipe-v1",
+  "title": "Infinite Canvas category recipe",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "key",
+    "display_name",
+    "product_noun",
+    "business_review_status",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "key": {"type": "string", "minLength": 1},
+    "display_name": {"type": "string", "minLength": 1},
+    "product_noun": {"type": "string", "minLength": 1},
+    "business_review_status": {
+      "enum": ["approved", "pending_business_review"]
+    },
+    "files": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    }
+  }
+}

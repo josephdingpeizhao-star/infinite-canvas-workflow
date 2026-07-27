@@ -142,7 +142,10 @@ class CodexDevSemanticContractRedesignTest(unittest.TestCase):
         )
 
         self.assertEqual([f"main_{index:02d}" for index in range(1, 7)], list(parsed))
-        self.assertFalse(any(term in text for term in downstream._PROHIBITED_ACTION_TERMS))
+        prohibited_terms = downstream._requirements_recipe(
+            requirements()
+        ).lexicons["prohibited_action_terms"]
+        self.assertFalse(any(term in text for term in prohibited_terms))
 
     def test_negative_list_exempts_material_certification_and_measurements(self) -> None:
         downstream._reject_unsupported_claims(

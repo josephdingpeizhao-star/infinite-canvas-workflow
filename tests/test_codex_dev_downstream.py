@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -750,8 +751,8 @@ class CodexDevDownstreamTest(unittest.TestCase):
             {**STRUCTURED_FACTS, "unexpected": "private-value"},
             {**STRUCTURED_FACTS, "product_type": "   "},
             {**STRUCTURED_FACTS, "height_cm": True},
-            {**STRUCTURED_FACTS, "handheld_main": 3},
-            {**STRUCTURED_FACTS, "handheld_detail": 2},
+            {**STRUCTURED_FACTS, "handheld_main": 7},
+            {**STRUCTURED_FACTS, "handheld_detail": 9},
             {**STRUCTURED_FACTS, "allow_clear_water": 1},
             {**STRUCTURED_FACTS, "forbid_pouring_and_heating": "是"},
             {**STRUCTURED_FACTS, "missing_d_no_retake": None},
@@ -1000,9 +1001,17 @@ class CodexDevDownstreamTest(unittest.TestCase):
     def test_runtime_package_is_loaded_as_json_object(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            package = root / ".agents" / "skills" / "main-variable-config" / "references" / "runtime.json"
-            package.parent.mkdir(parents=True)
-            package.write_text('{"package": "main"}', encoding="utf-8")
+            shutil.copytree(ROOT / "categories", root / "categories")
+            package = root / "categories" / "杯类" / "runtime" / "main.json"
+            expected = {
+                "artifact_type": "runtime_rule_slice_package",
+                "skill": "main-variable-config",
+                "slices": [{"text": "MAIN_CATEGORY_RUNTIME_MARKER"}],
+            }
+            package.write_text(
+                json.dumps(expected, ensure_ascii=False),
+                encoding="utf-8",
+            )
 
             value = load_skill_runtime_package(
                 root,
@@ -1011,7 +1020,7 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 "主图变量配置",
             )
 
-            self.assertEqual({"package": "main"}, value)
+            self.assertEqual(expected, value)
 
     def test_qualified_angles_exclude_rejected_assets_and_missing_d(self) -> None:
         angle_doc = {

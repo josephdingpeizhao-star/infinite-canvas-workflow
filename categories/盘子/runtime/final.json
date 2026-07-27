@@ -1,0 +1,17 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "final-prompt-compiler",
+  "generated_from": "CAT-01 盘子品类一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "plate-final-lock",
+      "source_file": "categories/盘子/prompts/final.md",
+      "line_start": 1,
+      "line_end": 1,
+      "tags": ["plate", "final", "identity", "dimensions"],
+      "audit_ref": "CAT-01",
+      "text": "最终提示词必须锁定盘身、盘面、盘心、盘沿、盘壁、盘底、底足或圈足、图案、颜色、绑定源图与 A/B/C 槽位；逐字保留用户确认长、宽、高和本张手持状态。不得新增盘子配方或变量配置没有的道具、结构、尺寸、材质、认证、品牌、型号、内容物或动作。"
+    }
+  ]
+}

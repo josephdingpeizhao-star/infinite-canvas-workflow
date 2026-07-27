@@ -1,0 +1,26 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "main-variable-config",
+  "generated_from": "CAT-01 盘子品类一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "plate-main-identity-and-angle",
+      "source_file": "categories/盘子/prompts/main.md",
+      "line_start": 1,
+      "line_end": 2,
+      "tags": ["plate", "identity", "angle", "handheld"],
+      "audit_ref": "CAT-01",
+      "text": "盘子主体必须保持盘身、盘面、盘心、盘沿、盘壁、盘底、底足或圈足、图案和颜色不变。每张主图只能绑定一张合格 A/B/C 白底图；不得为了页面任务旋转、竖立、翻转盘子或补出绑定角度不可见结构。手持只允许托住盘底或底足、轻扶盘沿外侧或双手自然托住盘身外缘，不得遮挡盘面主图案、盘心或盘沿轮廓。"
+    },
+    {
+      "slice_id": "plate-main-dimensions-and-scene",
+      "source_file": "categories/盘子/form.json",
+      "line_start": 1,
+      "line_end": 1,
+      "tags": ["plate", "dimensions", "scene"],
+      "audit_ref": "CAT-01",
+      "text": "长、宽、高必须逐字使用当批用户确认值，不得从图片、手部或道具反推。清水、内容物、倾倒和加热必须服从当批高级选项；品类配方不会因盘子常见用途而自动放宽。"
+    }
+  ]
+}

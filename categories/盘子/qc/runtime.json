@@ -1,0 +1,17 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "qc-inspector",
+  "generated_from": "CAT-01 盘子品类一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "plate-qc-identity",
+      "source_file": "categories/盘子/qc/checklist.md",
+      "line_start": 1,
+      "line_end": 10,
+      "tags": ["plate", "qc", "identity", "realism"],
+      "audit_ref": "CAT-01",
+      "text": "检查盘子的轮廓、盘面、盘心、盘沿、盘壁、盘底、底足或圈足、图案、颜色、真实受力和接触阴影。不得改成碗、杯、锅或托盘，不得新增把手、壶嘴、盖子、支架或装饰。长、宽、高、手持数量、清水与动作边界必须与当批确认事实一致。"
+    }
+  ]
+}

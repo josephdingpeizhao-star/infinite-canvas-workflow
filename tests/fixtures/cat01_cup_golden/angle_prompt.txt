@@ -1,0 +1,304 @@
+你正在执行受限的开发适配器任务。只处理 angle_inventory（单品《角度槽位入库表》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID："杯子_CAT01_GOLDEN"
+批次类型：single
+
+以下 image_assets 是适配器根据真实附件固定生成的唯一图片映射。每个 source_asset_id 必须恰好使用一次，不得遗漏、重复或新增；不要在返回中改写文件路径：
+--- IMAGE ASSETS START ---
+[
+  {
+    "source_asset_id": "img_001",
+    "filename": "正面.png"
+  },
+  {
+    "source_asset_id": "img_002",
+    "filename": "侧面.png"
+  }
+]
+--- IMAGE ASSETS END ---
+
+以下是图片文件的 EXIF 正确显示方向。视觉附件可能呈现未应用 EXIF 的原始横向像素；必须先按每项 display_rotation 在脑中旋转到正确显示方向，再判断产品真实姿态。未列出的图片按当前显示方向判断。不得把未应用 EXIF 时看到的侧躺外观当成产品真实横放：
+--- DISPLAY ORIENTATIONS START ---
+[]
+--- DISPLAY ORIENTATIONS END ---
+
+先按 EXIF 方向纠正显示，再判断产品是否直立、底部是否自然朝下以及镜头俯仰。图片中的品牌、型号、认证或其他小字不可辨认时，不得猜测、转写或拼接字符；不可辨认文字统一写“无法辨认”，不得输出 Unicode 替换字符或其他乱码。
+
+以下既有《产品身份档案》只用于核对产品身份和防止虚构。不得用它改变任何单张白底图的实际角度，也不得输出产品身份档案：
+--- PRODUCT IDENTITY START ---
+{
+  "artifact_type": "product_identity_archive",
+  "product_id": "杯子_CAT01_GOLDEN",
+  "identity": {
+    "confirmed_facts": [
+      "产品类型：水壶",
+      "高度约 25 厘米"
+    ],
+    "visible_inferences": [
+      "可见壶口、壶身和底足"
+    ],
+    "unknowns": [
+      "容量无法确认"
+    ],
+    "prohibited_inventions": [
+      "不得虚构材质、容量或认证"
+    ],
+    "product_lock_description": "保持产品结构、比例、颜色和图案不变。"
+  }
+}
+--- PRODUCT IDENTITY END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+---
+name: angle-inventory
+description: "Build a single-product white-background angle slot inventory by recognizing product camera angles and usable views. Use when Codex needs the upstream angle inventory for a single item before variable configs or final prompt compilation. Do not use for set-product group shots, scene design, variable configs, final prompts, or image generation."
+---
+
+# Angle Inventory
+
+## Purpose
+
+Recognize and organize single-product white-background source images into an angle slot inventory that later stages can reference for main/detail image planning.
+
+## When to use
+
+- Use when the user provides single-product white-background images for angle recognition.
+- Use when a single-product angle inventory is missing before variable config or final prompt compilation.
+- Use when the task is to classify camera angle, visible surfaces, orientation, and reuse suitability.
+
+## Required inputs
+
+- Single-product white-background image(s) or image descriptions.
+- Existing product identity archive, if available.
+- User-supplied angle naming rules or slot requirements, if any.
+
+## Required references
+
+- `references/角度槽位入库表生成与识别提示词.txt`
+
+## Required output
+
+- A single-product angle slot inventory table.
+- Each slot should describe angle, visible product surfaces, strengths, limitations, and recommended downstream use.
+- No scene design, no variable configs, no final prompts, and no image output.
+
+## Hard rules
+
+- This Skill only handles single-product white-background angle recognition.
+- Do not use this Skill for set-product group-shot layout or arrangement recognition.
+- Use `角度槽位入库表生成与识别提示词.txt` as the upstream prompt rule for this stage.
+- Do not treat the angle inventory prompt as a final image generation prompt.
+- Do not fabricate product dimensions, material claims, certifications, performance claims, or review data.
+
+## Do not use when
+
+- The user explicitly declares a set-product batch or asks for set-product group-shot arrangement.
+- The input is a lifestyle scene image intended for style extraction rather than white-background angle recognition.
+- The user asks for main/detail variable configs, final prompts, or QC.
+
+--- SKILL END ---
+
+必须完整遵守以下 required reference 的单品主体规则：
+--- REFERENCE START ---
+我将上传同一个产品的一整组白底图。请你不要生成图片，只负责识别这些白底图的产品角度，并按照我的固定角度槽位体系进行归类。
+
+本文件的职责是角度判断、槽位归类和角度适配边界说明。
+本文件仅用于单品或套装中某一个单件的白底角度识别，不用于套装合影白底图的整体机位与编排识别。
+本文件不负责定义图片风格。
+本文件不负责撰写卖点文案。
+本文件不负责设计道具审美。
+本文件不负责生成主图或详情图。
+本文件不负责替代《产品身份档案》《风格母版》《真实感约束》或《本张变量配置》。
+本文件不负责真实尺寸识别，不从无尺寸参照的白底图推断产品厘米级尺寸。
+
+套装分流规则：
+如果用户上传的是套装合影白底图，或明确声明本批次为套装产品，应停止使用本文件，改用《套装角度与编排入库表提示词》。
+
+固定角度槽位如下：
+
+角度槽位 A：正面微俯视
+用于水壶类整体外观、正面图案、壶身轮廓、部分壶口和壶内可见区域的第一印象。若水壶带壶柄或提梁，可在该角度下辅助展示壶柄或提梁位置，但不得强行补出背面不可见的壶柄或提梁结构。
+可以展示正面轮廓、外壁图案、部分壶口轮廓、壶口边缘厚度和轻微壶内区域。
+不能要求完整顶部俯视、完整壶内壁、背面结构、完整壶底或底足细节。
+
+角度槽位 B：45°斜侧视
+用于壶身立体感、壶身弧度或直筒结构、壶口与内外壁关系、壶底或底足、壶柄或提梁、壶盖、出水口或直饮结构、滤网或壶垫、勺、托盘等配件空间关系，以及生活场景主图。
+可以展示壶身体积、外壁图案、壶口边缘厚度、侧前方轮廓和壶体与配件的空间关系。
+不能要求正面图案无透视地完整展示，也不能要求完整壶口俯视。
+
+角度槽位 C：顶部俯视
+用于壶口、壶内壁、壶内可见液体或内容物、容量感、桌面摆放关系、滤网或壶垫等单品固定组合的平面陈列关系。
+可以展示壶口形状、壶内空间、液面状态、饮品内容物、壶体与道具的桌面布局。
+不能要求壶身高度、侧面线条、壶柄或提梁侧面结构或正面外壁图案完整展示。
+
+角度槽位 D：侧面低角度
+用于壶身高度、壶壁线条、壶柄或提梁轮廓、壶底或底足支撑、器型轮廓、静物氛围。
+可以展示侧面线条、壶身深浅或高度、底部支撑关系、壶柄或提梁形态。
+不能要求完整壶口内部、顶部平面关系或正面图案全貌。
+
+请逐张识别我上传的白底图，并输出一张《角度入库表》。
+
+表格字段必须包括：
+
+图片编号：
+按照上传顺序编号，例如图 1、图 2、图 3。
+
+白底图文件名或识别标记：
+如果文件名可见，请写文件名。
+如果文件名不可见，请写“按上传顺序识别”。
+
+实际角度判断：
+用自然语言判断这张白底图的真实角度，不要迁就我希望它归入的槽位。
+
+建议归入槽位：
+从角度槽位 A、B、C、D 中选择最接近的一类。
+如果不符合任何槽位，请写“不适合归入现有槽位”。
+
+判断依据：
+说明为什么归入该槽位，包括产品朝向、俯仰关系、壶口可见程度、壶身外壁与壶底或底足透视关系、壶体与配件的空间关系等。
+
+该角度自然可展示的内容：
+说明该角度下可以合理展示哪些产品信息。
+只写该角度自然可见的内容。
+
+该角度不应强行展示的内容：
+说明该角度下不应要求展示哪些结构细节。
+例如完整内壁、完整正面图案、背面结构、底部细节、侧面高度、桌面平面关系等。
+
+适合承担的页面任务：
+说明该角度适合用于主图或详情图中的哪些单品任务。
+例如整体识别、立体感展示、材质质感说明、壶口与壶内壁结构说明、单品固定组合平面陈列、品牌氛围收尾等。
+
+不适合承担的页面任务：
+说明该角度不适合承担哪些任务。
+例如顶部俯视不适合展示壶身高度和壶柄或提梁侧面线条，侧面低角度不适合展示完整壶口内部与壶内壁。
+
+适合用于主图：
+写“适合”“勉强适合”或“不适合”，并简要说明原因。
+
+适合用于详情图：
+写“适合”“勉强适合”或“不适合”，并简要说明原因。
+
+风险说明：
+如果该角度存在模糊、偏斜、遮挡、透视不标准、结构识别不足、与两个槽位接近等问题，请明确说明。
+如果没有明显风险，写“无明显风险”。
+
+建议绑定任务：
+根据该角度的自然可展示范围，建议它更适合绑定哪类单张变量配置任务。
+例如主图第一印象、生活场景主图、壶口与壶内壁结构详情、釉面/玻璃/金属质感详情、配件关系详情、氛围收尾图等。
+
+入库结论：
+只能使用以下三类：
+合格，可进入对应槽位
+勉强可用，但建议重拍
+不适合入库，需重拍
+
+备注（多角度合并参考图说明）：
+如本批次另提供了把同一产品多个角度合并在一张图上的【多角度合并参考图】，在本栏注明：该参考图仅作单件结构辅助理解之用，不影响本表的角度判断、槽位归类与槽位绑定，也不影响后续整体机位判定。各张白底图的实际角度仍以单张白底图本身为唯一依据。如未提供，写“无”。
+
+请注意：
+1. 不要为了凑齐槽位而强行归类。
+2. 如果某张图不符合任何槽位，请明确标记为“不适合入库”。
+3. 如果某个槽位缺失，请在表格后单独指出“缺失槽位”。
+4. 如果某张图介于两个槽位之间，请选择更接近的槽位，并说明风险。
+5. 识别时只判断白底图实际角度，不要根据我希望它是什么角度来迁就判断。
+6. 角度入库表只负责角度和适配边界，不生成最终图片。
+7. 后续生成主图或详情图时，产品角度必须以绑定槽位对应的白底图为唯一依据。
+8. 不得让风格图、产品身份档案、变量配置或页面任务反过来改变产品角度。
+9. 本文件输出的《角度入库表》不得用于替代《套装角度与编排入库表》。套装最终出图时，编排关系以套装合影白底图为依据，各单件角度以对应单件白底图为依据。
+10. 白底图中的视觉大小只用于判断角度、可见结构和画面适配，不得输出产品真实高度、口径、容量或重量。
+11. 如需要描述比例，只能描述产品内部视觉比例或该角度下自然可见的相对关系。
+12. 产品真实尺寸以后续《产品身份档案》的【产品真实尺寸】字段为准。
+13. 多角度合并参考图只是辅助理解单件结构的参考，不是角度识别依据，不得用它改变任何一张白底图的实际角度判断、槽位归类或槽位绑定。
+
+输出格式：
+
+【角度入库表】
+
+请用表格输出，字段包括：
+图片编号
+白底图文件名或识别标记
+实际角度判断
+建议归入槽位
+判断依据
+该角度自然可展示的内容
+该角度不应强行展示的内容
+适合承担的页面任务
+不适合承担的页面任务
+适合用于主图
+适合用于详情图
+风险说明
+建议绑定任务
+入库结论
+备注（多角度合并参考图说明）
+
+【缺失槽位】
+请列出当前上传图片中缺失的槽位。
+如果没有缺失，请写“无明显缺失槽位”。
+
+【重拍建议】
+如果有“勉强可用”或“不适合入库”的图片，请说明应如何重拍。
+重拍建议只针对角度、清晰度、遮挡和产品完整性，不涉及风格、道具或美感设计。
+
+输出要求：不要用表格。每张图作为一个条目，用 ## 图N 作小标题，下面用 - 逐项列字段：白底图文件名、是否套装合影白底图、整体机位判断、套装编排槽位判断、件数核对。最后把整份内容放进一个 markdown 代码块里（开头一行写三个反引号紧跟 markdown，结尾一行写三个反引号），方便我一键复制。
+注意：【缺失槽位】和【重拍建议】不要放入上面说的这个markdown 代码块里
+
+--- REFERENCE END ---
+
+本批次已确认是单品。required reference 末尾出现的“是否套装合影白底图、套装编排槽位判断、件数核对”和 Markdown 代码块要求与本 Skill 的单品职责冲突；必须忽略末尾误植的套装字段，不得输出套装判断或编排。只按 A、B、C、D 固定单品槽位逐张识别；不符合任何槽位时写“不适合归入现有槽位”，不得为了凑齐槽位强行归类。
+
+槽位边界必须按产品在画面中的真实姿态判定：
+- A（正面微俯视）：产品保持直立，正面主体面占主导，左右侧面没有明显展开；镜头略高、只自然看到部分壶口或内侧。仅有轻微立体感或轻微俯视不能据此改判 B。
+- B（45°斜侧视）：产品保持直立，B 必须有明显侧面展开、前后纵深或侧前方透视，能够确认正面与侧面的空间关系；不能只因看到壶口或壶身弧度就判 B。
+- C（顶部俯视）：镜头主要向下观察壶口和内部平面关系，不能用来替代正面或侧面完整展示。
+- D（侧面低角度）：D 只允许产品直立并由自身底部自然支撑，镜头较低，能够观察壶身高度、侧面线条和底部支撑关系。横放、侧躺、倒置或仅拍底部的图片都不是 D；这类图片若也不符合 A/B/C，必须标记“不适合归入现有槽位”，不得以“看见底部”为理由判为 D 或给出合格结论。
+- 先判断产品是否直立、是否完整、镜头俯仰和正侧面展开程度，再选择槽位。局部裁切、只拍结构细节或无法承担该槽位核心展示任务的图片，不得给出“合格，可进入对应槽位”。
+
+仅返回一个 JSON 对象，不要 Markdown 说明或代码块外文字。顶层只返回 artifact_type、angle_slots、missing_angle_slots、retake_recommendations、notes；artifact_type 必须为 angle_inventory。angle_slots 数量必须等于 image_assets 数量，并严格遵循以下字段层级：
+--- JSON SHAPE START ---
+{
+  "artifact_type": "angle_inventory",
+  "angle_slots": [
+    {
+      "angle_slot": "A、B、C、D 或 不适合归入现有槽位",
+      "source_asset_id": "严格使用上方映射中的 img_编号",
+      "camera_angle": "按单张白底图实际角度填写",
+      "decision_basis": "说明朝向、俯仰和可见结构依据",
+      "naturally_visible_content": [
+        "该角度自然可见内容"
+      ],
+      "must_not_force_content": [
+        "该角度不应强行展示内容"
+      ],
+      "suitable_page_tasks": [
+        "适合承担的页面任务"
+      ],
+      "unsuitable_page_tasks": [
+        "不适合承担的页面任务"
+      ],
+      "main_image_suitability": "适合/勉强适合/不适合：简要理由",
+      "detail_image_suitability": "适合/勉强适合/不适合：简要理由",
+      "risk_notes": "风险说明；无明显风险时写无明显风险",
+      "recommended_task_binding": "建议绑定任务",
+      "admission_result": "三种固定入库结论之一",
+      "merged_reference_note": "未提供时写无",
+      "usable_for": [
+        "主图或详情图用途"
+      ],
+      "notes": ""
+    }
+  ],
+  "missing_angle_slots": [
+    "A、B、C、D 中缺失的槽位"
+  ],
+  "retake_recommendations": [
+    "仅针对角度、清晰度、遮挡和完整性的重拍建议"
+  ],
+  "notes": ""
+}
+--- JSON SHAPE END ---
+
+admission_result 只允许“合格，可进入对应槽位”“勉强可用，但建议重拍”“不适合入库，需重拍”。main_image_suitability 和 detail_image_suitability 必须以“适合”“勉强适合”或“不适合”开头并附简要理由。missing_angle_slots 只列 A、B、C、D；retake_recommendations 只涉及角度、清晰度、遮挡和产品完整性。
+
+不得返回 product_identity_archive、identity、style_master、set_layouts、set_arrangements、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、images 或 qc_results。不得虚构尺寸、容量、材质、认证、配件或不可见结构；不得让风格、页面任务或身份档案反向改变白底图实际角度。

@@ -1,0 +1,62 @@
+{
+  "encoding": "utf-8",
+  "files": {
+    "angle_prompt.txt": {
+      "bytes": 17086,
+      "sha256": "de5dc81f568bc5db823456edf20e5be9a4f2a77df0a7d7882a8a6cf84b6062f2"
+    },
+    "detail_vc_notes_prompt.txt": {
+      "bytes": 88523,
+      "sha256": "195f00bc567e15e03a0a629ba8acff75a1fce4d3bbd18bedb7a5278da035be5f"
+    },
+    "detail_vc_structured_prompt.txt": {
+      "bytes": 88523,
+      "sha256": "195f00bc567e15e03a0a629ba8acff75a1fce4d3bbd18bedb7a5278da035be5f"
+    },
+    "final_detail_notes_prompt.txt": {
+      "bytes": 65973,
+      "sha256": "66e1b6e894765cf6634b5f0c094868cb78bc2980694362e09b454476482f75c3"
+    },
+    "final_detail_structured_prompt.txt": {
+      "bytes": 65973,
+      "sha256": "66e1b6e894765cf6634b5f0c094868cb78bc2980694362e09b454476482f75c3"
+    },
+    "final_main_notes_prompt.txt": {
+      "bytes": 64728,
+      "sha256": "46ffefce09d6709f8c664ff3e18e7d5c00e731d94e8e0c4c72f354dd350065ff"
+    },
+    "final_main_structured_prompt.txt": {
+      "bytes": 64728,
+      "sha256": "46ffefce09d6709f8c664ff3e18e7d5c00e731d94e8e0c4c72f354dd350065ff"
+    },
+    "identity_prompt.txt": {
+      "bytes": 21745,
+      "sha256": "cfadc0444537b1027dfd685dc88cfe714cce29494e5259913394deda97baa42d"
+    },
+    "main_vc_notes_prompt.txt": {
+      "bytes": 71134,
+      "sha256": "16239f1a30dfa79adf4ae5fdefd0590b557b576e999d9b7b95aeffe80ed346e8"
+    },
+    "main_vc_structured_prompt.txt": {
+      "bytes": 71134,
+      "sha256": "16239f1a30dfa79adf4ae5fdefd0590b557b576e999d9b7b95aeffe80ed346e8"
+    },
+    "qc_batch_prompt.txt": {
+      "bytes": 111119,
+      "sha256": "d828d7e5a8fc62e8b0a88a5641ae9f6da9e6e386150887f27c2b276f615c0bd0"
+    },
+    "requirements_notes.json": {
+      "bytes": 194,
+      "sha256": "0548322b38753b5840f7b6f9f270c1f59fc2b0977abe540ec15b08753401c493"
+    },
+    "requirements_structured.json": {
+      "bytes": 194,
+      "sha256": "0548322b38753b5840f7b6f9f270c1f59fc2b0977abe540ec15b08753401c493"
+    },
+    "style_prompt.txt": {
+      "bytes": 21308,
+      "sha256": "91662d3c2e4f7e410634b20b83c393d9514aad82060c959630a6530d251ec94e"
+    }
+  },
+  "source_head": "dabf990c4703779b5505d584c7d7f027e027d6b2"
+}

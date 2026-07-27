@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "key": "盘子",
+  "display_name": "盘子",
+  "product_noun": "盘子",
+  "business_review_status": "pending_business_review",
+  "files": {
+    "form": "form.json",
+    "lexicons": "lexicons.json",
+    "identity_prompt": "prompts/identity.md",
+    "style_prompt": "prompts/style.md",
+    "angle_prompt": "prompts/angle.md",
+    "angle_boundary": "prompts/angle_boundary.md",
+    "main_prompt": "prompts/main.md",
+    "detail_prompt": "prompts/detail.md",
+    "final_prompt": "prompts/final.md",
+    "main_runtime": "runtime/main.json",
+    "detail_runtime": "runtime/detail.json",
+    "final_runtime": "runtime/final.json",
+    "qc_runtime": "qc/runtime.json",
+    "qc_checklist": "qc/checklist.md",
+    "qc_workflow": "qc/workflow.md",
+    "qc_realism": "qc/realism.md"
+  }
+}

@@ -7,10 +7,17 @@ import json
 import os
 import re
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from category_recipes import (
+    DEFAULT_CATEGORY_KEY,
+    CategoryRecipe,
+    CategoryRecipeError,
+    load_category_recipe,
+    load_manifest_category,
+)
 from executor_contract import ExecutorExecutionError
 
 
@@ -169,10 +176,25 @@ class UserConfirmedRequirements:
     allow_clear_water: bool
     forbid_pouring_and_heating: bool
     missing_d_no_retake: bool
+    length_cm: int | None = None
+    width_cm: int | None = None
+    category: str = DEFAULT_CATEGORY_KEY
+    recipe: CategoryRecipe | None = field(default=None, compare=False, repr=False)
 
 
 _USER_CONFIRMED_FACT_KEYS = (
     "product_type",
+    "height_cm",
+    "handheld_main",
+    "handheld_detail",
+    "allow_clear_water",
+    "forbid_pouring_and_heating",
+    "missing_d_no_retake",
+)
+_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
+    "product_type",
+    "length_cm",
+    "width_cm",
     "height_cm",
     "handheld_main",
     "handheld_detail",
@@ -208,22 +230,69 @@ def _yes_value(notes: str, label: str) -> bool:
     return raw == "是"
 
 
-def _validated_user_requirements(requirements: UserConfirmedRequirements) -> UserConfirmedRequirements:
-    if (
-        not requirements.product_type
-        or requirements.height_cm <= 0
-        or requirements.handheld_main != 2
-        or requirements.handheld_detail != 1
-    ):
+def _validated_user_requirements(
+    requirements: UserConfirmedRequirements,
+    *,
+    explicit_category: bool,
+) -> UserConfirmedRequirements:
+    recipe = requirements.recipe
+    if recipe is None:
+        raise ValueError("missing category recipe")
+    if not requirements.product_type:
         raise ValueError("invalid requirement")
+    if explicit_category and requirements.product_type != recipe.product_noun:
+        raise ValueError("category product noun mismatch")
+    field_metadata = {
+        item["key"]: item for item in recipe.form["dimensions"]["fields"]
+    }
+    dimensions = {
+        "length_cm": requirements.length_cm,
+        "width_cm": requirements.width_cm,
+        "height_cm": requirements.height_cm,
+    }
+    for key, value in dimensions.items():
+        if value is None:
+            if key in recipe.form["dimensions"]["required"]:
+                raise ValueError("missing required dimension")
+            continue
+        metadata = field_metadata[key]
+        if (
+            type(value) is not int
+            or value < metadata["minimum"]
+            or value > metadata["maximum"]
+        ):
+            raise ValueError("invalid dimension")
+    for mode, value in (
+        ("main", requirements.handheld_main),
+        ("detail", requirements.handheld_detail),
+    ):
+        metadata = recipe.form["handheld"][mode]
+        if (
+            type(value) is not int
+            or value < metadata["minimum"]
+            or value > metadata["maximum"]
+        ):
+            raise ValueError("invalid handheld count")
     return requirements
 
 
-def _parse_structured_user_requirements(raw: Any) -> UserConfirmedRequirements:
-    if not isinstance(raw, Mapping) or set(raw) != set(_USER_CONFIRMED_FACT_KEYS):
+def _parse_structured_user_requirements(
+    raw: Any,
+    recipe: CategoryRecipe,
+    *,
+    explicit_category: bool,
+) -> UserConfirmedRequirements:
+    expected_keys = (
+        _CATEGORY_USER_CONFIRMED_FACT_KEYS
+        if explicit_category
+        else _USER_CONFIRMED_FACT_KEYS
+    )
+    if not isinstance(raw, Mapping) or set(raw) != set(expected_keys):
         raise ValueError("invalid structured requirements")
     product_type = raw["product_type"]
     height_cm = raw["height_cm"]
+    length_cm = raw.get("length_cm")
+    width_cm = raw.get("width_cm")
     handheld_main = raw["handheld_main"]
     handheld_detail = raw["handheld_detail"]
     boolean_values = (
@@ -234,6 +303,8 @@ def _parse_structured_user_requirements(raw: Any) -> UserConfirmedRequirements:
     if (
         not isinstance(product_type, str)
         or type(height_cm) is not int
+        or (length_cm is not None and type(length_cm) is not int)
+        or (width_cm is not None and type(width_cm) is not int)
         or type(handheld_main) is not int
         or type(handheld_detail) is not int
         or any(type(value) is not bool for value in boolean_values)
@@ -248,16 +319,31 @@ def _parse_structured_user_requirements(raw: Any) -> UserConfirmedRequirements:
             allow_clear_water=boolean_values[0],
             forbid_pouring_and_heating=boolean_values[1],
             missing_d_no_retake=boolean_values[2],
-        )
+            length_cm=length_cm,
+            width_cm=width_cm,
+            category=recipe.key,
+            recipe=recipe,
+        ),
+        explicit_category=explicit_category,
     )
 
 
-def parse_user_confirmed_requirements(manifest: Mapping[str, Any]) -> UserConfirmedRequirements:
+def parse_user_confirmed_requirements(
+    manifest: Mapping[str, Any],
+    repository_root: Path | None = None,
+) -> UserConfirmedRequirements:
     """Read structured user facts, with notes retained only for legacy manifests."""
 
     try:
+        root = repository_root or Path(__file__).resolve().parent.parent
+        recipe = load_manifest_category(root, manifest)
+        explicit_category = "category" in manifest
         if "user_confirmed_facts" in manifest:
-            return _parse_structured_user_requirements(manifest["user_confirmed_facts"])
+            return _parse_structured_user_requirements(
+                manifest["user_confirmed_facts"],
+                recipe,
+                explicit_category=explicit_category,
+            )
         notes = str(manifest.get("notes") or "")
         return _validated_user_requirements(
             UserConfirmedRequirements(
@@ -268,10 +354,39 @@ def parse_user_confirmed_requirements(manifest: Mapping[str, Any]) -> UserConfir
                 allow_clear_water=_yes_value(notes, "允许清水场景"),
                 forbid_pouring_and_heating=_yes_value(notes, "禁止倾倒与加热"),
                 missing_d_no_retake=_yes_value(notes, "D槽位不补拍"),
-            )
+                category=recipe.key,
+                recipe=recipe,
+            ),
+            explicit_category=False,
         )
-    except (KeyError, TypeError, ValueError):
+    except (CategoryRecipeError, KeyError, TypeError, ValueError):
         raise ExecutorExecutionError("codex-dev 缺少有效的用户确认商品信息") from None
+
+
+def _requirements_recipe(requirements: UserConfirmedRequirements) -> CategoryRecipe:
+    if requirements.recipe is not None:
+        return requirements.recipe
+    try:
+        return load_category_recipe(
+            Path(__file__).resolve().parent.parent,
+            requirements.category,
+        )
+    except CategoryRecipeError:
+        raise ExecutorExecutionError("codex-dev 缺少有效的产品品类配方") from None
+
+
+def _confirmed_dimensions(
+    requirements: UserConfirmedRequirements,
+) -> dict[str, int]:
+    return {
+        key: value
+        for key, value in (
+            ("length_cm", requirements.length_cm),
+            ("width_cm", requirements.width_cm),
+            ("height_cm", requirements.height_cm),
+        )
+        if value is not None
+    }
 
 
 def _artifact_entry(manifest: Mapping[str, Any], key: str) -> str:
@@ -343,17 +458,22 @@ def load_skill_runtime_package(
     skill_name: str,
     filename: str,
     label: str,
+    category_recipe: CategoryRecipe | None = None,
 ) -> dict[str, Any]:
-    """Load a checked-in runtime package without changing the canonical Skill."""
+    """Load category-owned runtime rules; generic Skill text remains in .agents."""
 
-    path = repository_root / ".agents" / "skills" / skill_name / "references" / filename
+    del filename
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label}运行规则") from None
-    if not isinstance(value, dict):
+        recipe = category_recipe or load_manifest_category(repository_root, {})
+        runtime_key = {
+            "main-variable-config": "main_runtime",
+            "detail-variable-config": "detail_runtime",
+            "final-prompt-compiler": "final_runtime",
+        }[skill_name]
+        value = recipe.runtime_packages[runtime_key]
+    except (CategoryRecipeError, KeyError):
         raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label}运行规则")
-    return value
+    return dict(value)
 
 
 def qualified_angle_assets(angle_doc: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -461,20 +581,6 @@ _CLAUSE_SEPARATOR_PATTERN = r"[，,。；;\n]"
 _NUMBER_PATTERN = r"\d+(?:\.\d+)?"
 _LENGTH_UNIT_PATTERN = r"(?:毫米|mm|厘米|cm)"
 _RANGE_CONNECTOR_PATTERN = r"(?:-|−|－|–|—|~|～|/|／|至|到)"
-_UNSUPPORTED_FACT_TOKEN_PATTERN = (
-    r"(?:陶瓷|玻璃|不锈钢|塑料|食品级|耐热温度|"
-    r"通过.{0,8}认证|认证编号)"
-    r"(?:材质|质感|观感|工艺|属性|感)?"
-)
-_SAFE_NEGATED_FACT_TOKEN_PATTERN = (
-    r"(?:陶瓷|玻璃|不锈钢|塑料|食品级|耐热温度|"
-    r"通过[^，,。；;\n]{0,8}认证|认证编号)"
-    r"(?:材质|质感|观感|工艺|属性|感)?"
-)
-_SAFE_NEGATED_FACT_TARGET_PATTERN = (
-    rf"{_SAFE_NEGATED_FACT_TOKEN_PATTERN}"
-    rf"(?:\s*(?:、|或|和|与|及|/|／)\s*{_SAFE_NEGATED_FACT_TOKEN_PATTERN})*"
-)
 _EXISTING_FACT_PROTECTION_MARKERS = (
     "不得",
     "禁止",
@@ -497,49 +603,7 @@ _DIMENSION_GROUP_PATTERN = re.compile(
     rf")",
     flags=re.IGNORECASE,
 )
-_SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN = re.compile(
-    r"不[ \t]*(?:把|将)[ \t]*"
-    r"[^，,。；;\n]{1,64}?[ \t]*"
-    r"(?:写死|固定|标注|设定|锁定|指定)[ \t]*"
-    r"(?:为|成)[ \t]*"
-    rf"(?P<safe_targets>{_SAFE_NEGATED_FACT_TARGET_PATTERN})[ \t]*"
-    r"(?=$|[，,。；;\n])"
-)
-_UNSUPPORTED_FACT_PATTERN = re.compile(_UNSUPPORTED_FACT_TOKEN_PATTERN)
 _FACT_CLAUSE_SEPARATOR_PATTERN = re.compile(r"[。；;\n]+")
-_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE = (
-    "所有字段中提及产品材质时，一律使用“材质”统称，不得写出“陶瓷”“玻璃”"
-    "“不锈钢”“塑料”等具体材质词；环境道具描述除外，但环境道具仍必须遵守正式"
-    "风格母版与现有门禁。"
-)
-_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE = (
-    "表达内容物与动作安全边界时，不得逐词列举“倾倒、倒水、倒出、加热、沸腾、"
-    "炉灶、热水”等禁止动作词；统一使用“不出现任何禁止的内容物或动作”这一统称"
-    "表述，或原样复述本提示中的场景规则句，不得自行改写为禁止词清单。"
-)
-_PRODUCT_MATERIAL_CONTEXT_MARKERS = (
-    "产品",
-    "商品",
-    "本品",
-    "主体",
-    "本体",
-    "杯身",
-    "杯体",
-    "杯口",
-    "壶身",
-    "壶体",
-    "壶口",
-    "内壁",
-    "外壁",
-)
-_PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN = re.compile(
-    rf"(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
-    r"\s*(?:的\s*)?(?:主体\s*)?(?:材质\s*)?"
-    r"(?:(?:为|是|不是|采用|使用|选用|由|具有|呈现?|[:：])\s*)?$"
-)
-_PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN = re.compile(
-    rf"\s*(?:的\s*)?(?:{'|'.join(map(re.escape, _PRODUCT_MATERIAL_CONTEXT_MARKERS))})"
-)
 _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
     {
         "chunk_index",
@@ -586,14 +650,22 @@ def _is_product_directed_unsupported_fact(
     sentence: str,
     fact: re.Match[str],
     product_type: str | None,
+    material_context_markers: Sequence[str],
 ) -> bool:
     """Require grammatical attachment to the product, not mere same-clause presence."""
 
     prefix = sentence[: fact.start()]
     suffix = sentence[fact.end() :]
-    if _PRODUCT_MATERIAL_LOCAL_PREFIX_PATTERN.search(prefix):
+    marker_pattern = "|".join(map(re.escape, material_context_markers))
+    local_prefix_pattern = re.compile(
+        rf"(?:{marker_pattern})"
+        r"\s*(?:的\s*)?(?:主体\s*)?(?:材质\s*)?"
+        r"(?:(?:为|是|不是|采用|使用|选用|由|具有|呈现?|[:：])\s*)?$"
+    )
+    local_suffix_pattern = re.compile(rf"\s*(?:的\s*)?(?:{marker_pattern})")
+    if local_prefix_pattern.search(prefix):
         return True
-    if _PRODUCT_MATERIAL_LOCAL_SUFFIX_PATTERN.match(suffix):
+    if local_suffix_pattern.match(suffix):
         return True
 
     subject_terms = _product_subject_terms(product_type)
@@ -658,10 +730,13 @@ def _load_style_master_material_reference_text(path: Path, *, product_id: str) -
     return style_master_material_reference_text(style_master, product_id=product_id)
 
 
-def _is_confirmed_height_measurement(
+def _is_confirmed_dimension_measurement(
     text: str,
     path: tuple[str, ...],
     match: re.Match[str],
+    number: float,
+    confirmed_dimensions: Mapping[str, int],
+    competing_dimension_terms: Sequence[str],
 ) -> bool:
     prefix = text[: match.start()]
     clause_prefix = re.split(_CLAUSE_SEPARATOR_PATTERN, prefix)[-1]
@@ -688,76 +763,54 @@ def _is_confirmed_height_measurement(
             clause_suffix,
         )
     )
-    natural_width_before = re.search(
-        r"(?:壶身宽|产品宽|整壶宽|宽度|宽)\s*[：:]?\s*"
-        r"(?:为|是)?\s*(?:约|大约|大概|近|about|approximately)?\s*$",
-        clause_prefix,
-        flags=re.IGNORECASE,
-    )
-    natural_width_after = re.match(
-        r"\s*(?:宽度|宽(?=$|[\s的为是、:：()（）×xX*]))",
-        clause_suffix,
-    )
-    natural_width_path = any(
-        re.fullmatch(r"(?:(?:壶身|产品|整壶)?宽(?:度)?)", part.strip())
-        for part in path
-    )
-    natural_single_dimension_before = re.search(
-        r"(?:(?:壶身|产品|整壶|壶)?(?:长|深|厚))\s*[：:]?\s*"
-        r"(?:为|是)?\s*(?:约|大约|大概|近|about|approximately)?\s*$",
-        clause_prefix,
-        flags=re.IGNORECASE,
-    )
-    natural_single_dimension_after = re.match(
-        r"\s*(?:长|深|厚)(?=$|[\s的为是、:：()（）×xX*])",
-        clause_suffix,
-    )
-    natural_single_dimension_path = any(
-        re.fullmatch(r"(?:(?:壶身|产品|整壶|壶)?(?:长|深|厚))", part.strip())
-        for part in path
-    )
-    competing_dimensions = (
-        "宽度",
-        "直径",
-        "口径",
-        "长度",
-        "深度",
-        "厚度",
-        "容量",
-        "容积",
-        "重量",
-        "净重",
-        "width",
-        "diameter",
-        "length",
-        "depth",
-        "capacity",
-        "weight",
-    )
-    semantic_context = (*path, clause)
-    explicit_competing_dimension = any(
-        term in part.casefold()
-        for part in semantic_context
-        for term in competing_dimensions
-    )
     dimension_group = bool(_DIMENSION_GROUP_PATTERN.search(clause))
-    competing_dimension = bool(
-        natural_width_before
-        or natural_width_after
-        or natural_width_path
-        or natural_single_dimension_before
-        or natural_single_dimension_after
-        or natural_single_dimension_path
-        or explicit_competing_dimension
-    )
-    return not any(
-        (
-            competing_dimension,
-            range_context,
-            negative_prefix,
-            unit_extension,
-            dimension_group,
+    if any((range_context, negative_prefix, unit_extension, dimension_group)):
+        return False
+
+    labels_by_key = {
+        "length_cm": ("长度", "长"),
+        "width_cm": ("宽度", "宽"),
+        "height_cm": ("高度", "高"),
+    }
+    matching_keys = [
+        key
+        for key, value in confirmed_dimensions.items()
+        if float(value) == number and key in labels_by_key
+    ]
+    for key in matching_keys:
+        labels = "|".join(map(re.escape, labels_by_key[key]))
+        label_before = re.search(
+            rf"(?:{labels})\s*[：:]?\s*(?:为|是)?\s*"
+            r"(?:约|大约|大概|近|about|approximately)?\s*$",
+            clause_prefix,
+            flags=re.IGNORECASE,
         )
+        label_after = re.match(
+            rf"\s*(?:{labels})(?=$|[\s的为是、:：()（）×xX*])",
+            clause_suffix,
+        )
+        label_path = any(
+            any(label in part for label in labels_by_key[key])
+            for part in path
+        )
+        if label_before or label_after:
+            return True
+        semantic_context = (*path, clause)
+        if label_path and not any(
+            term not in labels_by_key[key]
+            and term.casefold() in part.casefold()
+            for part in semantic_context
+            for term in competing_dimension_terms
+        ):
+            return True
+
+    if "height_cm" not in matching_keys:
+        return False
+    semantic_context = (*path, clause)
+    return not any(
+        term.casefold() in part.casefold()
+        for part in semantic_context
+        for term in competing_dimension_terms
     )
 
 
@@ -816,9 +869,63 @@ def _reject_unsupported_claims(
     label: str,
     *,
     product_type: str | None = None,
+    lexicons: Mapping[str, Any] | None = None,
+    confirmed_dimensions: Mapping[str, int] | None = None,
     style_master_text: str | None = None,
     defer_style_master_prop_materials: bool = False,
 ) -> None:
+    if lexicons is None:
+        try:
+            lexicons = load_category_recipe(
+                Path(__file__).resolve().parent.parent,
+                DEFAULT_CATEGORY_KEY,
+            ).lexicons
+        except CategoryRecipeError:
+            raise ExecutorExecutionError(
+                f"codex-dev 无法读取有效的{label}品类词表"
+            ) from None
+    material_context_markers = lexicons.get("product_material_context_markers")
+    unsupported_fact_terms = lexicons.get("unsupported_fact_terms")
+    competing_dimension_terms = lexicons.get("competing_dimension_terms")
+    if (
+        not isinstance(material_context_markers, list)
+        or not material_context_markers
+        or not isinstance(unsupported_fact_terms, list)
+        or not unsupported_fact_terms
+        or not isinstance(competing_dimension_terms, list)
+        or not competing_dimension_terms
+    ):
+        raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label}品类词表")
+    fact_alternatives: list[str] = []
+    safe_fact_alternatives: list[str] = []
+    for term in unsupported_fact_terms:
+        if term == "认证":
+            fact_alternatives.append(r"通过.{0,8}认证")
+            safe_fact_alternatives.append(r"通过[^，,。；;\n]{0,8}认证")
+        else:
+            escaped = re.escape(str(term))
+            fact_alternatives.append(escaped)
+            safe_fact_alternatives.append(escaped)
+    suffix = r"(?:材质|质感|观感|工艺|属性|感)?"
+    unsupported_fact_pattern = re.compile(
+        rf"(?:{'|'.join(fact_alternatives)}){suffix}"
+    )
+    confirmed = dict(confirmed_dimensions or {"height_cm": height_cm})
+    safe_negated_fact_token = (
+        rf"(?:{'|'.join(safe_fact_alternatives)}){suffix}"
+    )
+    safe_negated_fact_target = (
+        rf"{safe_negated_fact_token}"
+        rf"(?:\s*(?:、|或|和|与|及|/|／)\s*{safe_negated_fact_token})*"
+    )
+    safe_negated_assignment_pattern = re.compile(
+        r"不[ \t]*(?:把|将)[ \t]*"
+        r"[^，,。；;\n]{1,64}?[ \t]*"
+        r"(?:写死|固定|标注|设定|锁定|指定)[ \t]*"
+        r"(?:为|成)[ \t]*"
+        rf"(?P<safe_targets>{safe_negated_fact_target})[ \t]*"
+        r"(?=$|[，,。；;\n])"
+    )
     measurement_pattern = re.compile(
         r"(?<![A-Za-z0-9_])(\d+(?:\.\d+)?)\s*"
         r"(毫升|ml|升|l|毫米|mm|厘米|cm|克|g|千克|kg)",
@@ -863,8 +970,14 @@ def _reject_unsupported_claims(
             unit = match.group(2).casefold()
             if (
                 unit in {"厘米", "cm"}
-                and number == float(height_cm)
-                and _is_confirmed_height_measurement(item, path, match)
+                and _is_confirmed_dimension_measurement(
+                    item,
+                    path,
+                    match,
+                    number,
+                    confirmed,
+                    competing_dimension_terms,
+                )
             ):
                 continue
             collect("未确认参数", path)
@@ -874,12 +987,12 @@ def _reject_unsupported_claims(
                 continue
             protected_spans = tuple(
                 protected.span("safe_targets")
-                for protected in _SAFE_NEGATED_FACT_ASSIGNMENT_PATTERN.finditer(sentence)
+                for protected in safe_negated_assignment_pattern.finditer(sentence)
             )
             protected_by_existing_marker = any(
                 marker in sentence for marker in _EXISTING_FACT_PROTECTION_MARKERS
             )
-            for fact in _UNSUPPORTED_FACT_PATTERN.finditer(sentence):
+            for fact in unsupported_fact_pattern.finditer(sentence):
                 if protected_by_existing_marker or any(
                     start <= fact.start() and fact.end() <= end
                     for start, end in protected_spans
@@ -889,6 +1002,7 @@ def _reject_unsupported_claims(
                     sentence,
                     fact,
                     product_type,
+                    material_context_markers,
                 ):
                     continue
                 collect("未确认商品事实", path)
@@ -910,7 +1024,6 @@ _SCENE_NEGATION_MARKERS = (
     "没有",
     "无清水",
 )
-_PROHIBITED_ACTION_TERMS = ("倾倒", "倒水", "倒出", "加热", "沸腾", "炉灶", "热水")
 _SCENE_ENUMERATION_NEGATION_PATTERN = re.compile(
     r"^\s*(?:不|无|未)[㐀-鿿]{1,2}[㐀-鿿]{2,12}"
     r"(?:(?:、|或|和|及|与)[㐀-鿿]{1,12})*"
@@ -926,7 +1039,11 @@ _SCENE_FIRST_ENUMERATION_ADVERB_EXCLUSIONS = frozenset(
 _SCENE_ENUMERATION_CONNECTORS = ("、", "或", "和", "及", "与")
 
 
-def _term_is_first_negated_enumeration_item(clause: str, term_start: int) -> bool:
+def _term_is_first_negated_enumeration_item(
+    clause: str,
+    term_start: int,
+    scanned_terms: Sequence[str],
+) -> bool:
     head = _SCENE_FIRST_ENUMERATION_NEGATION_HEAD_PATTERN.fullmatch(
         clause[:term_start]
     )
@@ -942,7 +1059,7 @@ def _term_is_first_negated_enumeration_item(clause: str, term_start: int) -> boo
     scanned_term = next(
         (
             term
-            for term in ("清水", *_PROHIBITED_ACTION_TERMS)
+            for term in scanned_terms
             if clause.startswith(term, term_start)
         ),
         None,
@@ -955,7 +1072,11 @@ def _term_is_first_negated_enumeration_item(clause: str, term_start: int) -> boo
     )
 
 
-def _term_has_scene_negation(clause: str, term_start: int) -> bool:
+def _term_has_scene_negation(
+    clause: str,
+    term_start: int,
+    scanned_terms: Sequence[str],
+) -> bool:
     prefix = clause[:term_start]
     existing_marker = any(marker in prefix for marker in _SCENE_NEGATION_MARKERS)
     existing_suffix = bool(
@@ -966,7 +1087,7 @@ def _term_has_scene_negation(clause: str, term_start: int) -> bool:
     )
     if existing_marker or existing_suffix or negated_predicate:
         return True
-    if _term_is_first_negated_enumeration_item(clause, term_start):
+    if _term_is_first_negated_enumeration_item(clause, term_start, scanned_terms):
         return True
     enumerated_scope = _SCENE_ENUMERATION_NEGATION_PATTERN.fullmatch(prefix)
     return bool(
@@ -983,6 +1104,10 @@ def _reject_scene_policy_violations(
     requirements: UserConfirmedRequirements,
     label: str,
 ) -> None:
+    recipe = _requirements_recipe(requirements)
+    content_terms = tuple(recipe.lexicons["scene_content_terms"])
+    prohibited_action_terms = tuple(recipe.lexicons["prohibited_action_terms"])
+    scanned_terms = (*content_terms, *prohibited_action_terms)
     exact_rule = _variable_scene_rule(requirements)
     for path, text in _walk_string_contexts(value):
         if _semantic_context_for_path(path) != _SEMANTIC_CONTEXT_POSITIVE:
@@ -990,34 +1115,45 @@ def _reject_scene_policy_violations(
         scene_text = text.replace(exact_rule, "").replace(requirements.product_type, "")
         if not requirements.allow_clear_water:
             for clause in re.split(r"[，,。；;\n]+", scene_text):
-                clear_water_at = clause.find("清水")
-                if clear_water_at >= 0 and not _term_has_scene_negation(clause, clear_water_at):
-                    raise ExecutorExecutionError(f"codex-dev 收到的{label}违反用户确认场景边界")
+                content_positions = [
+                    clause.find(term) for term in content_terms if term in clause
+                ]
+                if content_positions and not _term_has_scene_negation(
+                    clause,
+                    min(content_positions),
+                    scanned_terms,
+                ):
+                    raise ExecutorExecutionError(
+                        f"codex-dev 收到的{label}违反用户确认场景边界"
+                    )
         if requirements.forbid_pouring_and_heating:
             for sentence in re.split(r"[。；;\n]+", scene_text):
                 for clause in re.split(r"[，,]+", sentence):
                     term_positions = [
                         clause.find(term)
-                        for term in _PROHIBITED_ACTION_TERMS
+                        for term in prohibited_action_terms
                         if term in clause
                     ]
                     if not term_positions:
                         continue
-                    if not _term_has_scene_negation(clause, min(term_positions)):
+                    if not _term_has_scene_negation(
+                        clause,
+                        min(term_positions),
+                        scanned_terms,
+                    ):
                         raise ExecutorExecutionError(
                             f"codex-dev 收到的{label}违反用户确认场景边界"
                         )
 
 
 def _variable_scene_rule(requirements: UserConfirmedRequirements) -> str:
-    content_rule = (
-        "允许空壶或清水静置"
-        if requirements.allow_clear_water
-        else "只允许空置，不得出现清水或其他内容物"
+    scene_rules = _requirements_recipe(requirements).lexicons["scene_rules"]
+    key = (
+        ("water" if requirements.allow_clear_water else "no_water")
+        + "_"
+        + ("forbid_actions" if requirements.forbid_pouring_and_heating else "allow_actions")
     )
-    if requirements.forbid_pouring_and_heating:
-        return f"{content_rule}；禁止倾倒、沸腾、炉灶加热、热水动作。"
-    return f"{content_rule}。"
+    return str(scene_rules[key])
 
 
 def _final_forbidden_rule(requirements: UserConfirmedRequirements) -> str:
@@ -1025,7 +1161,9 @@ def _final_forbidden_rule(requirements: UserConfirmedRequirements) -> str:
     if not requirements.allow_clear_water:
         prohibited.append("清水场景")
     if requirements.forbid_pouring_and_heating:
-        prohibited.extend(("倾倒", "加热", "沸腾", "热水动作"))
+        prohibited.extend(
+            _requirements_recipe(requirements).lexicons["final_forbidden_action_terms"]
+        )
     return (
         f"禁止 {'、'.join(prohibited)}，以及容量、其他尺寸、重量、具体材质、耐热、认证、"
         "品牌和型号等未确认事实。"
@@ -1042,6 +1180,67 @@ def _load_skill_text(repository_root: Path, skill_name: str, label: str) -> str:
     if not text.strip():
         raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label} Skill")
     return text
+
+
+def _category_prompt_values(
+    requirements: UserConfirmedRequirements,
+    *,
+    expected_ratio: str = "",
+    handheld_count: int = 0,
+) -> dict[str, object]:
+    recipe = _requirements_recipe(requirements)
+    material_examples = "".join(
+        f"“{term}”" for term in recipe.lexicons["material_prompt_examples"]
+    )
+    product_material_term_rule = (
+        f"所有字段中提及产品材质时，一律使用“材质”统称，不得写出{material_examples}"
+        "等具体材质词；环境道具描述除外，但环境道具仍必须遵守正式风格母版与现有门禁。"
+    )
+    action_terms = "、".join(recipe.lexicons["prohibited_action_terms"])
+    scene_safety_collective_rule = (
+        f"表达内容物与动作安全边界时，不得逐词列举“{action_terms}”等禁止动作词；"
+        "统一使用“不出现任何禁止的内容物或动作”这一统称表述，或原样复述本提示中的"
+        "场景规则句，不得自行改写为禁止词清单。"
+    )
+    dimension_values = {
+        "length_cm": requirements.length_cm,
+        "width_cm": requirements.width_cm,
+        "height_cm": requirements.height_cm,
+    }
+    required_dimensions = set(recipe.form["dimensions"]["required"])
+    field_metadata = {
+        item["key"]: item for item in recipe.form["dimensions"]["fields"]
+    }
+    optional_dimension_text = "、".join(
+        f"{field_metadata[key]['label']}约 {value} 厘米"
+        for key, value in dimension_values.items()
+        if key not in required_dimensions and value is not None
+    )
+    optional_templates = recipe.lexicons["optional_dimension_prompts"]
+    optional_prompts = {
+        mode: (
+            str(optional_templates[mode]).format(dimensions=optional_dimension_text)
+            if optional_dimension_text
+            else ""
+        )
+        for mode in ("main", "detail", "final")
+    }
+    return {
+        "length_cm": requirements.length_cm,
+        "width_cm": requirements.width_cm,
+        "height_cm": requirements.height_cm,
+        "expected_ratio": expected_ratio,
+        "handheld_phrase": recipe.lexicons["handheld_phrase"],
+        "handheld_count_text": (
+            "恰好一项" if handheld_count == 1 else f"恰好 {handheld_count} 项"
+        ),
+        "product_material_term_rule": product_material_term_rule,
+        "scene_safety_collective_rule": scene_safety_collective_rule,
+        "scene_rule": _variable_scene_rule(requirements),
+        "optional_dimensions_main": optional_prompts["main"],
+        "optional_dimensions_detail": optional_prompts["detail"],
+        "optional_dimensions_final": optional_prompts["final"],
+    }
 
 
 def build_variable_config_prompt(
@@ -1061,12 +1260,14 @@ def build_variable_config_prompt(
         raise ExecutorExecutionError("codex-dev 收到不支持的变量配置模式")
     skill_name = "main-variable-config" if mode == "main" else "detail-variable-config"
     label = "主图变量配置" if mode == "main" else "详情图变量配置"
+    recipe = _requirements_recipe(requirements)
     skill_text = _load_skill_text(repository_root, skill_name, label)
     runtime = load_skill_runtime_package(
         repository_root,
         skill_name,
         f"runtime_rule_slices/{skill_name}.runtime_rule_slices.json",
         label,
+        recipe,
     )
     _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
@@ -1094,7 +1295,21 @@ def build_variable_config_prompt(
             "型号",
         ],
     }
+    if requirements.length_cm is not None:
+        facts["length"] = f"约 {requirements.length_cm} 厘米"
+    if requirements.width_cm is not None:
+        facts["width"] = f"约 {requirements.width_cm} 厘米"
+    prompt_values = _category_prompt_values(
+        requirements,
+        handheld_count=(
+            requirements.handheld_main if mode == "main" else requirements.handheld_detail
+        ),
+    )
     if mode == "main":
+        category_prompt = recipe.render_prompt(
+            "main_prompt",
+            **prompt_values,
+        ).rstrip("\r\n")
         return f"""你正在为单品批次 {product_id} 生成主图变量配置，且只处理 main_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须生成且只生成 main_01 至 main_06 六项，输出画布比例全部为 1:1，恰好 {requirements.handheld_main} 项启用手持。
@@ -1102,14 +1317,11 @@ def build_variable_config_prompt(
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(MAIN_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 主图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
-{_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE}
+{prompt_values["product_material_term_rule"]}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求主图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
-尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”；不得补写容量、其他尺寸、重量、具体材质、耐热、认证、品牌或型号。
-{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
-场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
-手持只能自然握住把手、轻扶壶身或轻微拿起，不能改变绑定角度。
+{category_prompt}
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
 【Skill 原文】
@@ -1132,6 +1344,10 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 """
     if not isinstance(main_variable_config, Mapping):
         raise ExecutorExecutionError("codex-dev 缺少有效的正式主图变量配置")
+    category_prompt = recipe.render_prompt(
+        "detail_prompt",
+        **prompt_values,
+    ).rstrip("\r\n")
     return f"""你正在为单品批次 {product_id} 生成详情图变量配置，且只处理 detail_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须生成且只生成 detail_01 至 detail_08 八项；标准模块归属依次且唯一为模块01至模块08；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。
@@ -1139,14 +1355,11 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 详情图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
-{_VARIABLE_CONFIG_PRODUCT_MATERIAL_TERM_RULE}
+{prompt_values["product_material_term_rule"]}
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
-所有尺寸比例锁定必须写“约 {requirements.height_cm} 厘米”。模块05是唯一尺寸标注图，只能标注“高度约 {requirements.height_cm} 厘米”，必须明确禁止容量、宽度、直径、重量、材质等未确认参数，并且不得启用手持；其他模块不得启用尺寸标注信息。
-{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
-场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
-详情页全批恰好一项启用手持，只能自然握住把手、轻扶壶身或轻微拿起。
+{category_prompt}
 模块01须承接正式主图配置中的已支持核心承诺，但不得复制或新增任何未确认说法。
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片、QC 或套装字段。
 
@@ -1433,6 +1646,8 @@ def _validate_detail_chunk_business_content(
         requirements.height_cm,
         label,
         product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=_confirmed_dimensions(requirements),
         defer_style_master_prop_materials=True,
     )
     _reject_scene_policy_violations(value, requirements, label)
@@ -1605,6 +1820,8 @@ def parse_variable_config_response(
         requirements.height_cm,
         label,
         product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=_confirmed_dimensions(requirements),
         style_master_text=style_master_text,
     )
     _reject_scene_policy_violations(value, requirements, label)
@@ -1728,12 +1945,14 @@ def build_final_prompt_batch_prompt(
 
     if mode not in {"main", "detail"}:
         raise ExecutorExecutionError("codex-dev 收到不支持的最终提示词模式")
+    recipe = _requirements_recipe(requirements)
     skill_text = _load_skill_text(repository_root, "final-prompt-compiler", "最终提示词")
     runtime = load_skill_runtime_package(
         repository_root,
         "final-prompt-compiler",
         "runtime_rule_slices/final-prompt-compiler.runtime_rule_slices.json",
         "最终提示词",
+        recipe,
     )
     _validate_missing_d_confirmation(angle_inventory, requirements)
     qualified = qualified_angle_assets(angle_inventory)
@@ -1831,11 +2050,26 @@ def build_final_prompt_batch_prompt(
             "型号",
         ],
     }
+    if requirements.length_cm is not None:
+        facts["length"] = f"约 {requirements.length_cm} 厘米"
+    if requirements.width_cm is not None:
+        facts["width"] = f"约 {requirements.width_cm} 厘米"
+    category_prompt = recipe.render_prompt(
+        "final_prompt",
+        **_category_prompt_values(
+            requirements,
+            expected_ratio=expected_ratio,
+            handheld_count=expected_handheld,
+        ),
+    ).rstrip("\r\n")
+    scene_safety_collective_rule = _category_prompt_values(
+        requirements,
+    )["scene_safety_collective_rule"]
     return f"""你正在为单品批次 {product_id} 编译 {mode} 配置的最终提示词，只处理 final_prompts 的这一批。
 这是提示词编译，不生成图片、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
 必须且只返回这些配置：{json.dumps(expected_ids, ensure_ascii=False)}。
-每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 A/B/C 槽位、画布比例 {expected_ratio}、产品高度约 {requirements.height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。
-final_prompt 正文必须遵守以下场景安全规则：{_VARIABLE_CONFIG_SCENE_SAFETY_COLLECTIVE_RULE}
+{category_prompt}
+final_prompt 正文必须遵守以下场景安全规则：{scene_safety_collective_rule}
 场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
 如需逐词列出禁止项，只能写入 negative_prompt 字段；不得把逐词禁止清单写入 final_prompt 正文。
 恰好 {expected_handheld} 份保持启用手持；{_final_forbidden_rule(requirements)}
@@ -1927,6 +2161,8 @@ def parse_final_prompt_batch_response(
         requirements.height_cm,
         label,
         product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=_confirmed_dimensions(requirements),
         style_master_text=style_master_text,
     )
     _reject_scene_policy_violations(value, requirements, label)

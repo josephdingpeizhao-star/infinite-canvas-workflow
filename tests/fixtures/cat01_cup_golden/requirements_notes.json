@@ -1,0 +1,9 @@
+{
+  "allow_clear_water": true,
+  "forbid_pouring_and_heating": true,
+  "handheld_detail": 1,
+  "handheld_main": 2,
+  "height_cm": 25,
+  "missing_d_no_retake": true,
+  "product_type": "水壶"
+}

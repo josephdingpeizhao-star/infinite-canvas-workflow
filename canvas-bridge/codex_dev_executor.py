@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_category
 from codex_dev_downstream import (
     DETAIL_CHUNK_COUNT,
     DetailChunkEnvelopeCorrection,
@@ -769,7 +770,10 @@ class CodexDevExecutor:
         if output_path.exists():
             raise ExecutorExecutionError("正式主图变量配置已存在，codex-dev 不会覆盖")
 
-        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        requirements = parse_user_confirmed_requirements(
+            self.context.manifest,
+            self.repository_root,
+        )
         identity, identity_path = load_typed_artifact(
             self.context.manifest,
             "product_identity_archive",
@@ -831,7 +835,10 @@ class CodexDevExecutor:
         if output_path.exists():
             raise ExecutorExecutionError("正式详情图变量配置已存在，codex-dev 不会覆盖")
 
-        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        requirements = parse_user_confirmed_requirements(
+            self.context.manifest,
+            self.repository_root,
+        )
         identity, identity_path = load_typed_artifact(
             self.context.manifest,
             "product_identity_archive",
@@ -985,7 +992,10 @@ class CodexDevExecutor:
         if any(path.exists() for path in final_prompt_bundle_targets(output_dir)):
             raise ExecutorExecutionError("正式最终提示词已存在，codex-dev 不会覆盖")
 
-        requirements = parse_user_confirmed_requirements(self.context.manifest)
+        requirements = parse_user_confirmed_requirements(
+            self.context.manifest,
+            self.repository_root,
+        )
         identity, identity_path = load_typed_artifact(
             self.context.manifest,
             "product_identity_archive",
@@ -1259,8 +1269,8 @@ class CodexDevExecutor:
         skill_root = self.repository_root / ".agents" / "skills" / "product-identity-archive"
         try:
             skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-            reference_text = (skill_root / "references" / "产品身份档案提示词.txt").read_text(encoding="utf-8")
-        except OSError as exc:
+            reference_text = self._category_recipe().prompts["identity_prompt"]
+        except OSError:
             raise ExecutorExecutionError("codex-dev 无法加载产品身份建档规则") from None
         return skill_text, reference_text
 
@@ -1268,9 +1278,7 @@ class CodexDevExecutor:
         skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"
         try:
             skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-            reference_text = (skill_root / "references" / "反向提取风格母版提示词.txt").read_text(
-                encoding="utf-8"
-            )
+            reference_text = self._category_recipe().prompts["style_prompt"]
         except OSError:
             raise ExecutorExecutionError("codex-dev 无法加载风格母版提取规则") from None
         return skill_text, reference_text
@@ -1279,12 +1287,16 @@ class CodexDevExecutor:
         skill_root = self.repository_root / ".agents" / "skills" / "angle-inventory"
         try:
             skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-            reference_text = (skill_root / "references" / "角度槽位入库表生成与识别提示词.txt").read_text(
-                encoding="utf-8"
-            )
+            reference_text = self._category_recipe().prompts["angle_prompt"]
         except OSError:
             raise ExecutorExecutionError("codex-dev 无法加载角度槽位入库规则") from None
         return skill_text, reference_text
+
+    def _category_recipe(self) -> CategoryRecipe:
+        try:
+            return load_manifest_category(self.repository_root, self.context.manifest)
+        except CategoryRecipeError as exc:
+            raise ExecutorExecutionError(f"codex-dev 无法加载产品品类配方：{exc}") from None
 
     def _validate_single_product_batch(self) -> None:
         batch_type = str(self.context.manifest.get("batch_type") or "single").strip().lower()
@@ -1700,6 +1712,7 @@ missing_information 和 notes 必须在 style_master 对象关闭后、根对象
             ensure_ascii=False,
             indent=2,
         )
+        angle_boundary = self._category_recipe().prompts["angle_boundary"].rstrip("\r\n")
         return f"""你正在执行受限的开发适配器任务。只处理 angle_inventory（单品《角度槽位入库表》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
 
 批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
@@ -1734,12 +1747,7 @@ missing_information 和 notes 必须在 style_master 对象关闭后、根对象
 
 本批次已确认是单品。required reference 末尾出现的“是否套装合影白底图、套装编排槽位判断、件数核对”和 Markdown 代码块要求与本 Skill 的单品职责冲突；必须忽略末尾误植的套装字段，不得输出套装判断或编排。只按 A、B、C、D 固定单品槽位逐张识别；不符合任何槽位时写“不适合归入现有槽位”，不得为了凑齐槽位强行归类。
 
-槽位边界必须按产品在画面中的真实姿态判定：
-- A（正面微俯视）：产品保持直立，正面主体面占主导，左右侧面没有明显展开；镜头略高、只自然看到部分壶口或内侧。仅有轻微立体感或轻微俯视不能据此改判 B。
-- B（45°斜侧视）：产品保持直立，B 必须有明显侧面展开、前后纵深或侧前方透视，能够确认正面与侧面的空间关系；不能只因看到壶口或壶身弧度就判 B。
-- C（顶部俯视）：镜头主要向下观察壶口和内部平面关系，不能用来替代正面或侧面完整展示。
-- D（侧面低角度）：D 只允许产品直立并由自身底部自然支撑，镜头较低，能够观察壶身高度、侧面线条和底部支撑关系。横放、侧躺、倒置或仅拍底部的图片都不是 D；这类图片若也不符合 A/B/C，必须标记“不适合归入现有槽位”，不得以“看见底部”为理由判为 D 或给出合格结论。
-- 先判断产品是否直立、是否完整、镜头俯仰和正侧面展开程度，再选择槽位。局部裁切、只拍结构细节或无法承担该槽位核心展示任务的图片，不得给出“合格，可进入对应槽位”。
+{angle_boundary}
 
 仅返回一个 JSON 对象，不要 Markdown 说明或代码块外文字。顶层只返回 artifact_type、angle_slots、missing_angle_slots、retake_recommendations、notes；artifact_type 必须为 angle_inventory。angle_slots 数量必须等于 image_assets 数量，并严格遵循以下字段层级：
 --- JSON SHAPE START ---

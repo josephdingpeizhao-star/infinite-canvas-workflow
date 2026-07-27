@@ -1,0 +1,306 @@
+你正在执行受限的开发适配器任务。只处理 style_master（单品《风格母版》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID："杯子_CAT01_GOLDEN"
+风格参考图文件名：["风格参考.png"]
+
+以下既有《产品身份档案》是上位约束。只用它防止风格规则覆盖产品结构、比例、颜色、材质、纹理、图案、配件关系或真实尺寸；不得把其中的产品事实复制成风格规则：
+--- PRODUCT IDENTITY START ---
+{
+  "artifact_type": "product_identity_archive",
+  "product_id": "杯子_CAT01_GOLDEN",
+  "identity": {
+    "confirmed_facts": [
+      "产品类型：水壶",
+      "高度约 25 厘米"
+    ],
+    "visible_inferences": [
+      "可见壶口、壶身和底足"
+    ],
+    "unknowns": [
+      "容量无法确认"
+    ],
+    "prohibited_inventions": [
+      "不得虚构材质、容量或认证"
+    ],
+    "product_lock_description": "保持产品结构、比例、颜色和图案不变。"
+  }
+}
+--- PRODUCT IDENTITY END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+---
+name: style-master-extractor
+description: "Extract a reusable e-commerce image style master from reference images or existing successful outputs. Use when Codex needs to reverse-engineer composition, lighting, material feel, color mood, and platform visual style for later prompts. Do not use for product identity, angle inventory, variable config, final prompts, or image generation."
+---
+
+# Style Master Extractor
+
+## Purpose
+
+Reverse-extract a style master from reference images or benchmark outputs so later workflow stages can reuse stable visual rules without copying unrelated product facts.
+
+## When to use
+
+- Use when the user provides one or more style reference images or existing image descriptions.
+- Use when a style master is missing before variable config or final prompt compilation.
+- Use when the task is to describe lighting, camera feel, environment, composition, color, texture, and visual constraints as reusable style rules.
+
+## Required inputs
+
+- Reference image(s), benchmark image(s), or detailed descriptions supplied by the user.
+- Existing product identity archive, if available, to avoid mixing style with product facts.
+- User-declared platform or brand style constraints, if any.
+
+## Required references
+
+- `references/反向提取风格母版提示词.txt`
+
+## Required output
+
+- A structured style master for later workflow stages.
+- Style rules separated from product identity facts.
+- No final image generation prompt and no image output.
+
+## Hard rules
+
+- Use `反向提取风格母版提示词.txt` as the upstream prompt rule for this stage.
+- Do not treat the style extraction prompt as a final image generation prompt.
+- Do not invent product specifications, product functions, certifications, platform claims, or sales data from style references.
+- Do not create variable configs or final prompts in this Skill.
+- If a reference image contains props, treat them as style context unless the user confirms they belong to the product.
+
+## Do not use when
+
+- The user asks to identify product facts rather than extract visual style.
+- The user asks for angle slot recognition from white-background product images.
+- The user asks to compile final output prompts or inspect generated images.
+
+--- SKILL END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+本文件可直接使用用户提供的风格参考图、已确认满意的主视觉图或历史成片作为输入，不要求也不依赖《风格基准图》。
+
+我会上传一张电商主视觉图，请你根据这张图反向提取一份【风格母版】。
+
+这份风格母版的用途不是审美评价，而是用于后续 AI 生图流程，帮助我在不同产品、不同页面任务中复用这张图的视觉风格。
+
+重要说明：
+《风格母版》只负责视觉风格复用。
+它不得覆盖《产品身份档案》中的产品结构、比例、颜色、材质、纹理、图案和配件关系。
+它不得覆盖《产品身份档案》中的【产品真实尺寸】字段；不得把参考图中产品与手、书本、托盘、小勺、手机等道具的比例关系提取成后续产品通用尺寸规则。
+它不得覆盖《角度入库表》或绑定白底角度图中的产品角度。
+它不得覆盖《主图单张变量配置》或《详情图单张变量配置》中的单张页面任务。
+它不得要求产品为了适配风格而改变形状、角度、朝向、图案、材质或结构。
+风格母版中的色调、光线、背景色和道具色只约束非产品视觉风格，不作为后续产品颜色参照。
+如果风格母版中的版式、主体占比、道具密度、文字位置与单张页面任务冲突，应以单张页面任务为准，并在不破坏整体风格的前提下调整风格表达。
+
+风格母版可以记录非产品元素轻微真实瑕疵感，例如背景轻微生活痕迹、桌面自然纹理、布料自然褶皱、纸张轻微翘边、道具微小摆放偏差、光影自然不均和真实接触阴影。该规则只作用于产品本身以外的背景、道具、桌面、布料、纸张、食物、手部和环境光影，不得把产品本身的瑕疵写成风格规则，不得要求后续产品变旧、变脏、改色、改材质、改变结构、改变纹理、改变图案或增加原图不存在的细节。
+
+请注意：
+
+1. 只提取画面风格规则，不要描述产品身份。
+产品本身的造型、颜色、材质、图案、品牌名、具体品类，不要写入风格母版。
+除非某些元素明显属于整体视觉风格的一部分，例如统一色彩、材质环境、背景语言或道具秩序，否则不要把具体产品细节写成风格规则。
+
+2. 不要使用空泛形容词。
+禁止只写“高级感”“精致”“干净”“有质感”“氛围感”“轻奢”等词。
+如果必须使用这类词，必须立刻转化为具体视觉规则，例如背景颜色、光线方向、阴影形态、道具密度、文字占比等。
+
+3. 所有内容必须可执行、可复现。
+请用明确的视觉语言描述，让后续生成图片时可以直接调用。
+不要写成摄影建议，不要提相机、镜头、光圈、快门、ISO、摄影器材等现实拍摄参数。
+
+4. 请区分“可保留风格”和“不可复制元素”。
+主视觉图中的色调、光线、留白、文字气质、道具密度可以提取。
+风格母版不得复制具体品牌、具体文案、具体产品图案，但可以提取并保留“道具类型、道具密度、空间层次（前中后景）、内容物状态和背景语言”，作为可复用的风格规则。
+但具体产品、具体文案、具体品牌名、具体图案不要作为固定模板复制。
+
+5. 请区分“风格倾向”和“硬性限制”。
+背景、色调、光线、留白、文字气质和道具密度属于风格倾向。
+产品身份、产品角度和单张页面任务属于上位约束。
+当二者发生冲突时，风格应让位于产品身份、产品角度和单张页面任务。
+
+请按照以下结构输出：
+
+【风格母版】
+
+一、整体视觉定位
+用一句话概括这张图适合复用成什么类型的电商视觉风格。
+不要空泛，要具体说明适合主图、详情图、品牌首屏、场景图还是活动图。
+如果该风格只适合某些图片类型，也要明确说明。
+
+二、画面比例与版式
+说明画面比例、主体区域、文字区域、留白区域，以及整体版式是居中式、左右分区式、上下分区式、对角线式、场景式还是其他方式。
+注意：这里提取的是版式倾向，不是要求所有后续图片必须照搬同一版式。
+后续单张图片的具体构图仍应服从对应的主图或详情图页面任务。
+
+三、背景规则
+说明背景类型、背景颜色、明暗层次、是否有渐变、是否有桌面、墙面、空间纵深、纹理或虚化背景。
+如果背景很简单，也要说明它是“纯色背景”“轻微渐变背景”“真实空间背景”还是“抽象商业背景”。
+背景规则应记录非产品元素的现实世界轻微不完美，例如背景轻微生活痕迹、桌面自然纹理、纸张轻微翘边或布料自然褶皱；即使参考图较干净，也不要把“绝对无瑕、过度棚拍、过度光滑、过度统一”写成强制风格。该要求不得作用于产品本身，不得改变产品结构、比例、颜色、材质、纹理、图案和配件关系。
+
+四、色调规则
+提取整体色彩倾向。
+包括主色、辅助色、冷暖关系、饱和度、明度、对比度。
+不要只写“温暖”或“清爽”，要说明具体表现。
+
+五、光线规则
+说明光线方向、强度、软硬、明暗对比、产品高光表现、背景受光方式。
+如果画面中有明显阴影，请说明阴影方向、浓淡、边缘软硬和接触阴影形态。
+注意：光线规则应服务于真实摄影感，不得制造不真实的漂浮感、假阴影或过度氛围滤镜。
+光线规则可以记录环境光影的轻微自然不均和真实接触阴影，用于避免过度干净、过度美化和过度合成感；但不得为了真实感让产品本身变脏、变旧、破损、开裂、掉色或出现原图不存在的釉面瑕疵。
+
+六、主体呈现规则
+说明主体在画面中的占比、位置、视觉权重、是否完整展示、是否允许局部裁切、主体与背景之间的层次关系。
+注意：这里描述的是主体呈现方式，不描述具体产品身份。
+如果后续用于详情图局部特写，可以根据页面任务调整主体完整度，不应机械套用主视觉图的完整展示方式。
+如果后续绑定角度槽位与原图主体角度不同，必须以绑定白底角度图为准，不得用风格母版改变产品角度。
+主体占比是版式和视觉权重规则，不代表产品真实尺寸规则。
+
+七、道具规则
+说明是否使用道具，道具数量倾向、道具类型、摆放位置、清晰程度、颜色关系和存在感。
+如果画面没有道具，也要明确写出“道具应极少或不出现”。
+道具规则只提供风格方向，具体数量和摆放还必须服从《道具生成规则模块》《真实感约束》和本张页面任务。
+可提取道具密度、类型倾向、摆放秩序和风格关系，但不得提取参考图中的具体尺寸参照关系作为固定模板。
+道具规则应记录道具、桌面、布料、纸张、食物和背景生活物件的现实世界轻微不完美，例如道具微小摆放偏差、布料自然褶皱、纸张轻微翘边、食物自然不规整和桌面细微纹理；这些细节不得脏乱、廉价杂乱、破损或抢主体，也不得作用于产品本身。
+
+八、文字规则
+如果图中有文字，请提取文字风格，包括字体气质、字号层级、排版方向、文字位置、文字占比、字色、行距、信息密度。
+如果图中没有文字，请说明后续加字时应遵守的文字风格，不要让文字破坏原画面气质。
+文字规则不得要求后续图片复制原图中的具体文案、品牌名、促销信息或不可复用内容。
+后续若需加字，具体文案应交由《主图单张变量配置》《详情图单张变量配置》的【中文营销文案】栏按中文淘宝天猫电商语境生成简体中文营销文案；本栏只约束文字风格气质（字体气质、层级、排版、占比、字色等），不规定具体文案，也不复制原图文案。
+
+九、留白规则
+说明留白主要集中在什么位置，留白占比大约如何，留白是为了突出主体、承载文字，还是营造空间感。
+注意：主图和详情图的留白用途不同。主图留白通常服务点击识别和主视觉秩序，详情图留白可以服务信息说明和文字区域。
+
+十、画面情绪
+用具体视觉结果描述画面情绪。
+可以使用简短概括，但必须落到画面规则上。
+例如：安静、克制、柔和、明亮、理性、生活化、礼物感、品牌感等，并说明它们由哪些视觉元素形成。
+
+十一、可复用规则
+提炼出这张图最值得保留的 5 到 8 条风格规则，用于后续 AI 生图时直接复制到提示词中。
+每条规则必须是视觉规则，不是产品身份规则。
+不得包含要求改变产品结构、产品角度、产品颜色、产品图案或配件关系的内容。
+可复用规则可以包含非产品元素轻微真实瑕疵感，但必须写明只作用于产品本身以外的背景、道具、桌面、布料、纸张、食物、手部和环境光影，不得改变产品结构、比例、颜色、材质、纹理、图案和配件关系。
+
+十一·一、风格保真增强栏目
+
+为支持后续“高风格保真 / 风格复现”任务，《风格母版》在以上各节基础上，必须额外输出以下栏目。这些栏目用于让下游《主图 / 详情图单张变量配置》直接调用，提升生成图与风格参考图的相似度；但全部只约束非产品视觉风格，不得覆盖产品身份、产品角度、尺寸比例和单张页面任务。
+
+【风格贴合锚点】
+提取 5 至 8 个决定本图风格相似度的非产品视觉锚点，覆盖背景、色调、光线、构图、前中后景层次、道具簇、内容物状态、文字有无等维度。每个锚点须写成可执行的视觉描述（例如“左后方绿色植物大幅虚化作为冷色背景层”），不写空泛形容词。这些锚点是后续判断“是否贴合风格参考图”的命中依据。
+
+【可复用道具簇】
+把参考图中的非产品道具按三类输出：
+必须保留——决定风格识别度的标志性道具或道具组合；
+可替换同类——可用同类物替换、不影响风格的道具；
+可省略——对风格相似度影响很小、冲突时可去掉的道具。
+说明：这些道具不是产品身份，不得改变产品结构、比例、颜色、材质、纹理、图案和配件关系；但在高风格贴合任务中，“必须保留”类应作为风格锚点保留，不得随意删空。
+
+【背景层次结构】
+明确前景、中景、背景三层分别有什么元素、清晰程度、虚化程度和空间位置；若某一层在参考图中确实不存在，应写明“该层无元素”。本栏用于约束下游不得把多层次背景退化为单层纯色背景。
+
+【道具密度等级】
+从“极简 / 克制 / 常规 / 丰富生活场景 / 风格复现型”五档中选择一项（定义与《道具生成规则模块》三·一一致），并说明判断依据（例如非产品元素数量、层次分布、生活化程度）。该等级供下游变量配置直接继承，作为道具与非产品元素数量的下限参考。
+
+【内容物与使用状态】
+针对水壶类、餐饮、容器类产品，提取参考图中是否有咖啡、茶、水、牛奶、奶泡、拉花、冰块、柠檬片等内容物及其使用状态（如满壶、半壶、带拉花、带冰）。说明：内容物与液面、奶泡、拉花属于“使用场景元素”，用于表达使用状态，不属于产品身份，不得改变产品结构和真实材质。若参考图为空壶或无内容物，也应写明。
+
+【文字有无继承】
+记录参考图是否含文字。如果参考图没有文字，默认后续风格复现图不添加标题文字；如下游页面任务必须加字，只允许小面积、低干扰文字，且不得为加字而删除主要风格锚点。如果参考图本身含文字，仅提取文字气质（见八、文字规则），不复制具体文案。
+
+【风格防退化规则】
+明确列出本风格不得退化的内容，至少包括：不得退化为纯白或纯灰背景；不得删除参考图中的主要前景层次；不得删除主要背景环境元素；不得把生活化桌面变成孤立棚拍白底；不得把丰富场景压缩成单产品海报；不得在参考图无文字时擅自添加大标题。以上防退化项只约束非产品视觉风格，仍以产品身份、产品角度、尺寸比例、真实感和单张页面任务为更高优先级。
+
+十二、禁止出现
+列出至少 8 条后续生成时应避免的内容。
+要求具体，例如：
+不要复杂拼贴；
+不要多宫格；
+不要过度装饰；
+不要强烈霓虹色；
+不要硬阴影；
+不要杂乱道具；
+不要文字压住主体；
+不要把画面做成信息图；
+不要为了复用风格而改变产品身份；
+不要为了统一版式而改变产品角度。
+不要把参考图产品大小、产品与手部或道具的比例关系写成风格硬性要求。
+禁止出现中应补充：不要把非产品元素轻微真实瑕疵感误用到产品本身；不要要求产品变旧、变脏、改色、改材质、出现污渍、划痕、裂纹、破损、图案磨损或原图不存在的釉面瑕疵。风格母版只约束背景、色调、光线、留白、文字气质和道具密度，不覆盖产品身份、产品角度和单张页面任务。
+
+十三、最终可复制版风格母版
+请把以上内容整理成一段可以直接放入 AI 生图提示词中的【精简版风格母版】，控制在 300 到 500 字之间。
+精简版必须明确：本风格只约束背景、色调、光线、留白、文字气质和道具密度，不得覆盖产品身份、产品角度和单张页面任务。
+精简版还应浓缩写入以下风格保真要点，便于下游变量配置直接继承：本图【道具密度等级】、3 至 5 条最关键的【风格贴合锚点】、【背景层次结构】中各层主要元素、【内容物与使用状态】、【文字有无继承】结论，以及【风格防退化规则】的核心底线（如不得退化为纯色背景、不得删除主要前中后景层次、参考图无文字则不加大标题）。这些要点仍只约束非产品视觉风格，不覆盖产品身份、产品角度、尺寸比例和单张页面任务。
+
+--- REFERENCE END ---
+
+仅返回一个 JSON 对象，不要 Markdown 说明。顶层只返回 artifact_type、style_master、missing_information、notes。
+artifact_type 必须为 style_master。style_master 必须是对象并完整包含以下键：["visual_positioning", "composition_and_layout", "background_rules", "color_rules", "lighting_rules", "subject_presentation_rules", "prop_rules", "typography_rules", "negative_space_rules", "visual_mood", "reusable_rules", "fidelity_enhancements", "forbidden_elements", "concise_style_master"]。
+fidelity_enhancements 必须覆盖风格贴合锚点、可复用道具簇、背景层次结构、道具密度等级、内容物与使用状态、文字有无继承和风格防退化规则。
+forbidden_elements 至少包含 8 条明确禁项。concise_style_master 必须是 required reference 要求的最终可复制精简版。
+
+返回层级必须严格遵循以下有效 JSON 骨架，只替换内容，不改变字段层级或括号位置：
+--- JSON SHAPE START ---
+{
+  "artifact_type": "style_master",
+  "style_master": {
+    "visual_positioning": "按规则填写",
+    "composition_and_layout": "按规则填写",
+    "background_rules": "按规则填写",
+    "color_rules": "按规则填写",
+    "lighting_rules": "按规则填写",
+    "subject_presentation_rules": "按规则填写",
+    "prop_rules": "按规则填写",
+    "typography_rules": "按规则填写",
+    "negative_space_rules": "按规则填写",
+    "visual_mood": "按规则填写",
+    "reusable_rules": [
+      "按规则填写"
+    ],
+    "fidelity_enhancements": {
+      "style_anchors": [
+        "按规则填写"
+      ],
+      "reusable_prop_clusters": {
+        "must_keep": [
+          "按规则填写"
+        ],
+        "replaceable": [
+          "按规则填写"
+        ],
+        "optional": []
+      },
+      "background_layers": {
+        "foreground": "按规则填写",
+        "midground": "按规则填写",
+        "background": "按规则填写"
+      },
+      "prop_density_level": "按规则填写",
+      "contents_and_usage_state": "按规则填写",
+      "text_inheritance": "按规则填写",
+      "anti_degradation_rules": [
+        "按规则填写"
+      ]
+    },
+    "forbidden_elements": [
+      "至少 8 条明确禁项"
+    ],
+    "concise_style_master": "按 required reference 填写 300 至 500 字精简版"
+  },
+  "missing_information": [
+    "无法确认项；没有则返回空数组"
+  ],
+  "notes": ""
+}
+--- JSON SHAPE END ---
+forbidden_elements 和 concise_style_master 必须位于 style_master 对象内部，不能放到顶层。
+missing_information 和 notes 必须在 style_master 对象关闭后、根对象关闭前。
+返回前逐层检查括号：整个回复只能有一个根对象，根对象最后一个字符才是最终右花括号；不得在根对象关闭后追加任何字段或说明。
+
+不得返回 product_identity_archive、identity、angle_inventory、angle_slots、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、images 或 qc_results。
+        不得虚构产品规格、功能、认证、销量或不可见结构；参考图中的具体产品、品牌、文案和图案不得作为固定模板复制。

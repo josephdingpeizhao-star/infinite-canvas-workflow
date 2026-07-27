@@ -1,0 +1,26 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "detail-variable-config",
+  "generated_from": "CAT-01 盘子品类一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "plate-detail-chain",
+      "source_file": "categories/盘子/prompts/detail.md",
+      "line_start": 1,
+      "line_end": 2,
+      "tags": ["plate", "detail", "modules"],
+      "audit_ref": "CAT-01",
+      "text": "详情图固定为模块01至模块08。模块05是唯一尺寸标注图，只能使用已确认长、宽、高；其他模块不得启用尺寸标注。结构、材质、使用场景、比例关系和收尾氛围都必须服从盘子身份与绑定角度，不得把盘子改成碗、杯、锅或托盘。"
+    },
+    {
+      "slice_id": "plate-detail-handheld-and-props",
+      "source_file": "categories/盘子/lexicons.json",
+      "line_start": 1,
+      "line_end": 1,
+      "tags": ["plate", "handheld", "props"],
+      "audit_ref": "CAT-01",
+      "text": "手持数量严格服从当批值。托盘只有产品身份明确认定为主体时才按主体处理；盘、碟、餐盘作为商品主体时不得误判为道具。手部和道具不得遮挡盘面、盘心、盘沿、图案或底部支撑关系。"
+    }
+  ]
+}

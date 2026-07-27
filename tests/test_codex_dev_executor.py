@@ -4,6 +4,7 @@ import base64
 import copy
 import io
 import json
+import shutil
 import sys
 import tempfile
 import threading
@@ -499,6 +500,11 @@ class FakeResponse:
 
 
 class CodexDevFixture(unittest.TestCase):
+    def ensure_category_recipes(self, root: Path) -> None:
+        target = root / "categories"
+        if not target.exists():
+            shutil.copytree(ROOT / "categories", target)
+
     def with_structured_facts(
         self,
         context: ExecutorContext,
@@ -513,11 +519,16 @@ class CodexDevFixture(unittest.TestCase):
         )
 
     def make_fixture(self, root: Path) -> tuple[ExecutorContext, Path]:
+        self.ensure_category_recipes(root)
         skill_dir = root / ".agents" / "skills" / "product-identity-archive"
         reference_dir = skill_dir / "references"
         reference_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("SKILL_MARKER: 只做产品身份档案", encoding="utf-8")
         (reference_dir / "产品身份档案提示词.txt").write_text("REFERENCE_MARKER: 不得虚构", encoding="utf-8")
+        (root / "categories" / "杯类" / "prompts" / "identity.md").write_text(
+            "REFERENCE_MARKER: 不得虚构",
+            encoding="utf-8",
+        )
 
         inputs = root / "workspace" / "inputs" / "white_bg"
         inputs.mkdir(parents=True)
@@ -544,11 +555,16 @@ class CodexDevFixture(unittest.TestCase):
         root: Path,
         context: ExecutorContext,
     ) -> tuple[ExecutorContext, Path, Path, Path]:
+        self.ensure_category_recipes(root)
         skill_dir = root / ".agents" / "skills" / "style-master-extractor"
         reference_dir = skill_dir / "references"
         reference_dir.mkdir(parents=True)
         (skill_dir / "SKILL.md").write_text("STYLE_SKILL_MARKER: 只提取视觉风格", encoding="utf-8")
         (reference_dir / "反向提取风格母版提示词.txt").write_text(
+            "STYLE_REFERENCE_MARKER: 不得覆盖产品身份",
+            encoding="utf-8",
+        )
+        (root / "categories" / "杯类" / "prompts" / "style.md").write_text(
             "STYLE_REFERENCE_MARKER: 不得覆盖产品身份",
             encoding="utf-8",
         )
@@ -584,6 +600,7 @@ class CodexDevFixture(unittest.TestCase):
         root: Path,
         context: ExecutorContext,
     ) -> tuple[ExecutorContext, Path, tuple[Path, ...], Path]:
+        self.ensure_category_recipes(root)
         skill_dir = root / ".agents" / "skills" / "angle-inventory"
         reference_dir = skill_dir / "references"
         reference_dir.mkdir(parents=True)
@@ -592,6 +609,10 @@ class CodexDevFixture(unittest.TestCase):
             encoding="utf-8",
         )
         (reference_dir / "角度槽位入库表生成与识别提示词.txt").write_text(
+            "ANGLE_REFERENCE_MARKER: A/B/C/D；末尾套装字段不适用于本批次",
+            encoding="utf-8",
+        )
+        (root / "categories" / "杯类" / "prompts" / "angle.md").write_text(
             "ANGLE_REFERENCE_MARKER: A/B/C/D；末尾套装字段不适用于本批次",
             encoding="utf-8",
         )
@@ -631,6 +652,7 @@ class CodexDevFixture(unittest.TestCase):
         )
 
     def make_downstream_fixture(self, root: Path) -> tuple[ExecutorContext, Path]:
+        self.ensure_category_recipes(root)
         skill_root = root / ".agents" / "skills" / "main-variable-config"
         runtime_path = (
             skill_root
@@ -652,6 +674,10 @@ class CodexDevFixture(unittest.TestCase):
                 },
                 ensure_ascii=False,
             ),
+            encoding="utf-8",
+        )
+        (root / "categories" / "杯类" / "runtime" / "main.json").write_text(
+            runtime_path.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 
@@ -766,6 +792,10 @@ class CodexDevFixture(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        (root / "categories" / "杯类" / "runtime" / "detail.json").write_text(
+            runtime_path.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
 
         response = valid_main_variable_response()
         common = response["common_constraints"]
@@ -823,6 +853,10 @@ class CodexDevFixture(unittest.TestCase):
                 },
                 ensure_ascii=False,
             ),
+            encoding="utf-8",
+        )
+        (root / "categories" / "杯类" / "runtime" / "final.json").write_text(
+            runtime_path.read_text(encoding="utf-8"),
             encoding="utf-8",
         )
 

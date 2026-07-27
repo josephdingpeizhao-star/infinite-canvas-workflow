@@ -5,6 +5,7 @@ import unittest
 import importlib
 import copy
 import json
+import shutil
 import struct
 import tempfile
 from pathlib import Path
@@ -140,6 +141,7 @@ class CodexDevQcTest(unittest.TestCase):
         path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
     def make_qc_fixture(self, root: Path) -> tuple[dict[str, object], Path]:
+        shutil.copytree(ROOT / "categories", root / "categories")
         workspace = root / "workspace"
         inputs_root = workspace / "inputs"
         artifacts_root = workspace / "artifacts"
@@ -226,12 +228,29 @@ class CodexDevQcTest(unittest.TestCase):
             skill_root / "references" / "runtime_rule_slices" / "qc-inspector.runtime_rule_slices.json",
             {"artifact_type": "runtime_rule_slice_package", "skill": "qc-inspector", "slices": [{"text": "QC_RUNTIME_MARKER"}]},
         )
+        self._write_json(
+            root / "categories" / "杯类" / "qc" / "runtime.json",
+            {
+                "artifact_type": "runtime_rule_slice_package",
+                "skill": "qc-inspector",
+                "slices": [{"text": "QC_RUNTIME_MARKER"}],
+            },
+        )
         for name, marker in (
             ("电商图片通用质检清单.txt", "QC_CHECKLIST_MARKER"),
             ("工作流总控规则.txt", "QC_WORKFLOW_MARKER"),
             ("真实感约束.txt", "QC_REALISM_MARKER"),
         ):
             (skill_root / "references" / name).write_text(marker, encoding="utf-8")
+        for name, marker in (
+            ("checklist.md", "QC_CHECKLIST_MARKER"),
+            ("workflow.md", "QC_WORKFLOW_MARKER"),
+            ("realism.md", "QC_REALISM_MARKER"),
+        ):
+            (root / "categories" / "杯类" / "qc" / name).write_text(
+                marker,
+                encoding="utf-8",
+            )
 
         self._write_json(
             root / "schemas" / "qc_report.schema.json",
@@ -1024,16 +1043,14 @@ class CodexDevQcTest(unittest.TestCase):
             manifest, _output = self.make_qc_fixture(root)
             runtime = (
                 root
-                / ".agents"
-                / "skills"
-                / "qc-inspector"
-                / "references"
-                / "runtime_rule_slices"
-                / "qc-inspector.runtime_rule_slices.json"
+                / "categories"
+                / "杯类"
+                / "qc"
+                / "runtime.json"
             )
             runtime.write_text("not-json", encoding="utf-8")
 
-            with self.assertRaisesRegex(ExecutorExecutionError, "完整的 QC 规则"):
+            with self.assertRaisesRegex(ExecutorExecutionError, "品类配方"):
                 load_qc_plan(manifest, root)
 
     def test_qc_plan_rejects_bad_ratio_path_escape_product_mismatch_and_existing_report(self) -> None:

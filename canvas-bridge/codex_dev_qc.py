@@ -8,6 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from category_recipes import (
+    DEFAULT_CATEGORY_KEY,
+    CategoryRecipeError,
+    load_category_recipe,
+    load_manifest_category,
+)
 from codex_dev_downstream import (
     artifact_file_under_root,
     load_typed_artifact,
@@ -841,27 +847,47 @@ def _validate_reference_image(path: Path) -> None:
         raise ExecutorExecutionError("codex-dev 检测到 QC 附件格式无效")
 
 
-def _load_rule_documents(repository_root: Path) -> tuple[QcRuleDocument, ...]:
+def _load_rule_documents(
+    repository_root: Path,
+    category_key: str = DEFAULT_CATEGORY_KEY,
+) -> tuple[QcRuleDocument, ...]:
     skill_root = repository_root.resolve() / ".agents" / "skills" / "qc-inspector"
-    paths = (
-        skill_root / "SKILL.md",
-        skill_root / "references" / "runtime_rule_slices" / "qc-inspector.runtime_rule_slices.json",
-        skill_root / "references" / "电商图片通用质检清单.txt",
-        skill_root / "references" / "工作流总控规则.txt",
-        skill_root / "references" / "真实感约束.txt",
+    try:
+        recipe = load_category_recipe(repository_root, category_key)
+    except CategoryRecipeError:
+        raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则") from None
+    sources = (
+        ("SKILL.md", skill_root / "SKILL.md", None),
+        (
+            "qc-inspector.runtime_rule_slices.json",
+            None,
+            json.dumps(
+                recipe.runtime_packages["qc_runtime"],
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+        ),
+        ("电商图片通用质检清单.txt", None, recipe.qc_documents["qc_checklist"]),
+        ("工作流总控规则.txt", None, recipe.qc_documents["qc_workflow"]),
+        ("真实感约束.txt", None, recipe.qc_documents["qc_realism"]),
     )
     documents: list[QcRuleDocument] = []
-    for path in paths:
-        try:
-            resolved = path.resolve()
-            if not resolved.is_relative_to(repository_root.resolve()):
-                raise OSError
-            text = resolved.read_text(encoding="utf-8")
-        except (OSError, UnicodeError, RuntimeError, ValueError):
-            raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则") from None
+    for name, path, recipe_text in sources:
+        if path is not None:
+            try:
+                resolved = path.resolve()
+                if not resolved.is_relative_to(repository_root.resolve()):
+                    raise OSError
+                text = resolved.read_text(encoding="utf-8")
+            except (OSError, UnicodeError, RuntimeError, ValueError):
+                raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则") from None
+        else:
+            resolved = repository_root.resolve() / "categories" / category_key
+            text = str(recipe_text)
         if not text.strip():
             raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则")
-        if path.name == "qc-inspector.runtime_rule_slices.json":
+        if name == "qc-inspector.runtime_rule_slices.json":
             try:
                 runtime = json.loads(text)
             except json.JSONDecodeError:
@@ -881,7 +907,7 @@ def _load_rule_documents(repository_root: Path) -> tuple[QcRuleDocument, ...]:
                 )
             ):
                 raise ExecutorExecutionError("codex-dev 无法读取完整的 QC 规则")
-        documents.append(QcRuleDocument(name=path.name, path=resolved, text=text))
+        documents.append(QcRuleDocument(name=name, path=resolved, text=text))
     return tuple(documents)
 
 
@@ -894,6 +920,10 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
     if manifest.get("batch_type") != "single":
         raise ExecutorExecutionError("codex-dev QC 当前只支持单品批次")
 
+    try:
+        category_recipe = load_manifest_category(repository_root, manifest)
+    except CategoryRecipeError as exc:
+        raise ExecutorExecutionError(f"codex-dev 无法加载产品品类配方：{exc}") from None
     schema = _load_qc_report_schema(repository_root)
 
     inputs_root = _workspace_root(manifest, "inputs_root")
@@ -1049,7 +1079,7 @@ def load_qc_plan(manifest: Mapping[str, Any], repository_root: Path) -> QcPlan:
         output_path=output_path,
         assets=tuple(assets),
         batches=batches,
-        rule_documents=_load_rule_documents(repository_root),
+        rule_documents=_load_rule_documents(repository_root, category_recipe.key),
         documents={
             "product_identity_archive": identity,
             "style_master": style_master,
