@@ -9,7 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, TextIO
 
 from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
 from batch_recycle_state import (
@@ -27,7 +27,7 @@ COMMAND_MAX_AGE_MS = 8_000
 DEFAULT_STYLE_UPLOAD_HOST = "127.0.0.1"
 DEFAULT_STYLE_UPLOAD_PORT = 17_373
 MAX_STYLE_UPLOAD_BYTES = 64 * 1024 * 1024
-MAX_STYLE_REFERENCE_FILES = 20
+MAX_STYLE_REFERENCE_FILES = 1
 CROSS_ROLE_IMAGE_MESSAGE = (
     "这张图已经是本批的产品原图，不能再登记为风格参考。"
     "若是接反了：产品原图连工作流机器，风格参考图连信息卡。"
@@ -73,6 +73,23 @@ class StyleReferencePublishResult:
 class StyleReferenceUploadOutcome:
     sha256: str
     completed: bool
+
+
+@dataclass(frozen=True)
+class StyleReferenceCardRequest:
+    request_id: str
+    requested_at: int
+    batch_id: str
+
+
+@dataclass(frozen=True)
+class StyleReferenceBatchContext:
+    manifest_path: Path
+    manifest: Mapping[str, Any]
+    batch_id: str
+    workspace: Path
+    style_root: Path
+    journal_path: Path
 
 
 @dataclass(frozen=True)
@@ -122,6 +139,161 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise StyleReferenceIntakeError(f"{label}格式无效。")
     return value
+
+
+def open_new_json_receipt(path: Path, *, exists_message: str) -> TextIO:
+    """Create one receipt file exactly once; callers own the returned handle."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        return path.open("x+", encoding="utf-8", newline="\n")
+    except FileExistsError:
+        raise StyleReferenceIntakeError(exists_message) from None
+
+
+def write_json_receipt(handle: TextIO, payload: Mapping[str, Any]) -> None:
+    """Write the already-created receipt once using the shared JSON format."""
+
+    json.dump(dict(payload), handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+    handle.flush()
+
+
+def validate_registered_style_reference_request(
+    metadata: Mapping[str, Any],
+    request_state: Mapping[str, Any],
+    *,
+    now_ms: int,
+    action_label: str,
+    retry_label: str,
+) -> StyleReferenceCardRequest:
+    """Validate the shared command envelope and registered-card boundary."""
+
+    request_id = request_state.get("requestId")
+    requested_at = request_state.get("requestedAt")
+    batch_id = request_state.get("batchId")
+    if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
+        raise StyleReferenceIntakeError(f"{action_label}请求编号无效。")
+    if type(requested_at) is not int or not 0 <= now_ms - requested_at <= COMMAND_MAX_AGE_MS:
+        raise StyleReferenceIntakeError(f"{action_label}请求已过期，请重新点击{retry_label}。")
+    if not isinstance(batch_id, str) or not batch_id:
+        raise StyleReferenceIntakeError(f"{action_label}缺少批次号。")
+
+    batch_intake = metadata.get("batchIntake")
+    receipt = batch_intake.get("receipt") if isinstance(batch_intake, Mapping) else None
+    if (
+        not isinstance(batch_intake, Mapping)
+        or batch_intake.get("status") != "completed"
+        or not isinstance(receipt, Mapping)
+        or receipt.get("batchId") != batch_id
+    ):
+        raise StyleReferenceIntakeError(
+            f"信息卡尚未登记完成，不能{retry_label}风格参考图。"
+        )
+    return StyleReferenceCardRequest(
+        request_id=request_id,
+        requested_at=requested_at,
+        batch_id=batch_id,
+    )
+
+
+def resolve_style_reference_manifest_path(
+    repository_root: Path,
+    batch_id: str,
+    *,
+    action_label: str,
+) -> Path:
+    """Resolve only a repository-owned batch manifest for either style action."""
+
+    if (
+        not batch_id
+        or Path(batch_id).name != batch_id
+        or any(char in batch_id for char in ("/", "\\", "\0"))
+    ):
+        raise StyleReferenceIntakeError(f"{action_label}的批次号无效。")
+    path = repository_root.resolve() / "manifests" / f"{batch_id}.batch_manifest.json"
+    manifest = _read_json(path, "批次清单")
+    if manifest.get("product_id") != batch_id:
+        raise StyleReferenceIntakeError(f"{action_label}的批次与清单不一致。")
+    return path
+
+
+def resolve_style_reference_batch_context(
+    manifest_path: Path,
+) -> StyleReferenceBatchContext:
+    """Resolve the one approved style directory shared by intake and removal."""
+
+    manifest = _read_json(manifest_path, "批次清单")
+    batch_id = str(manifest.get("product_id") or "").strip()
+    workspace_value = (
+        (manifest.get("workspace") or {}).get("root")
+        if isinstance(manifest.get("workspace"), dict)
+        else None
+    )
+    if not batch_id or not isinstance(workspace_value, str) or not workspace_value:
+        raise StyleReferenceIntakeError("批次清单缺少工作区信息。")
+    try:
+        workspace = Path(workspace_value).resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise StyleReferenceIntakeError("批次工作区无法安全定位。") from None
+    marker = _read_json(workspace / ".canvas_batch", "批次安全标记")
+    if marker.get("type") != "canvas-batch-v1" or marker.get("product_id") != batch_id:
+        raise StyleReferenceIntakeError("批次安全标记与目标批次不一致。")
+    inputs = manifest.get("inputs") if isinstance(manifest.get("inputs"), dict) else {}
+    raw_roots = inputs.get("style_reference_images")
+    roots = raw_roots if isinstance(raw_roots, list) else []
+    if len(roots) != 1 or not isinstance(roots[0], str):
+        raise StyleReferenceIntakeError("批次没有唯一的风格参考目录。")
+    style_root = Path(roots[0]).resolve(strict=False)
+    expected_root = (workspace / "inputs" / "style_refs").resolve(strict=False)
+    if style_root != expected_root or not _inside(style_root, workspace):
+        raise StyleReferenceIntakeError("风格参考目录越过批准的批次边界。")
+    return StyleReferenceBatchContext(
+        manifest_path=manifest_path,
+        manifest=manifest,
+        batch_id=batch_id,
+        workspace=workspace,
+        style_root=style_root,
+        journal_path=run_controller.journal_path(manifest_path, batch_id),
+    )
+
+
+def style_reference_files(context: StyleReferenceBatchContext) -> tuple[Path, ...]:
+    """List only direct, ordinary files inside the approved style directory."""
+
+    root = context.style_root
+    if not root.exists():
+        return ()
+    if root.is_symlink() or not root.is_dir():
+        raise StyleReferenceIntakeError(
+            "风格参考目录不是安全的普通目录，请保留现场并交由顾问核对。"
+        )
+    files: list[Path] = []
+    try:
+        children = sorted(root.iterdir(), key=lambda item: item.name.casefold())
+    except OSError:
+        raise StyleReferenceIntakeError("风格参考目录暂时无法读取，请稍后重试。") from None
+    resolved_root = root.resolve(strict=True)
+    for child in children:
+        is_junction = getattr(child, "is_junction", lambda: False)()
+        try:
+            resolved = child.resolve(strict=True)
+        except (OSError, RuntimeError):
+            raise StyleReferenceIntakeError(
+                "风格参考目录含无法安全定位的内容，请保留现场并交由顾问核对。"
+            ) from None
+        if (
+            child.is_symlink()
+            or is_junction
+            or not child.is_file()
+            or resolved.parent != resolved_root
+            or not _inside(resolved, context.workspace)
+        ):
+            raise StyleReferenceIntakeError(
+                "风格参考目录只能包含本批直接登记的普通文件，请保留现场并交由顾问核对。"
+            )
+        files.append(resolved)
+    return tuple(files)
 
 
 def _validate_upload(upload: StyleReferenceUpload) -> None:
@@ -213,26 +385,18 @@ def _publish_style_references_active(
 
     if not REQUEST_ID_RE.fullmatch(request_id):
         raise StyleReferenceIntakeError("风格补登请求编号无效。")
-    if not uploads:
-        raise StyleReferenceIntakeError("没有可补登的风格参考图。")
-    manifest = _read_json(manifest_path, "批次清单")
-    batch_id = str(manifest.get("product_id") or "").strip()
-    workspace_value = (manifest.get("workspace") or {}).get("root") if isinstance(manifest.get("workspace"), dict) else None
-    if not batch_id or not isinstance(workspace_value, str) or not workspace_value:
-        raise StyleReferenceIntakeError("批次清单缺少工作区信息。")
-    workspace = Path(workspace_value).resolve()
-    marker = _read_json(workspace / ".canvas_batch", "批次安全标记")
-    if marker.get("type") != "canvas-batch-v1" or marker.get("product_id") != batch_id:
-        raise StyleReferenceIntakeError("批次安全标记与目标批次不一致。")
-    inputs = manifest.get("inputs") if isinstance(manifest.get("inputs"), dict) else {}
-    raw_roots = inputs.get("style_reference_images")
-    roots = raw_roots if isinstance(raw_roots, list) else []
-    if len(roots) != 1 or not isinstance(roots[0], str):
-        raise StyleReferenceIntakeError("批次没有唯一的风格参考目录。")
-    style_root = Path(roots[0]).resolve(strict=False)
-    expected_root = (workspace / "inputs" / "style_refs").resolve(strict=False)
-    if style_root != expected_root or not _inside(style_root, workspace):
-        raise StyleReferenceIntakeError("风格参考目录越过批准的批次边界。")
+    if len(uploads) != MAX_STYLE_REFERENCE_FILES:
+        if not uploads:
+            raise StyleReferenceIntakeError(
+                "没有可补登的风格参考图，请先连接 1 张后重新补登。"
+            )
+        raise StyleReferenceIntakeError(
+            "多张风格会互相冲突，每批只登记 1 张。请只保留 1 张后重新补登。"
+        )
+    context = resolve_style_reference_batch_context(manifest_path)
+    batch_id = context.batch_id
+    workspace = context.workspace
+    style_root = context.style_root
 
     names: set[str] = set()
     for upload in uploads:
@@ -246,10 +410,25 @@ def _publish_style_references_active(
         tuple(upload.sha256 for upload in uploads),
     )
 
-    targets = tuple(style_root / upload.name for upload in uploads)
-    for upload, target in zip(uploads, targets, strict=True):
-        if target.exists() and _sha256(target.read_bytes()) != upload.sha256:
-            raise StyleReferenceIntakeError("风格参考目录已有同名但不同内容的文件，未覆盖。")
+    upload = uploads[0]
+    existing_files = style_reference_files(context)
+    if len(existing_files) > MAX_STYLE_REFERENCE_FILES:
+        raise StyleReferenceIntakeError(
+            "本批已有多张风格参考图，请先移除后再补登 1 张。"
+        )
+    if existing_files:
+        existing = existing_files[0]
+        if existing.name.casefold() != upload.name.casefold():
+            raise StyleReferenceIntakeError(
+                "本批已有风格参考图，如需更换请先移除再补登。"
+            )
+        if _sha256_file(existing) != upload.sha256:
+            raise StyleReferenceIntakeError(
+                "风格参考目录已有同名但不同内容的文件，请先移除再补登。"
+            )
+        target = existing
+    else:
+        target = style_root / upload.name
 
     receipt_path = workspace / "manifests" / f"style_reference_intake_receipt.{request_id}.json"
     if not _inside(receipt_path, workspace):
@@ -258,21 +437,28 @@ def _publish_style_references_active(
         raise StyleReferenceIntakeError("这次风格补登请求已经完成，不会重复写入。")
 
     style_root.mkdir(parents=True, exist_ok=True)
-    for upload, target in zip(uploads, targets, strict=True):
-        if target.exists():
-            continue
+    if not target.exists():
         try:
             with target.open("xb") as handle:
                 handle.write(upload.data)
         except FileExistsError:
-            if _sha256(target.read_bytes()) != upload.sha256:
+            if _sha256_file(target) != upload.sha256:
                 raise StyleReferenceIntakeError("风格参考图并发写入冲突，已停止。") from None
+    published_files = style_reference_files(context)
+    if (
+        len(published_files) != MAX_STYLE_REFERENCE_FILES
+        or published_files[0].name.casefold() != upload.name.casefold()
+        or _sha256_file(published_files[0]) != upload.sha256
+    ):
+        raise StyleReferenceIntakeError(
+            "风格参考目录在补登时发生变化，已停止。请先移除后重新补登。"
+        )
 
     receipt = {
         "receipt_type": "style_reference_intake_v1",
         "product_id": batch_id,
         "request_id": request_id,
-        "file_count": len(uploads),
+        "file_count": MAX_STYLE_REFERENCE_FILES,
         "files": [
             {
                 "node_id": upload.node_id,
@@ -284,16 +470,14 @@ def _publish_style_references_active(
             for upload in uploads
         ],
     }
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        with receipt_path.open("x", encoding="utf-8", newline="\n") as handle:
-            json.dump(receipt, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-    except FileExistsError:
-        raise StyleReferenceIntakeError("这次风格补登请求已经完成，不会重复写入。") from None
+    with open_new_json_receipt(
+        receipt_path,
+        exists_message="这次风格补登请求已经完成，不会重复写入。",
+    ) as handle:
+        write_json_receipt(handle, receipt)
     return StyleReferencePublishResult(
         batch_id=batch_id,
-        file_count=len(uploads),
+        file_count=MAX_STYLE_REFERENCE_FILES,
         receipt_path=str(receipt_path),
         files=tuple(upload.name for upload in uploads),
     )
@@ -359,6 +543,7 @@ class WorkflowStyleReferenceService:
         upload_host: str = DEFAULT_STYLE_UPLOAD_HOST,
         upload_port: int = DEFAULT_STYLE_UPLOAD_PORT,
         batch_lock_root: Path | None = None,
+        removal_handler: Any | None = None,
     ) -> None:
         if upload_host != DEFAULT_STYLE_UPLOAD_HOST:
             raise ValueError("风格参考上传只允许绑定 127.0.0.1 回环地址。")
@@ -372,6 +557,7 @@ class WorkflowStyleReferenceService:
         self.upload_host = upload_host
         self.upload_port = upload_port
         self.batch_lock_root = batch_lock_root
+        self.removal_handler = removal_handler
         self.sessions: dict[str, _StyleUploadSession] = {}
         self.consumed_request_ids: set[str] = set()
         self.stopping = False
@@ -431,13 +617,11 @@ class WorkflowStyleReferenceService:
         node["metadata"] = metadata
 
     def _manifest_path(self, batch_id: str) -> Path:
-        if not batch_id or Path(batch_id).name != batch_id or any(char in batch_id for char in ("/", "\\", "\0")):
-            raise StyleReferenceIntakeError("风格补登的批次号无效。")
-        path = self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
-        manifest = _read_json(path, "批次清单")
-        if manifest.get("product_id") != batch_id:
-            raise StyleReferenceIntakeError("风格补登的批次与清单不一致。")
-        return path
+        return resolve_style_reference_manifest_path(
+            self.repository_root,
+            batch_id,
+            action_label="风格补登",
+        )
 
     @staticmethod
     def _parse_source(value: Any) -> _StyleSource:
@@ -468,30 +652,28 @@ class WorkflowStyleReferenceService:
         if not isinstance(intake, Mapping) or intake.get("status") != "queued":
             return
         request_id = intake.get("requestId")
-        requested_at = intake.get("requestedAt")
-        batch_id = intake.get("batchId")
         try:
-            if not isinstance(request_id, str) or not REQUEST_ID_RE.fullmatch(request_id):
-                raise StyleReferenceIntakeError("风格补登请求编号无效。")
+            request = validate_registered_style_reference_request(
+                metadata,
+                intake,
+                now_ms=self.clock_ms(),
+                action_label="风格补登",
+                retry_label="补登",
+            )
+            request_id = request.request_id
             if request_id in self.consumed_request_ids or request_id in self.sessions:
                 raise StyleReferenceIntakeError("这次风格补登请求已被处理。")
-            if type(requested_at) is not int or not 0 <= self.clock_ms() - requested_at <= COMMAND_MAX_AGE_MS:
-                raise StyleReferenceIntakeError("风格补登请求已过期，请重新点击补登。")
-            if not isinstance(batch_id, str):
-                raise StyleReferenceIntakeError("风格补登缺少批次号。")
-            batch_intake = metadata.get("batchIntake")
-            receipt = batch_intake.get("receipt") if isinstance(batch_intake, Mapping) else None
-            if (
-                not isinstance(batch_intake, Mapping)
-                or batch_intake.get("status") != "completed"
-                or not isinstance(receipt, Mapping)
-                or receipt.get("batchId") != batch_id
-            ):
-                raise StyleReferenceIntakeError("信息卡尚未登记完成，不能补登风格参考图。")
+            batch_id = request.batch_id
             manifest_path = self._manifest_path(batch_id)
             raw_sources = intake.get("sources")
-            if not isinstance(raw_sources, list) or not 0 < len(raw_sources) <= MAX_STYLE_REFERENCE_FILES:
-                raise StyleReferenceIntakeError("风格参考图数量无效。")
+            if not isinstance(raw_sources, list) or not raw_sources:
+                raise StyleReferenceIntakeError(
+                    "没有可补登的风格参考图，请先连接 1 张后重新补登。"
+                )
+            if len(raw_sources) != MAX_STYLE_REFERENCE_FILES:
+                raise StyleReferenceIntakeError(
+                    "多张风格会互相冲突，每批只登记 1 张。请只保留 1 张后重新补登。"
+                )
             sources = [self._parse_source(item) for item in raw_sources]
             source_by_id = {item.node_id: item for item in sources}
             if len(source_by_id) != len(sources):
@@ -555,7 +737,32 @@ class WorkflowStyleReferenceService:
             raise RuntimeError("无法读取画布，风格补登服务已停止。")
         for raw_node in state.get("nodes", []):
             if isinstance(raw_node, dict) and raw_node.get("type") == "batch-info":
-                self._open_session(raw_node, state)
+                metadata = self._metadata(raw_node)
+                intake = metadata.get("styleReferenceIntake")
+                intake_status = (
+                    intake.get("status") if isinstance(intake, Mapping) else None
+                )
+                removal_queued = (
+                    self.removal_handler is not None
+                    and self.removal_handler.is_queued(raw_node)
+                )
+                if removal_queued and intake_status in {
+                    "queued",
+                    "upload_ready",
+                    "uploading",
+                }:
+                    message = (
+                        "风格补登与移除不能同时进行，请等待当前操作结束后再试。"
+                    )
+                    if intake_status == "queued":
+                        self._update(raw_node, "failed", error_message=message)
+                    self.removal_handler.reject(raw_node, message)
+                    continue
+                if intake_status == "queued":
+                    self._open_session(raw_node, state)
+                    continue
+                if removal_queued:
+                    self.removal_handler.process_node(raw_node)
 
     def accept_upload(
         self,

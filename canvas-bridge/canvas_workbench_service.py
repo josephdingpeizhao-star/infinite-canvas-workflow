@@ -20,6 +20,7 @@ import workflow_demo_service
 import workflow_production_http_server
 import workflow_production_service
 import workflow_style_reference_intake
+import workflow_style_reference_removal
 import canvas_readonly_assistant
 import canvas_command_assistant
 
@@ -427,11 +428,18 @@ def cmd_serve_canvas_workbench(
                 "workflow_production", step, code
             ),
         )
+        style_removal_handler = (
+            workflow_style_reference_removal.WorkflowStyleReferenceRemovalHandler(
+                REPO_ROOT,
+                client=ic_client,
+            )
+        )
         style_service = workflow_style_reference_intake.WorkflowStyleReferenceService(
             REPO_ROOT,
             client=ic_client,
             interval=interval,
             upload_port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
+            removal_handler=style_removal_handler,
         )
         recycle_service = batch_recycle_service.BatchRecycleService(
             REPO_ROOT,
