@@ -49,7 +49,7 @@ class CategoryRecipeTest(unittest.TestCase):
     def test_installed_metadata_is_recipe_driven_and_does_not_expose_internal_paths(self) -> None:
         metadata = installed_category_metadata(ROOT)
 
-        self.assertEqual(["杯类", "盘子"], [item["key"] for item in metadata])
+        self.assertEqual(["杯类", "盘子", "碗"], [item["key"] for item in metadata])
         plate = next(item for item in metadata if item["key"] == "盘子")
         self.assertEqual("盘子", plate["product_noun"])
         self.assertEqual(

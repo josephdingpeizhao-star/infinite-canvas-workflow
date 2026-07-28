@@ -1,0 +1,17 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "qc-inspector",
+  "generated_from": "CAT-02 碗品类与组合单元一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "bowl-qc-identity-and-combo",
+      "source_file": "categories/碗/qc/checklist.md",
+      "line_start": 1,
+      "line_end": 17,
+      "tags": ["bowl", "qc", "identity", "realism", "combo-unit"],
+      "audit_ref": "CAT-02",
+      "text": "检查碗的轮廓、碗口、口沿、碗身弧面、内壁、内底、碗底、底足或圈足、釉面、图案、颜色、真实受力和接触阴影。口径、宽、高、图片张数、手持数量、清水与动作边界必须与当批确认事实一致。形态 A 组合单元须逐项核对碗数和配套盘数；组件种类、数量、搭配、叠放或承托关系任一不一致即返修。"
+    }
+  ]
+}

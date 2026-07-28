@@ -1,0 +1,26 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "detail-variable-config",
+  "generated_from": "CAT-02 碗品类与组合单元一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "bowl-detail-chain-and-combo",
+      "source_file": "categories/碗/prompts/detail.md",
+      "line_start": 1,
+      "line_end": 9,
+      "tags": ["bowl", "detail", "modules", "combo-unit"],
+      "audit_ref": "CAT-02",
+      "text": "详情图数量和模块分配服从本批事实。模块05是唯一尺寸标注图，只能使用已确认口径、高和已填写的宽；其他模块不得启用尺寸标注。结构、材质、使用场景、比例关系和收尾氛围都必须服从碗身份与绑定角度。形态 A 组合单元必须完整保留组件种类、数量、搭配、叠放或承托关系。"
+    },
+    {
+      "slice_id": "bowl-detail-handheld-and-props",
+      "source_file": "categories/碗/lexicons.json",
+      "line_start": 1,
+      "line_end": 1,
+      "tags": ["bowl", "handheld", "props"],
+      "audit_ref": "CAT-02",
+      "text": "手持数量严格服从当批值。配套盘、垫盘或同组碗只有产品身份明确记录为商品组件时才按主体处理；外部餐盘、托盘和其他场景物仍按道具处理。手部和道具不得遮挡碗口、内壁、图案、圈足或组件关系。"
+    }
+  ]
+}

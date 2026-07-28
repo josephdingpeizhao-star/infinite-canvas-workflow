@@ -1,0 +1,17 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "final-prompt-compiler",
+  "generated_from": "CAT-02 碗品类与组合单元一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "bowl-final-lock",
+      "source_file": "categories/碗/prompts/final.md",
+      "line_start": 1,
+      "line_end": 6,
+      "tags": ["bowl", "final", "identity", "dimensions", "combo-unit"],
+      "audit_ref": "CAT-02",
+      "text": "最终提示词必须锁定碗口、口沿、碗身弧面、内壁、内底、碗底、底足或圈足、釉面、图案、颜色、绑定源图与 A/B/C 槽位；逐字保留用户确认口径、高、可选宽和本张手持状态。形态 A 组合单元必须完整保留全部组件、件数和搭配关系。不得新增碗配方或变量配置没有的道具、结构、尺寸、材质、认证、品牌、型号、内容物、动作或商品组件。"
+    }
+  ]
+}

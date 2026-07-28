@@ -1,0 +1,26 @@
+{
+  "artifact_type": "runtime_rule_slice_package",
+  "schema_version": 1,
+  "skill": "main-variable-config",
+  "generated_from": "CAT-02 碗品类与组合单元一期配方，内容待业务终审",
+  "slices": [
+    {
+      "slice_id": "bowl-main-identity-angle-and-combo",
+      "source_file": "categories/碗/prompts/main.md",
+      "line_start": 1,
+      "line_end": 9,
+      "tags": ["bowl", "identity", "angle", "handheld", "combo-unit"],
+      "audit_ref": "CAT-02",
+      "text": "碗主体必须保持碗口、口沿、碗身弧面、内壁、内底、碗底、底足或圈足、釉面、图案和颜色不变。每张主图只能绑定一张合格 A/B/C 白底图；不得为了页面任务倒置、悬空、翻转产品或补出绑定角度不可见结构。形态 A 组合单元整组视为一个商品，组件种类、数量和搭配关系必须与原图一致，不得增减、拆分、替换或把商品组件当成道具。"
+    },
+    {
+      "slice_id": "bowl-main-dimensions-and-scene",
+      "source_file": "categories/碗/form.json",
+      "line_start": 1,
+      "line_end": 1,
+      "tags": ["bowl", "dimensions", "scene"],
+      "audit_ref": "CAT-02",
+      "text": "口径和高必须逐字使用当批用户确认值；宽仅在用户填写时使用。不得从图片、手部或道具反推。清水、内容物、倾倒和加热必须服从当批高级选项；品类配方不会因碗的常见用途而自动放宽。"
+    }
+  ]
+}

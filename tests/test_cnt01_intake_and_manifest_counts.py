@@ -44,7 +44,7 @@ LEGACY_FACTS = {
 
 class RecipeImageCountMetadataTests(unittest.TestCase):
     def test_both_installed_categories_publish_the_approved_metadata(self) -> None:
-        for category in ("杯类", "盘子"):
+        for category in ("杯类", "盘子", "碗"):
             with self.subTest(category=category):
                 recipe = load_category_recipe(ROOT, category)
                 self.assertEqual((6, 1, 30), tuple(vars(image_count_spec(recipe.form, "main")).values()))

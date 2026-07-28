@@ -1,0 +1,38 @@
+{
+  "dimensions": {
+    "required": ["length_cm", "height_cm"],
+    "fields": [
+      {"key": "length_cm", "label": "口径", "unit": "厘米", "minimum": 1, "maximum": 9999},
+      {"key": "width_cm", "label": "宽", "unit": "厘米", "minimum": 1, "maximum": 9999},
+      {"key": "height_cm", "label": "高", "unit": "厘米", "minimum": 1, "maximum": 9999}
+    ]
+  },
+  "image_counts": {
+    "main": {"default": 6, "minimum": 1, "maximum": 30},
+    "detail": {"default": 8, "minimum": 1, "maximum": 30}
+  },
+  "handheld": {
+    "main": {"default": 2, "minimum": 0},
+    "detail": {"default": 1, "minimum": 0}
+  },
+  "advanced_options": [
+    {
+      "field": "allow_clear_water",
+      "default": false,
+      "label": "成品图碗里可以出现清水",
+      "description": "开=允许碗内出现清水、水珠等静态清水画面；关=画面中不出现水。"
+    },
+    {
+      "field": "forbid_pouring_and_heating",
+      "default": true,
+      "label": "不出现倾倒、倒水、加热等动作画面",
+      "description": "开=禁止把碗倾倒、倒水或放到炉灶上加热；关=允许出现。"
+    },
+    {
+      "field": "missing_d_no_retake",
+      "default": true,
+      "label": "拍摄角度不全时直接继续",
+      "description": "开=碗的某个角度（A/B/C/D）原图缺失时按现有原图继续，不要求补拍；关=缺角度时要求补拍。"
+    }
+  ]
+}
