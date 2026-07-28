@@ -12,6 +12,15 @@
       "tags": ["plate", "final", "identity", "dimensions"],
       "audit_ref": "CAT-01",
       "text": "最终提示词必须锁定盘身、盘面、盘心、盘沿、盘壁、盘底、底足或圈足、图案、颜色、绑定源图与 A/B/C 槽位；逐字保留用户确认长、宽、高和本张手持状态。不得新增盘子配方或变量配置没有的道具、结构、尺寸、材质、认证、品牌、型号、内容物或动作。"
+    },
+    {
+      "slice_id": "plate-final-executor-content-contract",
+      "source_file": "categories/盘子/prompts/final.md",
+      "line_start": 1,
+      "line_end": 2,
+      "tags": ["plate", "final", "executor-content-contract"],
+      "audit_ref": "HF-01",
+      "text": "每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 A/B/C 槽位、画布比例 {expected_ratio}、产品长约 {length_cm} 厘米、宽约 {width_cm} 厘米、高约 {height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。{optional_dimensions_final}\n最终提示词不得改写【绑定角度槽位】、输出画布比例、约 {height_cm} 厘米的高度锁定或本张【手持交互声明】；只执行本张变量配置，不补造新的盘子事实。"
     }
   ]
 }

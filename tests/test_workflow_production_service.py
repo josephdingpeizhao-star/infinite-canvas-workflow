@@ -386,7 +386,7 @@ class ProductionServiceTest(unittest.TestCase):
         )
         events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertEqual(1, len([event for event in events if event["event"] == "step_failed"]))
-        self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
+        self.assertEqual("codex-dev 本轮没有返回内容", events[-1]["detail"])
         artifact_root = self.workspace / "artifacts"
         self.assertEqual([], list(artifact_root.rglob("*")) if artifact_root.exists() else [])
 
@@ -519,7 +519,7 @@ class ProductionServiceTest(unittest.TestCase):
             .splitlines()
         ]
         self.assertEqual("step_failed", events[-1]["event"])
-        self.assertEqual(detail, events[-1]["detail"])
+        self.assertEqual(detail[:160], events[-1]["detail"])
 
     def test_sanitized_final_prompt_failure_reaches_event_and_workbench(self) -> None:
         detail = (
@@ -636,6 +636,88 @@ class ProductionServiceTest(unittest.TestCase):
                 ]
                 self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
                 self.assertNotIn(detail, events[-1]["detail"])
+
+    def test_failed_handheld_contract_keeps_counts_and_records_real_reason(self) -> None:
+        client = FakeCanvasClient()
+        production = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        expected_ids = [
+            *(f"main_{index:02d}" for index in range(1, 7)),
+            *(f"detail_{index:02d}" for index in range(1, 9)),
+        ]
+        production["totalCount"] = len(expected_ids)
+        production["expectedConfigIds"] = expected_ids
+        executed = STEPS[:3].copy()
+        detail = "codex-dev 收到的主图变量配置手持规则调用异常"
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda _step, _manifest, _path, _on_output: MessageFailureExecutor(
+                executed, detail
+            ),
+            route_reader=self._route_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+        )
+
+        service.poll_once()
+
+        saved = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        self.assertEqual("failed", saved["status"])
+        self.assertEqual(14, saved["totalCount"])
+        self.assertEqual(expected_ids, saved["expectedConfigIds"])
+        self.assertEqual(
+            "主图变量配置未通过：手持规则调用异常。机器已停下，未自动重试。",
+            saved["errorMessage"],
+        )
+        events = [
+            json.loads(line)
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        self.assertEqual(detail, events[-1]["detail"])
+
+    def test_rejected_request_keeps_established_counts(self) -> None:
+        client = FakeCanvasClient()
+        production = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        expected_ids = [
+            *(f"main_{index:02d}" for index in range(1, 4)),
+            *(f"detail_{index:02d}" for index in range(1, 3)),
+        ]
+        production["totalCount"] = len(expected_ids)
+        production["expectedConfigIds"] = expected_ids
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            clock_ms=lambda: 10_000,
+        )
+
+        service.poll_once()
+
+        saved = client.state["nodes"][0]["metadata"]["workflowProduction"]
+        self.assertEqual("failed", saved["status"])
+        self.assertEqual(5, saved["totalCount"])
+        self.assertEqual(expected_ids, saved["expectedConfigIds"])
+        self.assertEqual(
+            "本机工作台没有及时接单，请重新开始一次。",
+            saved["errorMessage"],
+        )
+
+    def test_event_detail_is_capped_and_untrusted_paths_remain_hidden(self) -> None:
+        long_detail = "安全原因" * 60
+
+        saved = production_service.WorkflowProductionService._safe_event_detail(
+            ExecutorExecutionError(long_detail)
+        )
+
+        self.assertEqual(160, len(saved))
+        self.assertEqual(long_detail[:160], saved)
+        self.assertEqual(
+            "执行已停止，未自动重试",
+            production_service.WorkflowProductionService._safe_event_detail(
+                ExecutorExecutionError(r"报告位于 private\report.json")
+            ),
+        )
 
     def test_full_fake_pipeline_streams_one_persisted_render_then_pauses_without_qc(self) -> None:
         image = self.workspace / "outputs" / "renders" / "main_01.png"
@@ -1281,7 +1363,7 @@ class ProductionServiceTest(unittest.TestCase):
                     .read_text(encoding="utf-8")
                     .splitlines()
                 ]
-                self.assertEqual("执行已停止，未自动重试", events[-1]["detail"])
+                self.assertEqual("完整性门禁未通过，渲染保持阻断", events[-1]["detail"])
                 self.assertEqual(
                     "这一步没做好，机器已停下。已经完成的成果都保留了。",
                     client.state["nodes"][0]["metadata"]["workflowProduction"]["errorMessage"],

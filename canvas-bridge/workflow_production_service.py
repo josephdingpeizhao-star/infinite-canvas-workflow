@@ -128,7 +128,12 @@ _CONTROLLED_CODEX_FAILURE_LABELS = frozenset(
     {"主图变量配置", "详情图变量配置", "主图最终提示词", "详情图最终提示词"}
 )
 _CONTROLLED_CODEX_SIMPLE_REASONS = frozenset(
-    {"违反用户确认场景边界", "角度绑定异常", "使用了缺失的 D 槽位"}
+    {
+        "违反用户确认场景边界",
+        "角度绑定异常",
+        "使用了缺失的 D 槽位",
+        "手持规则调用异常",
+    }
 )
 _CONTROLLED_CODEX_CLAIM_CATEGORIES = frozenset(
     {"未确认参数", "未确认商品事实"}
@@ -441,12 +446,14 @@ class WorkflowProductionService:
                 state["message"] = message
         if produced_count is not None:
             state["producedCount"] = produced_count
+        if (total_count is None) != (expected_ids is None):
+            raise ProductionGateError("批次图片总数与编号清单必须同时写入。")
         if total_count is not None and expected_ids is not None:
             if total_count != len(expected_ids):
                 raise ProductionGateError("批次图片总数与编号清单不一致。")
             state["totalCount"] = total_count
             state["expectedConfigIds"] = list(expected_ids)
-        else:
+        elif status == "idle":
             state.pop("totalCount", None)
             state.pop("expectedConfigIds", None)
         if error_message:
@@ -906,6 +913,22 @@ class WorkflowProductionService:
         return detail, workbench
 
     @classmethod
+    def _safe_event_detail(cls, exc: BaseException) -> str:
+        controlled = cls._controlled_failure(exc)
+        if controlled is not None:
+            return controlled[0][:160]
+        raw_detail = str(exc)
+        if (
+            not raw_detail
+            or "/" in raw_detail
+            or "\\" in raw_detail
+            or _UNSAFE_FAILURE_DETAIL_PATTERN.search(raw_detail)
+        ):
+            return "执行已停止，未自动重试"
+        detail = " ".join(raw_detail.split())
+        return detail[:160] if detail else "执行已停止，未自动重试"
+
+    @classmethod
     def _safe_failure(cls, exc: BaseException) -> str:
         if isinstance(exc, ProductionGateError):
             return str(exc)
@@ -1227,7 +1250,6 @@ class WorkflowProductionService:
                 self._process(node, state)
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
-                controlled = self._controlled_failure(exc)
                 if not isinstance(
                     exc,
                     (
@@ -1243,7 +1265,7 @@ class WorkflowProductionService:
                             self._journal_path(manifest_path, batch_id),
                             "step_failed",
                             request_id=request_id,
-                            detail=controlled[0] if controlled is not None else "执行已停止，未自动重试",
+                            detail=self._safe_event_detail(exc),
                         )
                     except ProductionGateError:
                         pass

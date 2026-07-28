@@ -8,10 +8,19 @@
       "slice_id": "bowl-final-lock",
       "source_file": "categories/碗/prompts/final.md",
       "line_start": 1,
-      "line_end": 6,
+      "line_end": 7,
       "tags": ["bowl", "final", "identity", "dimensions", "combo-unit"],
       "audit_ref": "CAT-02",
       "text": "最终提示词必须锁定碗口、口沿、碗身弧面、内壁、内底、碗底、底足或圈足、釉面、图案、颜色、绑定源图与 A/B/C 槽位；逐字保留用户确认口径、高、可选宽和本张手持状态。形态 A 组合单元必须完整保留全部组件、件数和搭配关系。不得新增碗配方或变量配置没有的道具、结构、尺寸、材质、认证、品牌、型号、内容物、动作或商品组件。"
+    },
+    {
+      "slice_id": "bowl-final-executor-content-contract",
+      "source_file": "categories/碗/prompts/final.md",
+      "line_start": 1,
+      "line_end": 2,
+      "tags": ["bowl", "final", "executor-content-contract", "combo-unit"],
+      "audit_ref": "HF-01",
+      "text": "每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 A/B/C 槽位、画布比例 {expected_ratio}、产品口径约 {length_cm} 厘米、高约 {height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。{optional_dimensions_final}\n最终提示词不得改写【绑定角度槽位】、输出画布比例、约 {height_cm} 厘米的高度锁定或本张【手持交互声明】；只执行本张变量配置，不补造新的碗或组合单元事实。"
     }
   ]
 }

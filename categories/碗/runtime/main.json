@@ -8,7 +8,7 @@
       "slice_id": "bowl-main-identity-angle-and-combo",
       "source_file": "categories/碗/prompts/main.md",
       "line_start": 1,
-      "line_end": 9,
+      "line_end": 14,
       "tags": ["bowl", "identity", "angle", "handheld", "combo-unit"],
       "audit_ref": "CAT-02",
       "text": "碗主体必须保持碗口、口沿、碗身弧面、内壁、内底、碗底、底足或圈足、釉面、图案和颜色不变。每张主图只能绑定一张合格 A/B/C 白底图；不得为了页面任务倒置、悬空、翻转产品或补出绑定角度不可见结构。形态 A 组合单元整组视为一个商品，组件种类、数量和搭配关系必须与原图一致，不得增减、拆分、替换或把商品组件当成道具。"
@@ -21,6 +21,15 @@
       "tags": ["bowl", "dimensions", "scene"],
       "audit_ref": "CAT-02",
       "text": "口径和高必须逐字使用当批用户确认值；宽仅在用户填写时使用。不得从图片、手部或道具反推。清水、内容物、倾倒和加热必须服从当批高级选项；品类配方不会因碗的常见用途而自动放宽。"
+    },
+    {
+      "slice_id": "bowl-main-executor-content-contract",
+      "source_file": "categories/碗/prompts/main.md",
+      "line_start": 6,
+      "line_end": 9,
+      "tags": ["bowl", "main", "executor-content-contract", "handheld", "combo-unit"],
+      "audit_ref": "HF-01",
+      "text": "【执行器内容合同】\n1. 每套主图的【输出画布比例】必须写“1:1”；【绑定角度槽位】必须写明唯一绑定源图及 A/B/C 槽位，不得使用 D 槽位。\n2. 每套都必须保留【手持交互声明】：禁用时逐字写“本张图不启用手持场景”；启用时必须包含“启用手持场景”，并按碗或组合单元的真实承托动作写明“静态握持”或“动态拿起”。\n3. 每套都必须保留【动态手持样式参考图调用】：禁用手持时写“无”；静态握持时逐字写“无，仅动态拿起场景可调用”；动态拿起但未提供参考图时逐字写“未提供，不调用”。"
     }
   ]
 }
