@@ -3,7 +3,7 @@
   "key": "碗",
   "display_name": "碗",
   "product_noun": "碗",
-  "business_review_status": "pending_business_review",
+  "business_review_status": "approved",
   "files": {
     "form": "form.json",
     "lexicons": "lexicons.json",

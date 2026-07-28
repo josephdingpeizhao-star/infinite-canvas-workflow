@@ -61,10 +61,10 @@ class CategoryRecipeTest(unittest.TestCase):
         self.assertNotIn("business_review_status", serialized)
         self.assertNotIn(str(ROOT), serialized)
 
-    def test_plate_recipe_has_explicit_business_review_gate_and_full_lexicons(self) -> None:
+    def test_plate_recipe_has_approved_business_review_status_and_full_lexicons(self) -> None:
         recipe = load_category_recipe(ROOT, "盘子")
 
-        self.assertEqual("pending_business_review", recipe.business_review_status)
+        self.assertEqual("approved", recipe.business_review_status)
         self.assertIn("盘身", recipe.lexicons["protected_structure_terms"])
         self.assertIn("盘面", recipe.lexicons["product_material_context_markers"])
         self.assertIn("碟身", recipe.lexicons["product_material_context_markers"])

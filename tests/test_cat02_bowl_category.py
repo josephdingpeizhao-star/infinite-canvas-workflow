@@ -214,7 +214,7 @@ class Cat02BowlCategoryTest(unittest.TestCase):
         self.assertEqual("碗", recipe["display_name"])
         self.assertEqual("碗", recipe["product_noun"])
         self.assertEqual(
-            "pending_business_review",
+            "approved",
             recipe["business_review_status"],
         )
         self.assertEqual(

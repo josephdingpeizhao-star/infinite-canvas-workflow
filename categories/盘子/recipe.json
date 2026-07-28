@@ -3,7 +3,7 @@
   "key": "盘子",
   "display_name": "盘子",
   "product_noun": "盘子",
-  "business_review_status": "pending_business_review",
+  "business_review_status": "approved",
   "files": {
     "form": "form.json",
     "lexicons": "lexicons.json",

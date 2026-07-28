@@ -25,8 +25,8 @@
 - `batch_intake_controller.py`：M2-a 信息卡门禁。只认 `batch-info` 节点的 `build: batch` 动作，按顺序核对请求编号与时间、品类、九字段、载荷契约摘要、信息卡和工作流的唯一连线、以及直接连给同一工作流的原始素材；派生图、缺少原始文件声明、版本不一致或连线不明确时都以人话拒绝。
 - `batch_creator.py`：M2-a 建批事务。根据商品品类和本机日期生成中文批次号（如 `餐具_20260718`），用户不填写路径；优先沿用现有批次清单中的工作区位置，必要时通过 Windows 已知文件夹接口解析被重定向的桌面。真实构造默认启用与回收、删除共用的批次锁，只有显式隔离测试根或显式测试禁用才不取锁；锁从临时区写入前一直持有到发布、完成标记或失败补偿结束。先调用既有建批脚本做零写入预检，再在安全标记保护的临时目录中写入原图与回执，最终逐文件重算哈希，仓库 manifest 最后发布。断裂的清单链接不会回退猜测桌面位置；同名批次、重复请求、越界路径和竞态写入都拒绝覆盖。已完成项目删除且现场不存在时允许同名批次重新建立。
 - `workflow_batch_intake_service.py`：M2-a 常驻服务与原图上传通道。控制消息仍从画布读取，原图字节单独经 `127.0.0.1:17372` 上传；必须复用现有 canvas-agent 令牌，只接受本机画布来源，按文件类型、文件头、大小和 SHA-256 校验。服务日志不记录令牌或图片内容，任何完整性不一致都进入不可重试的硬停止状态。单实例仍由不删除载体的一字节系统锁保证；持有者说明只有在取得系统锁后才覆盖，异常退出后下一实例可重新持锁并刷新说明。
-- `workflow_production_controller.py`：M2-c 真实模式选择与门禁衔接。已登记信息卡和至少一张批次素材必须同时连到同一台机器；确认费用后才通过既有编辑门禁声明四项规范输出。每一步仍只由 `run_controller` 的命令解析、真实路由判定和统一执行三段门禁放行；14/14 且待质检时选择既有 `run: qc`，`ready` 保持终态，本模块不另建生产续跑分支。
-- `workflow_production_service.py`：M2-c 后台编排。顺序复用现役 `codex-dev` 六工序、`image-production / integrity`、`image-production / renders` 与 `codex-dev / qc`，机器只显示人话进度，不投影九工序、运行台或日志。任一步失败即停且不自动重试；主/详情变量配置的受控语义分类可进入原批次失败事件并转成人话。完整性失败只在正式报告确为 fail 且阻塞数为安全整数时记录固定的“N 项阻塞，报告已写入 qc_reports”；浏览器持久化超时只允许精确固定文案受控透出。两类路径都不回显真实路径；报告异常、其他错误及含路径、URL、令牌或密钥的内容仍使用既有笼统文案。部分图片只能用既有 `retry: renders` 重新进三段门禁；路由以 `final_prompt_index.json` 的 `config_id` 清单为目标，合并核对 renders 与 repaired 同名 PNG，全部覆盖后继续 QC。`production_completed` 只表示 14/14 出图完成，并从事件账本现场去重；QC 报告生成后机器停在“质检完成”，正常重复点击不重跑，返修、交付和渲染重跑仍拒绝。
+- `workflow_production_controller.py`：M2-c 真实模式选择与门禁衔接。已登记信息卡和至少一张批次素材必须同时连到同一台机器；确认费用后才通过既有编辑门禁声明四项规范输出。每一步仍只由 `run_controller` 的命令解析、真实路由判定和统一执行三段门禁放行；本批全部图片完成且待质检时选择既有 `run: qc`，`ready` 保持终态，本模块不另建生产续跑分支。
+- `workflow_production_service.py`：M2-c 后台编排。顺序复用现役 `codex-dev` 六工序、`image-production / integrity`、`image-production / renders` 与 `codex-dev / qc`，机器只显示人话进度，不投影九工序、运行台或日志。任一步失败即停且不自动重试；主/详情变量配置的受控语义分类可进入原批次失败事件并转成人话。完整性失败只在正式报告确为 fail 且阻塞数为安全整数时记录固定的“N 项阻塞，报告已写入 qc_reports”；浏览器持久化超时只允许精确固定文案受控透出。两类路径都不回显真实路径；报告异常、其他错误及含路径、URL、令牌或密钥的内容仍使用既有笼统文案。部分图片只能用既有 `retry: renders` 重新进三段门禁；路由以 `final_prompt_index.json` 的 `config_id` 清单为目标，合并核对 renders 与 repaired 同名 PNG，全部覆盖后继续 QC。`production_completed` 只表示本批图片全部完成，并从事件账本现场去重；QC 报告生成后机器停在“质检完成”，正常重复点击不重跑，返修、交付和渲染重跑仍拒绝。
 - `workflow_production_projection.py` / `workflow_production_render_observer.py`：正式 PNG 落盘后逐张上桌并连回机器；固定 `wfprod-output:<batch>:<config>` 节点保留旧成果并避让。主图只收正方形，详情精确 3:4 直接放行；精确 2:3 先原样审计，再用左右最外 24px 条带镜像、LANCZOS 拉伸和 radius=18 虚化自动补足背景，原图完整保留在中央并原子替换为精确 3:4。renders 开始前先用同一规则清扫存量详情 PNG；审计同名不同 SHA、主图非正方形和详情其他比例仍停机。Pillow 只在 2:3 分支延迟导入，缺失时回退原审计停机行为。
 - `workflow_production_http_server.py`：固定 `127.0.0.1:17373` 的只读费用/正式 PNG 端点、品类表单元数据端点、风格补登上传入口和 DL-01 项目删除预览/执行入口。`GET /batch-categories` 沿用现有令牌、回环地址、浏览器来源和跨源保护，实时读取 `categories/`，只返回已安装品类的公开表单元数据与载荷字段契约摘要，不返回路径或配方内容。删除入口与 RC-01 共用令牌、回环地址、浏览器来源和跨源保护，浏览器只提交批次号，不提交磁盘路径；仅这两条删除路由允许最多 64 KiB 请求体，以承载最多 100 个批次，其他路由继续保持各自原上限。正式图片返回 SHA-256，并在跨源成功响应中以 `Access-Control-Expose-Headers: x-content-sha256` 明确允许浏览器读取，浏览器再次核验后转存 localforage，节点不依赖服务长期在线，也不使用 data URI。`GET /workbench-health` 只返回四名工人的状态与最后状态时间，健康为 200，关键工人停止或画布重连中为 503，不返回令牌、路径或异常原文。
 - `project_deletion_service.py`：DL-01 项目关联批次删除事务。服务端按稳定批次号顺序逐批取得共享锁，重新核对工作区、回收区、批次账本/清单、固定报告和该批次登记暂存的归属；先写一条最小全局审计，再逐项送入 Windows 回收站，批次账本与 manifest 最后处理。任一归属不明、锁忙、锁设施异常或回收失败都会立即停下，保留画布供用户再次确认并续做。
@@ -42,7 +42,7 @@
 - `qc_repair.py`：只读选择仓库/批次 QC 报告；双副本同时存在时要求逐字节一致。合法报告按最终提示词索引把 repair targets 聚为逐图工单，critical/major 进入增补段，needs_review 只保留人工记录；`return_stage` 不参与路由。每个工单沿用原 final prompt、negative prompt、画布比例和 renders 同源绑定参考图，输出路径只指向 repaired。
 - `qc_repair_executor.py`：逐工单创建单任务 `image-production / renders` 计划，继续复用 `openai-image` 和现有比例观察器。单张失败不重试且继续下一张；renders 由执行前后 SHA-256 快照保护，合法同名 repaired 安全跳过，2:3 原件进入 repaired 专属审计目录，同批排他锁阻止并发重复费用。事件只记录 ID、数量、尺寸和哈希，不记录提示词正文、凭据或服务地址。
 - `qc_repair_cli.py`：M2-d 服务外 CLI。命令必须先过既有 `parse_run_content()`，再过 `run_controller` 的 CLI 专用 repair 路由门禁，最后从统一执行入口调用返修执行器；不修改画布 service/controller，不触发 QC。真实执行仍须另行批准并由仓库外桌面闸门注入环境参数。
-- `codex_dev_executor.py`：可选开发适配器 `codex-dev`。当前接受 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc`、`final_prompts` 与 `qc`，通过 canvas-agent 现有 Codex 新线程 + HTTP/SSE 能力取得结构化结果；其他步骤在任何传输或文件访问前拒绝。前三步保持原有身份、风格和单品 A/B/C/D 角度边界。六工序与下游门禁的品类知识统一从当前批次 `category` 对应的 `categories/<品类>/` 配方读取；主图仍固定 6 套、详情仍固定 8 套，手持数量按批次确认值逐项执行。杯类只填高度时保持旧输出逐字节不变；盘子要求长宽高三维。最终提示词用两个独立 thread 分别编译 6+8 套，全部通过后才一次性写入 14 份 JSON/Markdown 和索引，不生成 ComfyUI 作业、QC 或图片。所有下游步骤仍只允许合格 A/B/C，并由本地适配器固定产品编号、正式路径、编号和哈希。
+- `codex_dev_executor.py`：可选开发适配器 `codex-dev`。当前接受 `identity`、`style_master`、`angle_inventory`、`main_vc`、`detail_vc`、`final_prompts` 与 `qc`，通过 canvas-agent 现有 Codex 新线程 + HTTP/SSE 能力取得结构化结果；其他步骤在任何传输或文件访问前拒绝。前三步保持原有身份、风格和单品 A/B/C/D 角度边界。六工序与下游门禁的品类知识统一从当前批次 `category` 对应的 `categories/<品类>/` 配方读取；主图仍固定 6 套、详情仍固定 8 套，手持数量按批次确认值逐项执行。杯类只填高度时保持旧输出逐字节不变；盘子要求长宽高三维。最终提示词用两个独立 thread 分别按本批确认的主图和详情图张数编译，全部通过后才一次性写入本批对应数量的 JSON/Markdown 和索引，不生成 ComfyUI 作业、QC 或图片。所有下游步骤仍只允许合格 A/B/C，并由本地适配器固定产品编号、正式路径、编号和哈希。
 - 新建批次 manifest 顶层包含 `category`，`user_confirmed_facts` 另登记主图与详情图张数。两类张数均为每批 1–30，品类配方提供默认值，手持上限跟随本批对应张数；未知或损坏配方在建批及生产入口都拒绝。旧 manifest 缺张数字段时只读使用该品类配方默认值，不回写旧文件；对象一旦存在仍执行“无效即拒绝、不回退”。
 - `categories/` 是品类单一事实源：`杯类/` 保存从旧运行代码逐字迁出的内容；`盘子/` 与 `碗/` 保存一期草案，并以 `business_review_status=pending_business_review` 标记首个真实批次前必须业务终审。碗与配套盘或多碗成套同框时，形态 A 把整组作为一个商品单元走现有单品链路，不启用套装轨道。`.agents/skills/*/references` 只保留为非运行时历史资料，生产管线不再读取其中任何品类专属正文；运行时仍读取的 `.agents` 文件只有七份品类无关的通用 `SKILL.md`：`product-identity-archive`、`style-master-extractor`、`angle-inventory`、`main-variable-config`、`detail-variable-config`、`final-prompt-compiler`、`qc-inspector`。
 - 载荷摘要只覆盖 `categories/_shared/batch-intake-contract.json` 中的字段名、类型和必填结构语义。表单文案、默认值与手持范围来自品类端点，不进入摘要，调整这些内容不要求重建 fork 的 `web/dist`；只有真正新增、删除或改变载荷字段结构时，才必须同步两端摘要并重建 dist。
@@ -156,8 +156,8 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 ### M2-c 第一段：QC 步接入工作台
 
 - 本批 manifest 登记的正式图片全部齐全且 QC 报告缺失时，用户在画布机器上点击一次“开始/重新开始”，工作台继续执行既有 `run: qc`；运行中显示该批真实张数与动态组进度，报告落盘后显示“质检完成，QC 报告已生成。”并停机。
-- `production_completed` 保持“14/14 出图完成”语义。服务从事件账本和现场路由判断是否已记账，不依赖进程内存；第三批进入 QC 或在 `ready` 状态重复点击都不会重复追加该事件。
-- 现有 QC 继续使用 7 个两图批次和第 8 次汇总。第三批最大估算单批附件为 13,473,190 字节，低于 20 MiB 上限；无需缩图或改变附件策略。7 个图片批次现在各用独立 thread，第 8 次汇总使用独立无附件 thread；组内传输修复仍复用本组 thread，全局恢复上限保持 2 次。
+- `production_completed` 保持“本批图片全部完成”语义。服务从事件账本和现场路由判断是否已记账，不依赖进程内存；第三批进入 QC 或在 `ready` 状态重复点击都不会重复追加该事件。
+- 现有 QC 按每组最多两张生成图片批组，末次另用全批汇总组。第三批当时为 7 个两图批次和第 8 次汇总，最大估算单批附件为 13,473,190 字节，低于 20 MiB 上限；无需缩图或改变附件策略。各图片批次使用独立 thread，汇总使用独立无附件 thread；组内传输修复仍复用本组 thread，全局恢复上限保持 2 次。
 - 第三批首次真实 QC 在完成前 5 组后因旧单线程上下文累积超出 258,400-token 窗口而失败；第 6 组未进入 Codex，报告目录零新增、14 张 renders 无损。线程隔离补丁的纯离线测试为 512/512；用户重启工作台后亲手发起的第二次 QC 已于 16:38:02 成功，成功或失败后停机且不自动重试的纪律保持。QC 角标与已收货框属于 M2-c 第二段。
 
 ### M2-d 第一段：QC 驱动的后端单图返修
@@ -171,7 +171,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 ### M2-c 第二段前置：completed 续行与 QC 进度心跳
 
 - completed 机器可重新进入既有费用确认流程，确认后必须发送 `run: next`，由后端按现场路由执行 QC 或幂等完成；paused/部分失败仍使用 `retry: renders`，单页一次提交锁保持不变。
-- QC 在 7 个图片批组和第 8 次汇总分别通过解析后发出 8 个进度信号。每次更新保持 `status=running`、`step=qc`、`producedCount=14`，刷新 `updatedAt`，并显示“第 N/8 组完成”。
+- QC 在按本批张数动态生成的图片批组和最后一次汇总分别通过解析后发出进度信号。每次更新保持 `status=running`、`step=qc`、`producedCount=本批实际张数`，刷新 `updatedAt`，并显示“第 N/本批总组数 组完成”。
 - 每次 QC 使用独立的短生命周期 daemon 心跳工作线程。QC 主线程只投递；画布更新只尝试一次、使用短超时、不进入 `_apply_with_reconnect`。成功时排空后关闭，失败或未预期异常时取消待发项并在终态前关闭，避免迟到 running 覆盖 completed/failed，也不让工作线程在 QC 结束或服务退出后悬挂。
 - 心跳不写 QC 中间产物、不改变报告 schema、检查结论、恢复上限或 12 分钟前端保险丝。离线回归为主仓 542/542、fork 52 项/344 断言；真实显示效果留待下次用户批准的 QC/重跑观察。
 
@@ -180,7 +180,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - `GET /workflow-production/{batch}/qc-summary` 只返回逐图 `configId/status/issueCount/topCategories`；有 issues 优先为问题态，无 issues 且任一检查为 needs_review 才是待核对，其余为通过。报告缺失返回 404，前端静默不显示角标。
 - 图片下载保留旧的 renders-only 地址，并新增 `/outputs/renders/{config}` 与 `/outputs/repaired/{config}`。两类路径分别受 manifest 白名单和批次工作区边界约束；返修图使用独立节点 ID 与明确 `source=repaired`，复用浏览器 SHA 和字节数持久化合同。
 - 返修图入口只做磁盘成品投影，不构造工作流命令、不调用执行器。旧正式图只有在稳定节点 ID、批次、图位和磁盘 SHA 全部吻合时才安全补齐 `source=renders`；失败节点保留脱敏证据且不参与角标或收货。
-- `GET/POST /workflow-production/{batch}/acceptance-closeout` 使用同一回环、令牌和浏览器来源保护。POST 必须提交 14 个不同图位的 `configId/source/sha256`；服务逐项核对磁盘实物后追加唯一 `batch_acceptance_closed`。已有关账事件时，制作、QC、返修和返修投影均在改清单、记新事件或调用执行器前拒绝。
+- `GET/POST /workflow-production/{batch}/acceptance-closeout` 使用同一回环、令牌和浏览器来源保护。POST 必须提交 manifest 登记的全部不同图位及其 `configId/source/sha256`；服务逐项核对磁盘实物后追加唯一 `batch_acceptance_closed`。已有关账事件时，制作、QC、返修和返修投影均在改清单、记新事件或调用执行器前拒绝。
 
 ### M2-e：关账后交付打包（NC-04）
 
@@ -232,8 +232,8 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 
 ## 生产图片执行链（已实现；第三批返修已完成并采纳）
 
-1. `image-production / integrity` 调用既有校验脚本的 `--prompts-only` 模式，只检查 6+8 数量与顺序、既有 Schema、来源文件与逐项解析指纹、手持数量、锚定“画布比例固定为”短语的 1:1/3:4 字面、manifest 已确认高度语义和 UTF-8/Unicode 完整性。比例短语与比例值之间允许零个或多个空白，裸 `1:1` / `3:4` 仍不合格。它不读取 ComfyUI 作业清单，并在 JSON/Markdown 报告中逐项记录跳过旧内容启发式扫描与旧编译器字面扫描的原因；默认 ComfyUI 模式未改变。
-2. 门禁通过后，`image-production / renders` 从索引读取 14 项，逐项绑定 manifest 白底图目录中唯一同名参考图，并把 `final_prompt` 原文与 `negative_prompt` 原文用固定分隔符组合；不改写正向正文。
+1. `image-production / integrity` 调用既有校验脚本的 `--prompts-only` 模式，只按本批确认的主图和详情图张数检查数量与顺序，并检查既有 Schema、来源文件与逐项解析指纹、手持数量、锚定“画布比例固定为”短语的 1:1/3:4 字面、manifest 已确认高度语义和 UTF-8/Unicode 完整性。比例短语与比例值之间允许零个或多个空白，裸 `1:1` / `3:4` 仍不合格。它不读取 ComfyUI 作业清单，并在 JSON/Markdown 报告中逐项记录跳过旧内容启发式扫描与旧编译器字面扫描的原因；默认 ComfyUI 模式未改变。
+2. 门禁通过后，`image-production / renders` 从索引读取本批全部项目，逐项绑定 manifest 白底图目录中唯一同名参考图，并把 `final_prompt` 原文与 `negative_prompt` 原文用固定分隔符组合；不改写正向正文。
 3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。连接、正常响应读取或错误响应读取超时均统一为不含密钥、提示词和原始响应的中文失败；超时永不自动重试，也不留下半成品。
 4. 主图请求固定 `1024x1024`，详情图请求继续使用既有 `1024x1536` 映射，最终统一要求精确 3:4。供应端原图已是 3:4 时保持原文件；精确 2:3 时先保留审计原件，再自动扩展不足方向的镜像虚化背景，1024×1536 固定左右各补 64px 为 1152×1536，原商品与文字区域不裁剪、不缩放、不拉伸；其他异常比例仍停机。首批历史上的 `detail_02` 与 `detail_05` 已按相同参数人工扩边并保留原件；2026-07-23 起该参数由观察器自动执行，扩边事实以 `render_auto_padded` 记录，扩边后 SHA 仍由 `image_persisted` 记录。
 5. `shuiping_20260712` 已完成 prompts-only 门禁、模型探测、全部真实出图和真实 QC。六张主图均为有效 `1254x1254` PNG；八张详情图均为有效且精确 3:4 的 PNG。正式 renders 恰好 14 个文件，QC 后字节数不变；事件账本 72 行，唯一 `qc_report.json` 已生成，真实路由为 `ready`。ComfyUI 作业与 repaired 均为 0；返修决策见 `docs/CANVAS_PROJECT_STATE.md` §8。
