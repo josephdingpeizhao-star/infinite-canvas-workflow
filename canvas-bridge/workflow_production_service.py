@@ -1009,6 +1009,7 @@ class WorkflowProductionService:
 
         expected_ids = self._expected_ids(manifest)
         total_count = len(expected_ids)
+        qc_requested = "qc_reports" in (manifest.get("requested_outputs") or [])
         accepted_content = f"# request-id: {request_id}\n# accepted"
         existing = self._sync_existing(machine, manifest, journal, request_id)
         produced_count = len(existing)
@@ -1022,6 +1023,17 @@ class WorkflowProductionService:
                 parsed = run_controller.parse_run_content(command_text) if command_text else ("run", "next")
                 if parsed != ("run", "next"):
                     raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
+                if (
+                    not qc_requested
+                    and produced_count >= total_count
+                    and not self._journal_has_event(journal, "production_completed")
+                ):
+                    run_controller.append_event(
+                        journal,
+                        "production_completed",
+                        request_id=request_id,
+                        produced_count=total_count,
+                    )
                 self._apply_with_reconnect(
                     [
                         self._machine_update(
@@ -1031,7 +1043,11 @@ class WorkflowProductionService:
                             produced_count=total_count,
                             total_count=total_count,
                             expected_ids=expected_ids,
-                            message="质检完成，QC 报告已生成。",
+                            message=(
+                                "质检完成，QC 报告已生成。"
+                                if qc_requested
+                                else f"{total_count} 张真实图片已全部完成，可以开始收货。"
+                            ),
                         )
                     ]
                 )
@@ -1185,9 +1201,16 @@ class WorkflowProductionService:
             if step == "renders":
                 produced_count = len(self.artifact_reader(manifest))
                 route = self.route_reader(manifest_path)
+                completed_render_stage = (
+                    route.get("current_stage") == "needs_qc_reports"
+                    or (
+                        not qc_requested
+                        and route.get("current_stage") == "ready"
+                    )
+                )
                 if (
                     produced_count < total_count
-                    or route.get("current_stage") != "needs_qc_reports"
+                    or not completed_render_stage
                 ):
                     self._apply_with_reconnect(
                         [

@@ -19,7 +19,7 @@ from category_recipes import DEFAULT_CATEGORY_KEY, load_category_recipe
 from image_count_contract import default_image_counts
 
 
-PRODUCTION_REQUESTED_OUTPUTS = ("main", "detail", "final_prompts", "qc_reports")
+PRODUCTION_REQUESTED_OUTPUTS = ("main", "detail", "final_prompts")
 
 
 class ProductionGateError(ValueError):
@@ -112,7 +112,7 @@ def resolve_production_selection(machine_id: str, state: Mapping[str, Any]) -> P
 
 
 def apply_production_requested_outputs(manifest_path: Path) -> dict[str, Any]:
-    """Declare all four production targets through the existing editor gate.
+    """Declare the standard production targets through the existing editor gate.
 
     Only the approved empty -> canonical transition is automatic.  A non-empty
     divergent list represents prior user intent and is never overwritten.
@@ -128,8 +128,9 @@ def apply_production_requested_outputs(manifest_path: Path) -> dict[str, Any]:
     if not isinstance(current, list):
         raise ProductionGateError("批次目标清单格式无效，真实制作没有开始。")
     canonical = list(PRODUCTION_REQUESTED_OUTPUTS)
-    if current == canonical:
-        return {"changed": False, "requested_outputs": canonical}
+    dormant_qc = [*canonical, "qc_reports"]
+    if current == canonical or current == dormant_qc:
+        return {"changed": False, "requested_outputs": list(current)}
     if current:
         raise ProductionGateError("批次已有不同的制作目标，未自动覆盖，请先人工核对。")
     try:

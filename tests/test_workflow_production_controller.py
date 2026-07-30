@@ -17,7 +17,7 @@ import workflow_production_controller as controller  # noqa: E402
 
 
 class RequestedOutputsTest(unittest.TestCase):
-    def test_empty_manifest_is_patched_through_existing_editor_gate_with_all_four_targets(self) -> None:
+    def test_empty_manifest_is_patched_through_existing_editor_gate_with_all_three_targets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             manifest_path = root / "cup.batch_manifest.json"
@@ -39,7 +39,7 @@ class RequestedOutputsTest(unittest.TestCase):
             saved = json.loads(manifest_path.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            ["main", "detail", "final_prompts", "qc_reports"],
+            ["main", "detail", "final_prompts"],
             saved["requested_outputs"],
         )
         self.assertTrue(result["changed"])

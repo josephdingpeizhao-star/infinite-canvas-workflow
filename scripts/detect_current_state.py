@@ -1222,6 +1222,27 @@ def route_batch(
                 blocked_reasons.append(
                     "QC is post-generation only; no generated images were detected in manifest-declared outputs."
                 )
+    elif (
+        "qc_reports" not in requested_outputs
+        and "final_prompts" in available_artifacts
+        and ("main" in requested_outputs or "detail" in requested_outputs)
+    ):
+        render_targets = final_prompt_config_ids(artifacts["final_prompts"], product_id)
+        generated_image_count = outputs["renders"]["file_count"] + outputs["repaired"]["file_count"]
+        if render_targets is None:
+            render_coverage_complete = bool(generated_image_count)
+        else:
+            render_coverage_complete = bool(render_targets) and render_targets.issubset(
+                generated_image_config_ids(outputs)
+            )
+        if not render_coverage_complete:
+            current_stage = "needs_generated_images_before_qc"
+            next_skill = None
+            missing_required_artifacts.append("generated_images")
+            if generated_image_count:
+                blocked_reasons.append("尚有图片未生成，需先完成出图。")
+            else:
+                blocked_reasons.append("尚未生成任何图片，需先完成出图。")
     elif not requested_outputs:
         current_stage = "awaiting_requested_outputs"
         next_skill = None

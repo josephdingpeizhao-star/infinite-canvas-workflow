@@ -356,7 +356,7 @@ class ProductionServiceTest(unittest.TestCase):
 
         self.assertEqual(["identity", "style_master"], executed)
         saved = json.loads(self.manifest.read_text(encoding="utf-8"))
-        self.assertEqual(["main", "detail", "final_prompts", "qc_reports"], saved["requested_outputs"])
+        self.assertEqual(["main", "detail", "final_prompts"], saved["requested_outputs"])
         machine = client.state["nodes"][0]
         self.assertEqual("failed", machine["metadata"]["workflowProduction"]["status"])
         self.assertNotIn("secret", machine["metadata"]["workflowProduction"]["errorMessage"])
@@ -891,6 +891,9 @@ class ProductionServiceTest(unittest.TestCase):
         build.assert_called_once_with("codex-dev", manifest, self.manifest)
 
     def test_existing_fourteen_images_run_qc_and_complete_without_duplicate_production_event(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["requested_outputs"] = ["main", "detail", "final_prompts", "qc_reports"]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
         artifacts = self._fourteen_artifacts()
         report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
         journal = self.repo / "manifests" / "cup.events.jsonl"
@@ -1061,6 +1064,9 @@ class ProductionServiceTest(unittest.TestCase):
                 )
 
     def test_render_completion_records_once_then_continues_to_qc(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["requested_outputs"] = ["main", "detail", "final_prompts", "qc_reports"]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
         report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
         journal = self.repo / "manifests" / "cup.events.jsonl"
         client = FakeCanvasClient(command="run: renders")
@@ -1111,6 +1117,9 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual(1, sum(event["event"] == "production_completed" for event in events))
 
     def test_ready_repeated_click_is_idempotent_and_keeps_production_event_count(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["requested_outputs"] = ["main", "detail", "final_prompts", "qc_reports"]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
         artifacts = self._fourteen_artifacts()
         report_path = self.workspace / "artifacts" / "qc_reports" / "qc_report.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)

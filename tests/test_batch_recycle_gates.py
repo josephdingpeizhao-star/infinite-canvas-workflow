@@ -171,7 +171,7 @@ class BatchRecycleGateTests(unittest.TestCase):
         )
         self._manifest(
             workspace=workspace,
-            requested_outputs=["main", "detail", "final_prompts", "qc_reports"],
+            requested_outputs=["main", "detail", "final_prompts"],
         )
         client = FakeCanvasClient()
         route = {
