@@ -192,7 +192,7 @@ class CategoryRecipeTest(unittest.TestCase):
             requirements=requirements,
         )
 
-        self.assertIn("长约 30 厘米、宽约 28 厘米、高约 4 厘米", prompt)
+        self.assertIn("长约 30 厘米、宽约 28 厘米、高度约 4 厘米", prompt)
         self.assertIn("盘面主图案、盘心或盘沿轮廓", prompt)
         self.assertIn("plate-main-identity-and-angle", prompt)
         self.assertIn("恰好 0 项启用手持", prompt)

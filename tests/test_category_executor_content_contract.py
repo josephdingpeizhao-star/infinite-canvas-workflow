@@ -113,19 +113,19 @@ PLACEHOLDER_TEACHING_PATTERNS = (
 PRODUCTION_NEGATIVE_REFERENCE_TEXT_SHA256 = {
     # categories/盘子/runtime/main.json::plate-main-hf02-required-field-teaching
     "plate-main-hf02-required-field-teaching": (
-        "0f9fe609e049a75033407fa63c41a15bb64766d14efa9f5f958e508ec1152868"
+        "0597ce917bec7c19b6ffe744c0299558833a19f3a0b941863a3e9c531467af69"
     ),
     # categories/盘子/runtime/detail.json::plate-detail-hf02-required-field-teaching
     "plate-detail-hf02-required-field-teaching": (
-        "1143386344c509a563e1884ad9eac1b38ec2508dce3b51d1c60dcbca3b4874cf"
+        "9700146831bc720e67e0d3396ae16192bb73d7f241a47511f3265fde8adbbc97"
     ),
     # categories/碗/runtime/main.json::bowl-main-hf02-required-field-teaching
     "bowl-main-hf02-required-field-teaching": (
-        "755d9c8c6c3ed0f726448c17dfd3d4b871041330cffd3e49d5f8ce5955d4c5aa"
+        "74405c9189150aabbfc5b90f5376e107f29332132eb062403a8dc0bd6f05108b"
     ),
     # categories/碗/runtime/detail.json::bowl-detail-hf02-required-field-teaching
     "bowl-detail-hf02-required-field-teaching": (
-        "5fe5a7138404c32f52c6aeadd7b52a671e0e520a91f896ccdbfc3f7a26a19aaa"
+        "dad361abe39276e32b56bc46c67520830e158a37494622d460931ca0d543cb09"
     ),
 }
 PRODUCTION_NEGATIVE_REFERENCE_SLICE_LOCATIONS = (

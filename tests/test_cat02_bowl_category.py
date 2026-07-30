@@ -387,7 +387,7 @@ class Cat02BowlCategoryTest(unittest.TestCase):
             },
             requirements=requirements,
         )
-        self.assertIn("口径约 18 厘米、高约 8 厘米", prompt)
+        self.assertIn("口径约 18 厘米、高度约 8 厘米", prompt)
         self.assertIn("整组视为同一个商品单元", prompt)
         self.assertIn("bowl-main-identity-angle-and-combo", prompt)
         self.assertNotIn("None", prompt)
