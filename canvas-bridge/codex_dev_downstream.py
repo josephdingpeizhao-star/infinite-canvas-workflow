@@ -19,6 +19,12 @@ from category_recipes import (
     load_manifest_category,
 )
 from executor_contract import ExecutorExecutionError
+from final_prompt_literal_contract import (
+    has_required_canvas_ratio_literal,
+    has_required_confirmed_height_literal,
+    required_canvas_ratio_literal,
+    required_confirmed_height_literal,
+)
 from image_count_contract import default_image_counts, validate_image_count
 from image_count_contract import (
     chinese_image_count,
@@ -232,6 +238,28 @@ class DetailChunkEnvelopeCorrection(ExecutorExecutionError):
     def __init__(self, business_fingerprint: str):
         super().__init__("detail chunk envelope needs correction")
         self.business_fingerprint = business_fingerprint
+
+
+class FinalPromptLiteralViolation(ExecutorExecutionError):
+    """A final prompt may be repaired only because a required literal is missing."""
+
+    _SAFE_REASONS = frozenset(
+        {
+            "未保留画布比例",
+            "未保留已确认高度",
+        }
+    )
+    _LABELS = {
+        "main": "主图",
+        "detail": "详情图",
+    }
+
+    def __init__(self, *, mode: str, safe_reason: str):
+        label = self._LABELS.get(mode)
+        if label is None or safe_reason not in self._SAFE_REASONS:
+            raise ValueError("unsupported final prompt literal violation")
+        self.safe_reason = safe_reason
+        super().__init__(f"codex-dev 收到的{label}{safe_reason}")
 
 
 def _required_match(notes: str, pattern: str) -> str:
@@ -2367,6 +2395,30 @@ final_prompt 正文必须遵守以下场景安全规则：{scene_safety_collecti
 """
 
 
+def build_final_prompt_repair_prompt(
+    *,
+    mode: str,
+    requirements: UserConfirmedRequirements,
+) -> str:
+    """Request one complete, bounded repair in the current final-prompt thread."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的最终提示词模式")
+    expected_ratio = "1:1" if mode == "main" else "3:4"
+    label = "主图" if mode == "main" else "详情图"
+    ratio_literal = required_canvas_ratio_literal(expected_ratio)
+    height_literal = required_confirmed_height_literal(requirements.height_cm)
+    return (
+        f"继续同一 final_prompts {label}批次任务。上一轮未通过编译期完整性校验；"
+        "请完整重发同批全部配置的 JSON，不得引用、解释或局部修补上一轮正文，"
+        "不得改变配置编号、顺序、角度绑定、手持状态、页面任务或其他已确认事实。"
+        "每一份 final_prompt 正文必须原样包含以下两句字面，禁止同义改写：\n"
+        f"{ratio_literal}\n"
+        f"{height_literal}\n"
+        "只返回原任务要求的完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
+    )
+
+
 def _validate_variable_config_document(
     document: Mapping[str, Any],
     *,
@@ -2480,10 +2532,16 @@ def parse_final_prompt_batch_response(
             r"(?:D\s*槽位|槽位\s*D)", final_prompt
         ):
             raise ExecutorExecutionError(f"codex-dev 收到的{label}使用了禁止角度")
-        if expected_ratio not in final_prompt:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留画布比例")
-        if f"约 {requirements.height_cm} 厘米" not in final_prompt:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留已确认高度")
+        if not has_required_canvas_ratio_literal(final_prompt, expected_ratio):
+            raise FinalPromptLiteralViolation(
+                mode=mode,
+                safe_reason="未保留画布比例",
+            )
+        if not has_required_confirmed_height_literal(final_prompt, requirements.height_cm):
+            raise FinalPromptLiteralViolation(
+                mode=mode,
+                safe_reason="未保留已确认高度",
+            )
         handheld = "本张图不启用手持场景" not in str(overrides.get("手持交互声明") or "")
         enabled += int(handheld)
         if handheld and (

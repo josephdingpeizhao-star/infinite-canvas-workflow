@@ -23,12 +23,15 @@ from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_
 from codex_dev_downstream import (
     DetailChunkEnvelopeCorrection,
     DetailChunkTransportCorruption,
+    FinalPromptLiteralViolation,
+    UserConfirmedRequirements,
     artifact_file_under_root,
     assemble_detail_variable_config_chunks,
     build_detail_variable_config_chunk_prompt,
     detail_chunk_business_fingerprint,
     detail_variable_config_chunk_count,
     build_final_prompt_batch_prompt,
+    build_final_prompt_repair_prompt,
     build_final_prompt_bundle,
     build_variable_config_prompt,
     final_prompt_bundle_targets,
@@ -58,6 +61,23 @@ from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext
 DEFAULT_CONFIG_PATH = Path.home() / ".infinite-canvas" / "canvas-agent.json"
 PRODUCTION_CODEX_MODEL = "gpt-5.5"
 PRODUCTION_CODEX_REASONING_EFFORT = "xhigh"
+FINAL_PROMPT_CORRECTION_LIMIT = 2
+SAFE_EXCEPTION_DETAIL_LIMIT = 160
+REDACTED_EXCEPTION_SUMMARY = "异常摘要已脱敏"
+_SENSITIVE_EXCEPTION_DETAIL_PATTERN = re.compile(
+    r"(?ix)"
+    r"(?:"
+    r"(?:token|secret|bearer|authorization|password|credential)"
+    r"|api[\s_-]*key"
+    r"|access[\s_-]*key"
+    r"|sk-[a-z0-9][a-z0-9_-]{5,}"
+    r"|令牌|密钥|秘钥"
+    r"|[a-z][a-z0-9+.-]*://"
+    r"|www\."
+    r"|(?:^|[\s(\"'])(?:[a-z]:[\\/]|\\\\|/(?:[^/\s]+/)*[^/\s]*)"
+    r")"
+)
+_SAFE_EXCEPTION_TYPE_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]{0,79}$")
 SUPPORTED_IMAGE_SUFFIXES = {
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
@@ -70,6 +90,55 @@ REQUIRED_EVIDENCE_FIELDS = (
     "unknowns",
     "prohibited_inventions",
 )
+
+
+def _contains_sensitive_exception_detail(value: str) -> bool:
+    return (
+        "/" in value
+        or "\\" in value
+        or bool(_SENSITIVE_EXCEPTION_DETAIL_PATTERN.search(value))
+    )
+
+
+def _single_line_exception_detail(value: str) -> str:
+    return " ".join(value.split())
+
+
+def _validated_safe_detail(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    detail = _single_line_exception_detail(value)
+    if not detail:
+        return ""
+    if _contains_sensitive_exception_detail(detail):
+        return REDACTED_EXCEPTION_SUMMARY
+    return detail[:SAFE_EXCEPTION_DETAIL_LIMIT]
+
+
+def _safe_exception_detail(exc: BaseException) -> str:
+    exception_type = type(exc).__name__
+    if (
+        not _SAFE_EXCEPTION_TYPE_PATTERN.fullmatch(exception_type)
+        or _contains_sensitive_exception_detail(exception_type)
+    ):
+        exception_type = "Exception"
+    try:
+        raw_summary = str(exc)
+    except Exception:
+        raw_summary = ""
+    summary = _single_line_exception_detail(raw_summary)
+    if _contains_sensitive_exception_detail(summary):
+        summary = REDACTED_EXCEPTION_SUMMARY
+    elif not summary:
+        summary = "无摘要"
+    return f"{exception_type}: {summary}"[:SAFE_EXCEPTION_DETAIL_LIMIT]
+
+
+def _with_safe_exception_detail(message: str, safe_detail: str) -> str:
+    safe_detail = _validated_safe_detail(safe_detail)
+    if not safe_detail:
+        return message
+    return f"{message}：{safe_detail}"[:SAFE_EXCEPTION_DETAIL_LIMIT]
 SUPPORTED_STEPS = frozenset(
     {
         "identity",
@@ -229,8 +298,15 @@ class CanvasAgentTransportError(RuntimeError):
         "timeout": "Codex 线程等待超时",
     }
 
-    def __init__(self, code: str, _private_detail: str = ""):
+    def __init__(
+        self,
+        code: str,
+        _private_detail: str = "",
+        *,
+        safe_detail: str = "",
+    ):
         self.code = code
+        self.safe_detail = _validated_safe_detail(safe_detail)
         super().__init__(self._MESSAGES.get(code, "canvas-agent 执行失败"))
 
 
@@ -266,13 +342,19 @@ class CanvasAgentCodexTransport:
 
     def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
         error_code = ""
+        safe_detail = ""
         try:
             return self._run_turn(prompt, attachments)
         except CanvasAgentTransportError as exc:
             error_code = exc.code
-        except Exception:
+            safe_detail = exc.safe_detail
+        except Exception as exc:
             error_code = "thread"
-        raise CanvasAgentTransportError(error_code or "thread")
+            safe_detail = _safe_exception_detail(exc)
+        raise CanvasAgentTransportError(
+            error_code or "thread",
+            safe_detail=safe_detail,
+        )
 
     def continue_turn(
         self,
@@ -281,13 +363,19 @@ class CanvasAgentCodexTransport:
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
         error_code = ""
+        safe_detail = ""
         try:
             return self._continue_turn(thread_id, prompt, attachments)
         except CanvasAgentTransportError as exc:
             error_code = exc.code
-        except Exception:
+            safe_detail = exc.safe_detail
+        except Exception as exc:
             error_code = "thread"
-        raise CanvasAgentTransportError(error_code or "thread")
+            safe_detail = _safe_exception_detail(exc)
+        raise CanvasAgentTransportError(
+            error_code or "thread",
+            safe_detail=safe_detail,
+        )
 
     def _run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
         chunks = self._attachment_chunks(attachments)
@@ -991,6 +1079,54 @@ class CodexDevExecutor:
             },
         )
 
+    def _parse_final_prompt_with_bounded_correction(
+        self,
+        turn: CodexTurnResult,
+        *,
+        mode: str,
+        product_id: str,
+        requirements: UserConfirmedRequirements,
+        angle_inventory: Mapping[str, Any],
+        variable_config: Mapping[str, Any],
+        style_master_text: str,
+        correction_attempts: int,
+    ) -> tuple[dict[str, dict[str, str]], CodexTurnResult, int]:
+        thread_id = turn.thread_id
+        label = "主图" if mode == "main" else "详情图"
+        while True:
+            try:
+                batch = parse_final_prompt_batch_response(
+                    turn.text,
+                    mode=mode,
+                    product_id=product_id,
+                    requirements=requirements,
+                    angle_inventory=angle_inventory,
+                    variable_config=variable_config,
+                    style_master_text=style_master_text,
+                )
+            except FinalPromptLiteralViolation as error:
+                if correction_attempts >= FINAL_PROMPT_CORRECTION_LIMIT:
+                    limit_detail = (
+                        f"codex-dev {label}最终提示词纠正已达到上限："
+                        f"{error.safe_reason}"
+                    )
+                    raise ExecutorExecutionError(limit_detail[:160]) from None
+                correction_attempts += 1
+                turn = self._continue_transport(
+                    thread_id,
+                    build_final_prompt_repair_prompt(
+                        mode=mode,
+                        requirements=requirements,
+                    ),
+                    (),
+                )
+                if turn.thread_id != thread_id:
+                    raise ExecutorExecutionError(
+                        f"codex-dev 收到无效的{label}最终提示词线程返回"
+                    )
+                continue
+            return batch, turn, correction_attempts
+
     def _execute_final_prompts(self, product_id: str) -> ExecutionResult:
         self._validate_single_product_batch()
         index_path = artifact_file_under_root(
@@ -1062,14 +1198,18 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         main_turn = self._run_transport(main_prompt, ())
-        main_batch = parse_final_prompt_batch_response(
-            main_turn.text,
-            mode="main",
-            product_id=product_id,
-            requirements=requirements,
-            angle_inventory=angle_inventory,
-            variable_config=main_variable_config,
-            style_master_text=style_master_text,
+        correction_attempts = 0
+        main_batch, main_turn, correction_attempts = (
+            self._parse_final_prompt_with_bounded_correction(
+                main_turn,
+                mode="main",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=angle_inventory,
+                variable_config=main_variable_config,
+                style_master_text=style_master_text,
+                correction_attempts=correction_attempts,
+            )
         )
 
         detail_prompt = build_final_prompt_batch_prompt(
@@ -1083,14 +1223,17 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         detail_turn = self._run_transport(detail_prompt, ())
-        detail_batch = parse_final_prompt_batch_response(
-            detail_turn.text,
-            mode="detail",
-            product_id=product_id,
-            requirements=requirements,
-            angle_inventory=angle_inventory,
-            variable_config=detail_variable_config,
-            style_master_text=style_master_text,
+        detail_batch, detail_turn, correction_attempts = (
+            self._parse_final_prompt_with_bounded_correction(
+                detail_turn,
+                mode="detail",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=angle_inventory,
+                variable_config=detail_variable_config,
+                style_master_text=style_master_text,
+                correction_attempts=correction_attempts,
+            )
         )
 
         bundle = build_final_prompt_bundle(
@@ -1110,13 +1253,17 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         write_bundle_exclusive(bundle, "最终提示词")
+        detail = "最终提示词已生成"
+        if correction_attempts:
+            detail += f"（受控纠正 {correction_attempts} 次）"
         return ExecutionResult(
-            detail="最终提示词已生成",
+            detail=detail,
             outputs=(index_path,),
             provider=self.name,
             metadata={
                 "main_thread_id": main_turn.thread_id,
                 "detail_thread_id": detail_turn.thread_id,
+                "correction_attempts": correction_attempts,
             },
         )
 
@@ -1232,25 +1379,17 @@ class CodexDevExecutor:
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
+        error_code = ""
+        safe_detail = ""
         try:
             return self.transport.run_turn(prompt, attachments)
         except CanvasAgentTransportError as exc:
-            if exc.code == "empty_response":
-                raise CodexDevExecutionError(
-                    "codex-dev 本轮没有返回内容",
-                    "empty_assistant_response",
-                ) from None
-            messages = {
-                "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
-                "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
-                "connection": "codex-dev 无法连接 canvas-agent",
-                "thread": "codex-dev 的 Codex 线程执行失败",
-                "response": "codex-dev 收到无效的 canvas-agent 返回",
-                "timeout": "codex-dev 等待 Codex 线程超时",
-            }
-            raise ExecutorExecutionError(messages.get(exc.code, "codex-dev 执行失败")) from None
-        except Exception:
-            raise ExecutorExecutionError("codex-dev 的 Codex 线程执行失败") from None
+            error_code = exc.code
+            safe_detail = exc.safe_detail
+        except Exception as exc:
+            error_code = "thread"
+            safe_detail = _safe_exception_detail(exc)
+        self._raise_transport_execution_error(error_code, safe_detail)
 
     def _continue_transport(
         self,
@@ -1258,25 +1397,42 @@ class CodexDevExecutor:
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
+        error_code = ""
+        safe_detail = ""
         try:
             return self.transport.continue_turn(thread_id, prompt, attachments)
         except CanvasAgentTransportError as exc:
-            if exc.code == "empty_response":
-                raise CodexDevExecutionError(
+            error_code = exc.code
+            safe_detail = exc.safe_detail
+        except Exception as exc:
+            error_code = "thread"
+            safe_detail = _safe_exception_detail(exc)
+        self._raise_transport_execution_error(error_code, safe_detail)
+
+    @staticmethod
+    def _raise_transport_execution_error(error_code: str, safe_detail: str) -> None:
+        if error_code == "empty_response":
+            raise CodexDevExecutionError(
+                _with_safe_exception_detail(
                     "codex-dev 本轮没有返回内容",
-                    "empty_assistant_response",
-                ) from None
-            messages = {
-                "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
-                "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
-                "connection": "codex-dev 无法连接 canvas-agent",
-                "thread": "codex-dev 的 Codex 线程执行失败",
-                "response": "codex-dev 收到无效的 canvas-agent 返回",
-                "timeout": "codex-dev 等待 Codex 线程超时",
-            }
-            raise ExecutorExecutionError(messages.get(exc.code, "codex-dev 执行失败")) from None
-        except Exception:
-            raise ExecutorExecutionError("codex-dev 的 Codex 线程执行失败") from None
+                    safe_detail,
+                ),
+                "empty_assistant_response",
+            )
+        messages = {
+            "missing_config": "codex-dev 无法使用：canvas-agent 配置缺失",
+            "unsafe_config": "codex-dev 无法使用：canvas-agent 配置不是安全的本机地址",
+            "connection": "codex-dev 无法连接 canvas-agent",
+            "thread": "codex-dev 的 Codex 线程执行失败",
+            "response": "codex-dev 收到无效的 canvas-agent 返回",
+            "timeout": "codex-dev 等待 Codex 线程超时",
+        }
+        raise ExecutorExecutionError(
+            _with_safe_exception_detail(
+                messages.get(error_code, "codex-dev 执行失败"),
+                safe_detail,
+            )
+        )
 
     @staticmethod
     def _default_repository_root(manifest_path: Path | None) -> Path:

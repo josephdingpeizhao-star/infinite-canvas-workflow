@@ -409,7 +409,7 @@ def valid_final_prompt_response(mode: str) -> dict[str, object]:
                 "config_id": config["config_id"],
                 "final_prompt": (
                     f"生成一张淘宝天猫{'主图' if mode == 'main' else '详情图'}；"
-                    f"配置 {config['config_id']}；画布比例 {ratio}；"
+                    f"配置 {config['config_id']}；画布比例固定为 {ratio}；"
                     f"绑定 {overrides['绑定角度槽位']}；产品高度约 25 厘米；"
                     f"页面任务：{overrides['页面任务']}；构图：{overrides['构图方式']}；"
                     f"手持：{handheld}；内容物仅为空壶或清水静置，禁止倾倒、加热、沸腾和热水动作；"
@@ -1110,6 +1110,7 @@ class CodexDevExecutorTest(CodexDevFixture):
                         self.assertIn("清水场景", prompt)
                     else:
                         self.assertIn("只允许空置", prompt)
+            self.assertEqual([], final_transport.continuation_calls)
 
     def test_clear_water_false_accepts_explicit_negative_guardrails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2258,6 +2259,7 @@ class CodexDevExecutorTest(CodexDevFixture):
 
             self.assertIn("未确认商品事实", str(caught.exception))
             self.assertFalse(final_dir.exists())
+            self.assertEqual([], transport.continuation_calls)
 
     def test_final_prompts_invalid_second_batch_leaves_no_formal_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3782,7 +3784,7 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             )
             self.assertEqual("主图变量配置已生成", result.detail)
 
-    def test_final_prompts_accept_whole_product_height_restatement_without_height_word(
+    def test_final_prompts_correct_whole_product_height_restatement_in_same_thread(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3796,6 +3798,10 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
                 [
                     CodexTurnResult(
                         text=json.dumps(main_response, ensure_ascii=False),
+                        thread_id="thread-final-main-confirmed-height-restatement",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
                         thread_id="thread-final-main-confirmed-height-restatement",
                     ),
                     CodexTurnResult(
@@ -3814,9 +3820,16 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             prompt = json.loads(
                 (final_dir / "main_01_final_prompt.json").read_text(encoding="utf-8")
             )
-            self.assertIn("整壶约 25 厘米", prompt["final_prompt"])
-            self.assertNotIn("产品高度约 25 厘米", prompt["final_prompt"])
-            self.assertEqual("最终提示词已生成", result.detail)
+            self.assertIn("产品高度约 25 厘米", prompt["final_prompt"])
+            self.assertNotIn("整壶约 25 厘米", prompt["final_prompt"])
+            self.assertEqual("最终提示词已生成（受控纠正 1 次）", result.detail)
+            self.assertEqual(1, result.metadata["correction_attempts"])
+            self.assertEqual(1, len(transport.continuation_calls))
+            thread_id, repair_prompt, attachments = transport.continuation_calls[0]
+            self.assertEqual("thread-final-main-confirmed-height-restatement", thread_id)
+            self.assertEqual((), attachments)
+            self.assertIn("画布比例固定为 1:1", repair_prompt)
+            self.assertIn("高度约 25 厘米", repair_prompt)
 
     def test_detail_vc_rejects_confirmed_height_number_used_as_width(self) -> None:
         for index, value in enumerate(("壶身宽约 25 厘米", "约 25 厘米宽"), start=1):
