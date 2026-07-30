@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import mimetypes
 import os
 import socket
 import uuid
@@ -21,6 +20,7 @@ from executor_contract import (
     ExecutorExecutionError,
     ImageGenerationTask,
 )
+from reference_image_compression import compress_reference_image
 
 
 CLIENT_USER_AGENT = "Codex-Canvas-Bridge/1.0"
@@ -28,6 +28,10 @@ IMAGE_TIMEOUT_ENV = "OPENAI_IMAGE_TIMEOUT_SECONDS"
 DEFAULT_IMAGE_TIMEOUT_SECONDS = 180.0
 MIN_IMAGE_TIMEOUT_SECONDS = 30
 MAX_IMAGE_TIMEOUT_SECONDS = 1800
+REFERENCE_IMAGE_MAX_BYTES_ENV = "OPENAI_IMAGE_REFERENCE_MAX_BYTES"
+DEFAULT_REFERENCE_IMAGE_MAX_BYTES = 2_000_000
+MIN_REFERENCE_IMAGE_MAX_BYTES = 500_000
+MAX_REFERENCE_IMAGE_MAX_BYTES = 20_000_000
 
 
 @dataclass(frozen=True)
@@ -111,6 +115,7 @@ class OpenAIImageExecutor:
         self.base_url = configured_base_url
         self.model = model or self.environment.get("OPENAI_IMAGE_MODEL") or "gpt-image-2"
         self.timeout = float(timeout) if timeout is not None else self._environment_timeout()
+        self.reference_image_max_bytes = self._environment_reference_image_max_bytes()
         self.boundary_factory = boundary_factory or (lambda: f"executor-{uuid.uuid4().hex}")
 
     def _environment_timeout(self) -> float:
@@ -135,6 +140,28 @@ class OpenAIImageExecutor:
             )
         return float(value)
 
+    def _environment_reference_image_max_bytes(self) -> int:
+        if REFERENCE_IMAGE_MAX_BYTES_ENV not in self.environment:
+            return DEFAULT_REFERENCE_IMAGE_MAX_BYTES
+        raw = str(self.environment.get(REFERENCE_IMAGE_MAX_BYTES_ENV) or "").strip()
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ExecutorExecutionError(
+                f"{REFERENCE_IMAGE_MAX_BYTES_ENV} 必须是 {MIN_REFERENCE_IMAGE_MAX_BYTES} 到 "
+                f"{MAX_REFERENCE_IMAGE_MAX_BYTES} 的整数"
+            ) from exc
+        if (
+            str(value) != raw
+            or value < MIN_REFERENCE_IMAGE_MAX_BYTES
+            or value > MAX_REFERENCE_IMAGE_MAX_BYTES
+        ):
+            raise ExecutorExecutionError(
+                f"{REFERENCE_IMAGE_MAX_BYTES_ENV} 必须是 {MIN_REFERENCE_IMAGE_MAX_BYTES} 到 "
+                f"{MAX_REFERENCE_IMAGE_MAX_BYTES} 的整数"
+            )
+        return value
+
     def execute(self, request_value: ExecutionRequest) -> ExecutionResult:
         if request_value.step != "renders" or not isinstance(request_value.payload, ImageGenerationTask):
             raise ExecutorExecutionError("openai-image 仅接受 renders 图片任务")
@@ -145,11 +172,12 @@ class OpenAIImageExecutor:
         self._validate_task(task)
 
         headers = {"Authorization": f"Bearer {api_key}"}
+        reference_image_records: list[dict[str, object]] = []
         if task.reference_images:
             endpoint = f"{self.base_url}/images/edits"
             boundary = self.boundary_factory()
             headers["Content-Type"] = f"multipart/form-data; boundary={boundary}"
-            body = self._multipart_body(task, boundary)
+            body, reference_image_records = self._multipart_body(task, boundary)
         else:
             endpoint = f"{self.base_url}/images/generations"
             headers["Content-Type"] = "application/json"
@@ -165,6 +193,7 @@ class OpenAIImageExecutor:
             "request_id": request_id,
             "usage": payload.get("usage") or {},
             "output_format": payload.get("output_format") or task.output_format,
+            "reference_images": reference_image_records,
         }
         return ExecutionResult(
             detail=f"generated {task.output_path.name}",
@@ -195,8 +224,13 @@ class OpenAIImageExecutor:
             "output_format": task.output_format,
         }
 
-    def _multipart_body(self, task: ImageGenerationTask, boundary: str) -> bytes:
+    def _multipart_body(
+        self,
+        task: ImageGenerationTask,
+        boundary: str,
+    ) -> tuple[bytes, list[dict[str, object]]]:
         chunks: list[bytes] = []
+        reference_image_records: list[dict[str, object]] = []
 
         def field(name: str, value: str) -> None:
             chunks.extend(
@@ -212,20 +246,38 @@ class OpenAIImageExecutor:
             field(name, str(value))
         for image in task.reference_images:
             filename = image.name.replace('"', "_")
-            content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            compressed = compress_reference_image(
+                image.read_bytes(),
+                max_bytes=self.reference_image_max_bytes,
+                filename=filename,
+            )
+            sent_bytes = len(compressed.data)
+            if sent_bytes > self.reference_image_max_bytes:
+                raise ExecutorExecutionError("参考图发送字节超过上限，已停止")
+            part_filename = Path(compressed.filename).name.replace('"', "_")
+            reference_image_records.append(
+                {
+                    "name": part_filename,
+                    "original_bytes": compressed.original_bytes,
+                    "sent_bytes": sent_bytes,
+                    "compressed": compressed.compressed,
+                    "quality": compressed.quality,
+                    "long_edge": compressed.long_edge,
+                }
+            )
             chunks.extend(
                 [
                     f"--{boundary}\r\n".encode("ascii"),
-                    f'Content-Disposition: form-data; name="image[]"; filename="{filename}"\r\n'.encode(
+                    f'Content-Disposition: form-data; name="image[]"; filename="{part_filename}"\r\n'.encode(
                         "utf-8"
                     ),
-                    f"Content-Type: {content_type}\r\n\r\n".encode("ascii"),
-                    image.read_bytes(),
+                    f"Content-Type: {compressed.content_type}\r\n\r\n".encode("ascii"),
+                    compressed.data,
                     b"\r\n",
                 ]
             )
         chunks.append(f"--{boundary}--\r\n".encode("ascii"))
-        return b"".join(chunks)
+        return b"".join(chunks), reference_image_records
 
     def _response_payload(self, response: HttpResponse, api_key: str) -> dict:
         try:
