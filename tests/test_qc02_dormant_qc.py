@@ -547,7 +547,7 @@ class Qc02ProductionServiceTest(unittest.TestCase):
         self.assertEqual("completed", production["status"])
         self.assertEqual(3, production["producedCount"])
         self.assertEqual(
-            "3 张真实图片已全部完成，可以开始收货。",
+            "3 张真实图片已全部完成。",
             production["message"],
         )
         for forbidden in FORBIDDEN_QC_WORDS:

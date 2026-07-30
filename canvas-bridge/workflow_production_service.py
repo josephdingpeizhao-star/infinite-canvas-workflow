@@ -1046,7 +1046,7 @@ class WorkflowProductionService:
                             message=(
                                 "质检完成，QC 报告已生成。"
                                 if qc_requested
-                                else f"{total_count} 张真实图片已全部完成，可以开始收货。"
+                                else f"{total_count} 张真实图片已全部完成。"
                             ),
                         )
                     ]

@@ -302,7 +302,7 @@ def _unsupported_message(normalized: str) -> str:
     if re.search(r"风格补登|补登风格|补登.*参考图", normalized):
         return "这个我还不会，请把风格参考图连到信息卡并使用现有补登按钮。没有执行任何命令，也没有产生费用。"
     if re.search(r"收货|关账|交付|上桌", normalized):
-        return "这个我还不会，请使用工作流机器现有的上桌、收货或关账入口。没有执行任何命令，也没有产生费用。"
+        return "这个我还不会。收货与关账已休眠，不在当前批次流程中；返修图上桌请用机器卡上的入口。没有执行任何命令，也没有产生费用。"
     return UNSUPPORTED_MESSAGE
 
 
