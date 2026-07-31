@@ -233,6 +233,7 @@ def _validate_lexicons(lexicons: dict[str, Any]) -> None:
     }
     if set(lexicons) != required_lists | {
         "handheld_phrase",
+        "dimension_label_terms",
         "optional_dimension_prompts",
         "scene_rules",
     }:
@@ -246,6 +247,25 @@ def _validate_lexicons(lexicons: dict[str, Any]) -> None:
         ):
             raise CategoryRecipeError(f"品类词表{name}无效")
     _nonempty_string(lexicons["handheld_phrase"], "手持动作短语")
+    dimension_label_terms = lexicons["dimension_label_terms"]
+    if (
+        not isinstance(dimension_label_terms, dict)
+        or set(dimension_label_terms) != set(DIMENSION_KEYS)
+    ):
+        raise CategoryRecipeError("品类尺寸标签词表无效")
+    all_dimension_labels: list[str] = []
+    for key in DIMENSION_KEYS:
+        labels = dimension_label_terms[key]
+        if (
+            not isinstance(labels, list)
+            or not labels
+            or any(not isinstance(label, str) or not label.strip() for label in labels)
+            or len(labels) != len(set(labels))
+        ):
+            raise CategoryRecipeError("品类尺寸标签词表无效")
+        all_dimension_labels.extend(labels)
+    if len(all_dimension_labels) != len(set(all_dimension_labels)):
+        raise CategoryRecipeError("品类尺寸标签词表无效")
     optional_dimension_prompts = lexicons["optional_dimension_prompts"]
     if (
         not isinstance(optional_dimension_prompts, dict)

@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from category_recipes import (
     DEFAULT_CATEGORY_KEY,
+    DIMENSION_KEYS,
     CategoryRecipe,
     CategoryRecipeError,
     load_category_recipe,
@@ -998,6 +999,7 @@ def _is_confirmed_dimension_measurement(
     match: re.Match[str],
     number: float,
     confirmed_dimensions: Mapping[str, int],
+    dimension_label_terms: Mapping[str, Sequence[str]],
     competing_dimension_terms: Sequence[str],
 ) -> bool:
     prefix = text[: match.start()]
@@ -1030,9 +1032,8 @@ def _is_confirmed_dimension_measurement(
         return False
 
     labels_by_key = {
-        "length_cm": ("长度", "长"),
-        "width_cm": ("宽度", "宽"),
-        "height_cm": ("高度", "高"),
+        key: tuple(dimension_label_terms[key])
+        for key in DIMENSION_KEYS
     }
     matching_keys = [
         key
@@ -1149,6 +1150,30 @@ def _reject_unsupported_claims(
     material_context_markers = lexicons.get("product_material_context_markers")
     unsupported_fact_terms = lexicons.get("unsupported_fact_terms")
     competing_dimension_terms = lexicons.get("competing_dimension_terms")
+    dimension_label_terms = lexicons.get("dimension_label_terms")
+    valid_dimension_label_terms = (
+        isinstance(dimension_label_terms, dict)
+        and set(dimension_label_terms) == set(DIMENSION_KEYS)
+    )
+    all_dimension_labels: list[str] = []
+    if valid_dimension_label_terms:
+        for key in DIMENSION_KEYS:
+            labels = dimension_label_terms[key]
+            if (
+                not isinstance(labels, list)
+                or not labels
+                or any(
+                    not isinstance(dimension_label, str)
+                    or not dimension_label.strip()
+                    for dimension_label in labels
+                )
+                or len(labels) != len(set(labels))
+            ):
+                valid_dimension_label_terms = False
+                break
+            all_dimension_labels.extend(labels)
+        if len(all_dimension_labels) != len(set(all_dimension_labels)):
+            valid_dimension_label_terms = False
     if (
         not isinstance(material_context_markers, list)
         or not material_context_markers
@@ -1156,6 +1181,7 @@ def _reject_unsupported_claims(
         or not unsupported_fact_terms
         or not isinstance(competing_dimension_terms, list)
         or not competing_dimension_terms
+        or not valid_dimension_label_terms
     ):
         raise ExecutorExecutionError(f"codex-dev 无法读取有效的{label}品类词表")
     fact_alternatives: list[str] = []
@@ -1238,6 +1264,7 @@ def _reject_unsupported_claims(
                     match,
                     number,
                     confirmed,
+                    dimension_label_terms,
                     competing_dimension_terms,
                 )
             ):

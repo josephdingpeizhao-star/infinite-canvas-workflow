@@ -47,97 +47,6 @@ _EXPECTED_RATIO_BY_MODE = {
 }
 _OLD_HEIGHT_LOCK = "约 {height_cm} 厘米的高度锁定"
 _NEW_HEIGHT_LOCK = "高度约 {height_cm} 厘米的锁定"
-_CAT05_REASON = (
-    "CAT-05：真实尺寸判据尚未把“口径”识别为 length_cm 标签；"
-    "该独立缺陷修复后必须删除本豁免。"
-)
-
-
-@dataclass(frozen=True)
-class _Cat05Exemption:
-    source_id: str
-    exact_template: str
-    reason: str = _CAT05_REASON
-    ticket: str = "CAT-05"
-
-
-_BOWL_INITIAL_DETAIL_LOCK = (
-    "所有尺寸比例锁定必须写“口径约 {length_cm} 厘米、"
-    "高度约 {height_cm} 厘米”。"
-)
-_BOWL_INITIAL_MAIN_LOCK = (
-    "尺寸比例锁定必须写“口径约 {length_cm} 厘米、"
-    "高度约 {height_cm} 厘米”；"
-)
-_BOWL_REQUIRED_FIELD_LOCK = (
-    "固定写入当批用户确认的“口径约 {length_cm} 厘米、"
-    "高度约 {height_cm} 厘米”；"
-)
-_BOWL_FINAL_LOCK = (
-    "每份 final_prompt 必须完整保留本张变量配置的页面任务、绑定源图和 "
-    "A/B/C 槽位、画布比例 {expected_ratio}、产品口径约 {length_cm} 厘米、"
-    "高度约 {height_cm} 厘米、手持启用或禁用状态、内容物与动作边界。"
-)
-
-# Exact, reviewable CAT-05 debt inventory. Source identity and source template are
-# both pinned so a moved, added, removed, or rewritten violation cannot hide here.
-CAT05_EXEMPTIONS = (
-    _Cat05Exemption(
-        "碗:prompts/detail.md:line:1:sentence:1",
-        _BOWL_INITIAL_DETAIL_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:prompts/detail.md:line:93:sentence:1",
-        _BOWL_REQUIRED_FIELD_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:prompts/final.md:line:1:sentence:1",
-        _BOWL_FINAL_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:prompts/main.md:line:1:sentence:1",
-        _BOWL_INITIAL_MAIN_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:prompts/main.md:line:80:sentence:1",
-        _BOWL_REQUIRED_FIELD_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:runtime/detail.json:"
-        "slice:bowl-detail-hf02-required-field-teaching:"
-        "line:75:sentence:1",
-        _BOWL_REQUIRED_FIELD_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:runtime/final.json:"
-        "slice:bowl-final-executor-content-contract:"
-        "line:1:sentence:1",
-        _BOWL_FINAL_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-    _Cat05Exemption(
-        "碗:runtime/main.json:"
-        "slice:bowl-main-hf02-required-field-teaching:"
-        "line:65:sentence:1",
-        _BOWL_REQUIRED_FIELD_LOCK,
-        reason=_CAT05_REASON,
-        ticket="CAT-05",
-    ),
-)
-_CAT05_BY_SOURCE = {item.source_id: item for item in CAT05_EXEMPTIONS}
 
 
 @dataclass(frozen=True)
@@ -161,7 +70,6 @@ class _GateScan:
     statements: tuple[_TeachingStatement, ...]
     dimension_statements: tuple[_TeachingStatement, ...]
     corrected_height_locks: tuple[_TeachingStatement, ...]
-    cat05_violations: dict[str, str]
     unexpected_parameter_violations: dict[str, str]
 
 
@@ -343,7 +251,6 @@ def _scan_dimension_teaching_gate(root: Path) -> _GateScan:
         for statement in dimension_statements
         if _NEW_HEIGHT_LOCK in statement.raw_template
     )
-    cat05_violations: dict[str, str] = {}
     unexpected: dict[str, str] = {}
     for statement in dimension_statements:
         message = _parameter_violation_message(
@@ -352,56 +259,19 @@ def _scan_dimension_teaching_gate(root: Path) -> _GateScan:
         )
         if message is None:
             continue
-        if statement.source_id in _CAT05_BY_SOURCE:
-            cat05_violations[statement.source_id] = message
-        else:
-            unexpected[statement.source_id] = message
+        unexpected[statement.source_id] = message
 
     return _GateScan(
         contexts=contexts,
         statements=statements,
         dimension_statements=dimension_statements,
         corrected_height_locks=corrected_height_locks,
-        cat05_violations=cat05_violations,
         unexpected_parameter_violations=unexpected,
     )
 
 
 def _assert_dimension_teaching_gate(root: Path) -> _GateScan:
     scan = _scan_dimension_teaching_gate(root)
-    expected_sources = set(_CAT05_BY_SOURCE)
-    actual_sources = set(scan.cat05_violations)
-    if actual_sources != expected_sources:
-        raise AssertionError(
-            "CAT-05 exemption inventory mismatch: "
-            f"missing={sorted(expected_sources - actual_sources)!r}; "
-            f"unexpected={sorted(actual_sources - expected_sources)!r}"
-        )
-
-    statements_by_source = {
-        statement.source_id: statement for statement in scan.dimension_statements
-    }
-    for exemption in CAT05_EXEMPTIONS:
-        statement = statements_by_source.get(exemption.source_id)
-        if statement is None:
-            raise AssertionError(
-                f"CAT-05 exempt source disappeared: {exemption.source_id}"
-            )
-        if statement.raw_template != exemption.exact_template:
-            raise AssertionError(
-                "CAT-05 exact template changed at "
-                f"{exemption.source_id}: {statement.raw_template!r}"
-            )
-        if exemption.ticket != "CAT-05" or "CAT-05" not in exemption.reason:
-            raise AssertionError(
-                f"CAT-05 exemption lost ticket/reason: {exemption.source_id}"
-            )
-        if "未确认参数" not in scan.cat05_violations[exemption.source_id]:
-            raise AssertionError(
-                f"CAT-05 exemption no longer fails its real parameter gate: "
-                f"{exemption.source_id}"
-            )
-
     if scan.unexpected_parameter_violations:
         details = "\n".join(
             f"{source_id}: {message}"
@@ -424,7 +294,7 @@ def _assert_dimension_teaching_gate(root: Path) -> _GateScan:
 
 
 class Cat04DimensionTeachingGateTest(unittest.TestCase):
-    def test_dimension_teaching_gate_and_cat05_reverse_assertions(self) -> None:
+    def test_dimension_teaching_gate_has_zero_exemptions(self) -> None:
         scan = _assert_dimension_teaching_gate(ROOT)
 
         discovered = {
@@ -435,8 +305,6 @@ class Cat04DimensionTeachingGateTest(unittest.TestCase):
             and (path / "recipe.json").is_file()
         }
         self.assertEqual(discovered, set(scan.contexts))
-        self.assertEqual(8, len(CAT05_EXEMPTIONS))
-        self.assertEqual(8, len(scan.cat05_violations))
         self.assertFalse(scan.unexpected_parameter_violations)
 
     def test_material_condition_is_intentionally_outside_dimension_gate(self) -> None:

@@ -26,6 +26,11 @@
     "长度", "长", "宽度", "宽", "高度", "高", "深度", "深", "厚度", "厚",
     "直径", "口径", "容量", "容积", "重量", "净重"
   ],
+  "dimension_label_terms": {
+    "length_cm": ["口径"],
+    "width_cm": ["宽度", "宽"],
+    "height_cm": ["高度", "高"]
+  },
   "handheld_phrase": "托住碗底或圈足、轻扶碗身外侧、组合整组托稳",
   "optional_dimension_prompts": {
     "main": "用户另已确认{dimensions}，必须一并保留，不得改写已确认口径和高度。",

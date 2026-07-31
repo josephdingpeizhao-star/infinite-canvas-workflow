@@ -23,6 +23,11 @@
     "长度", "长", "深度", "深", "厚度", "厚", "直径", "口径",
     "容量", "容积", "重量", "净重"
   ],
+  "dimension_label_terms": {
+    "length_cm": ["长度", "长"],
+    "width_cm": ["宽度", "宽"],
+    "height_cm": ["高度", "高"]
+  },
   "handheld_phrase": "自然握住把手、轻扶壶身或轻微拿起",
   "optional_dimension_prompts": {
     "main": "用户另已确认{dimensions}，可用于补充比例约束，但不得改写已确认高度。",
