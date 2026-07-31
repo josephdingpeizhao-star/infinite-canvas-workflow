@@ -724,6 +724,18 @@ QC-02（主仓 `254c4da`）顾问验收通过：恰 1 提交、diff 恰白名单
 
 `FORK_NOTES.md` 的“上游同步纪律”段已在演练分支固化为七步手册（更新参照→安全锚→演练分支→锁 tag 合并→冲突裁决→形成评估→静态验证），并以锚点 #149 登记本次演练。边界经顾问复核：`workflow-editor` 仍为 `5749631` 零新提交、`bun test` 156/776 全绿，`web/dist` 仍为 12 文件 2,741,302 字节且时间戳保持 EX-01 构建时刻，主仓 `0a94fec` 跟踪文件零差异、5 个未跟踪现场文件未动，全程未推送任何分支或 tag。验收后顾问已把 fork 工作树切回 `workflow-editor`（演练期间检出停在合并树上，而 canvas-agent 走 tsx 读源码运行，若此时启动工作台会加载合并后代码——此为本次新增运维教训）。演练成果保留在本地分支，随时可删；SYNC-02 是否立项由用户拍板。
 
+### 2026-07-31 CFG-01 顾问终验记录（chore）
+
+CFG-01（主仓 `7f90b22` 23 文件 / fork `41cdd45` 10 文件，双仓各恰 1 提交、均未推送）经顾问全套终验通过。两个保护门均达标：金样树提交前后严格为 `d50d6774036bbaf7993991b5c073cfcc0aba04d9` 且 `tests/fixtures/` 全域零差异；杯类、盘子、碗三目录各自仅 `form.json` 变化（每份 0 增 6 删，恰为删除 `allow_clear_water` 一个 advanced_options 条目），排除该文件后相对基线逐字节零差异，杯类新树为 `fe878e7dd4512c0ed7b972e73548b86ee72239a7`。顾问亲跑主仓全量 **926/926**、fork **159 项/778 断言** + `tsc` 干净；新契约哈希 `ac9e633c814b2032eb5d72c436a773c03a7dc3f4500d3383580ee7b3f3c18de0` 经顾问在契约文件、主仓 `batch_intake_contract_sha256()` 与 fork 常量三端独立复算完全一致（字段 11→10），旧哈希 `463e993e…` 在两仓活动代码与测试中归零，仅本状态文档保留历史记录。
+
+实现要点（顾问审读确认）：`UserConfirmedRequirements` 新增 `allow_clear_water_fact_present` 存在性标记（`compare=False, repr=False`，既有相等断言不受影响），legacy 键组由新键组拼接生成而非复制清单，避免冗余；structured 解析同时接受含键与不含键两种键集，缺键时行为布尔恒为 `False` 走禁水路径且确认事实 JSON 不回显该键；旧 manifest 的 `true`/`false` 与 notes“允许清水场景”通道行为与回显逐字保持原语义，非布尔仍 fail-closed；`batch_intake_controller._parse_facts` 对显式携带退役键的载荷直接拒绝，杜绝借历史兼容通道重获配置权；`codex_dev_downstream` 三处行为分支与词典判词一字未动。
+
+三段破坏性白盒由顾问亲手重做全部按预期变红并复原：缺键改走清水路径 → 新合同测试红；fork 常量改回旧哈希 → fork 合同 3 项全红；金样单字节扰动 → 金样逐字节测试红。**新增运维教训㉖**：本仓 `core.autocrlf=true` 且 `.gitattributes` 已缺失，用 `git checkout --` 复原金样夹具会写成 CRLF 导致逐字节门误红，必须用 `git show <ref>:<path> > <path>` 以 LF 复原；复原后 `git status` 可能残留 autocrlf 幻影 `M`（`git diff`、`git diff HEAD`、`git diff --cached` 三处均空即证明无实质差异），`git add` 刷新 stat 缓存即可清除且不产生暂存改动。
+
+本任务共 3 次硬停申报，经顾问逐项亲验全部成立，均源于顾问简报缺陷：①白名单漏列 5 处运行必改（`category_recipes.ADVANCED_OPTION_KEYS` 与严格长度校验、`batch_creator` 双处、manifest 模板、README 示例、fork `use-canvas-batch-intake.ts`）；②误判 `test_cat02_bowl_category.py` 为纯历史夹具（实含旧哈希/三选项/11 字段等现行正向期望）与锚点编号（主线最高实为 #148，#149 仅存在于 SYNC-01 演练分支）；③把杯类整树哈希设为不变硬门却又必须改树内 `form.json`（已修订为“除 form.json 外零差异 + form.json 仅删该条目”）。顾问另主动裁决两项：取消“新哈希 ≠ 旧哈希”这条冗余断言（10 字段且无该键已在数学上蕴含哈希必变），改由“契约恰 10 字段无该键”+“双端同值互锚”两条覆盖，使旧哈希在活动代码测试中真正归零；保留 Codex 顺手修正的测试名 `exact_nine_keys → exact_ten_keys`（基线该名对应 11 键即已失真，全仓无引用，还原等于保留错误命名）。
+
+终验后顾问重启工作台（launcher 全套三件 16:01 重建，`workbench-health` 200），真机核对 17373 `/batch-categories` 下发 `contractHash` 为新值、高级选项恰 2 项，清水开关已从端点消失。fork `web/dist` 已按最终源码重建（15:19）且未进入提交。剩余真人走查项：信息卡高级选项不再出现清水开关、新登记批次为 10 项载荷、旧 dist 混跑时哈希门拒绝登记、另两个高级选项行为不变。
+
 
 ## 9. 维护协议（交接纪律）
 
