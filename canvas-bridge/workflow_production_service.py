@@ -401,7 +401,11 @@ class WorkflowProductionService:
         return False
 
     @staticmethod
-    def _journal_has_event(path: Path, event_name: str) -> bool:
+    def _journal_has_event(
+        path: Path,
+        event_name: str,
+        config_id: str | None = None,
+    ) -> bool:
         if not path.is_file():
             return False
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -409,7 +413,11 @@ class WorkflowProductionService:
                 entry = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if isinstance(entry, dict) and entry.get("event") == event_name:
+            if (
+                isinstance(entry, dict)
+                and entry.get("event") == event_name
+                and (config_id is None or entry.get("config_id") == config_id)
+            ):
                 return True
         return False
 
@@ -609,6 +617,33 @@ class WorkflowProductionService:
             height=artifact.height,
         )
 
+    def _backfill_persisted_event(
+        self,
+        journal: Path,
+        artifact: WorkflowProductionArtifact,
+        request_id: str,
+        *,
+        event_name: str = "image_persisted",
+    ) -> None:
+        if self._journal_has_event(
+            journal,
+            event_name,
+            config_id=artifact.config_id,
+        ):
+            return
+        run_controller.append_event(
+            journal,
+            event_name,
+            request_id=request_id,
+            config_id=artifact.config_id,
+            source=artifact.source,
+            sha256=artifact.sha256,
+            byte_count=artifact.byte_count,
+            width=artifact.width,
+            height=artifact.height,
+            backfilled=True,
+        )
+
     def _sync_existing(
         self,
         machine: Mapping[str, Any],
@@ -637,6 +672,8 @@ class WorkflowProductionService:
                     request_id,
                     expected_ids=expected_ids,
                 )
+            else:
+                self._backfill_persisted_event(journal, artifact, request_id)
         return artifacts
 
     @_guard_batch_side_effect(quiet=True)
@@ -772,6 +809,13 @@ class WorkflowProductionService:
                     machine,
                     artifact,
                     journal,
+                    request_id,
+                    event_name="repaired_image_persisted",
+                )
+            else:
+                self._backfill_persisted_event(
+                    journal,
+                    artifact,
                     request_id,
                     event_name="repaired_image_persisted",
                 )

@@ -1627,6 +1627,269 @@ class ProductionServiceTest(unittest.TestCase):
         service.poll_once()
         self.assertEqual(before, journal.read_bytes())
 
+    def _existing_persisted_artifact(
+        self,
+        config_id: str,
+        *,
+        source: str = "renders",
+        width: int = 96,
+        height: int = 96,
+    ):
+        output_root = self.workspace / "outputs" / source
+        output_root.mkdir(parents=True, exist_ok=True)
+        path = output_root / f"{config_id}.png"
+        kind, ordinal = config_id.rsplit("_", 1)
+        write_placeholder_png(
+            path,
+            width=width,
+            height=height,
+            kind=kind,
+            ordinal=int(ordinal),
+        )
+        artifact = artifact_from_path("cup", path, source=source)
+        client = FakeCanvasClient()
+        node_id = production_service.output_node_id(
+            artifact.batch_id,
+            artifact.config_id,
+            artifact.source,
+        )
+        client.state["nodes"].append(
+            {
+                "id": node_id,
+                "type": "image",
+                "metadata": {
+                    "storageKey": f"image:{source}:{config_id}",
+                    "workflowProductionOutput": {
+                        "batchId": artifact.batch_id,
+                        "configId": artifact.config_id,
+                        "source": artifact.source,
+                        "sha256": artifact.sha256,
+                    },
+                },
+            }
+        )
+        return client, artifact
+
+    def test_sync_existing_backfills_persisted_event_with_artifact_evidence(self) -> None:
+        client, artifact = self._existing_persisted_artifact("main_05")
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        production_service.run_controller.append_event(
+            journal,
+            "image_persisted",
+            request_id="req-existing",
+            config_id="main_01",
+        )
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            artifact_reader=lambda _manifest: (artifact,),
+            clock_ms=lambda: 1_100,
+        )
+
+        service._sync_existing(
+            client.state["nodes"][0],
+            json.loads(self.manifest.read_text(encoding="utf-8")),
+            journal,
+            "req-backfill",
+        )
+
+        events = [
+            json.loads(line)
+            for line in journal.read_text(encoding="utf-8").splitlines()
+        ]
+        persisted = [
+            event
+            for event in events
+            if event.get("event") == "image_persisted"
+            and event.get("config_id") == artifact.config_id
+        ]
+        self.assertEqual(1, len(persisted))
+        self.assertEqual(
+            {
+                "event": "image_persisted",
+                "request_id": "req-backfill",
+                "config_id": artifact.config_id,
+                "source": artifact.source,
+                "sha256": artifact.sha256,
+                "byte_count": artifact.byte_count,
+                "width": artifact.width,
+                "height": artifact.height,
+                "backfilled": True,
+            },
+            {key: value for key, value in persisted[0].items() if key != "ts"},
+        )
+        self.assertEqual([], client.ops)
+
+    def test_sync_existing_backfill_is_idempotent_per_config_id(self) -> None:
+        client, artifact = self._existing_persisted_artifact("main_05")
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            artifact_reader=lambda _manifest: (artifact,),
+            clock_ms=lambda: 1_100,
+        )
+
+        service._sync_existing(
+            client.state["nodes"][0],
+            manifest,
+            journal,
+            "req-backfill-first",
+        )
+        service._sync_existing(
+            client.state["nodes"][0],
+            manifest,
+            journal,
+            "req-backfill-second",
+        )
+
+        events = [
+            json.loads(line)
+            for line in journal.read_text(encoding="utf-8").splitlines()
+        ]
+        persisted = [
+            event
+            for event in events
+            if event.get("event") == "image_persisted"
+            and event.get("config_id") == artifact.config_id
+        ]
+        self.assertEqual(1, len(persisted))
+        self.assertEqual("req-backfill-first", persisted[0]["request_id"])
+        self.assertTrue(persisted[0]["backfilled"])
+        self.assertEqual([], client.ops)
+
+    def test_normal_projection_event_does_not_claim_backfill(self) -> None:
+        path = self.workspace / "outputs" / "renders" / "main_01.png"
+        write_placeholder_png(path, width=96, height=96, kind="main", ordinal=1)
+        artifact = artifact_from_path("cup", path)
+        client = FakeCanvasClient()
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            clock_ms=lambda: 1_100,
+            sleep=lambda _seconds: None,
+            persistence_timeout_ms=50,
+        )
+
+        service._project_artifact(
+            client.state["nodes"][0],
+            artifact,
+            journal,
+            "req-first-projection",
+        )
+
+        events = [
+            json.loads(line)
+            for line in journal.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(1, len(events))
+        self.assertEqual("image_persisted", events[0]["event"])
+        self.assertNotIn("backfilled", events[0])
+
+    def test_journal_has_event_preserves_name_lookup_and_matches_config_id(self) -> None:
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        for config_id in ("main_01", "main_02"):
+            production_service.run_controller.append_event(
+                journal,
+                "image_persisted",
+                config_id=config_id,
+            )
+        production_service.run_controller.append_event(
+            journal,
+            "production_completed",
+        )
+
+        service_has_event = production_service.WorkflowProductionService._journal_has_event
+        self.assertTrue(service_has_event(journal, "image_persisted"))
+        self.assertTrue(service_has_event(journal, "image_persisted", config_id=None))
+        self.assertTrue(service_has_event(journal, "image_persisted", config_id="main_01"))
+        self.assertTrue(service_has_event(journal, "image_persisted", config_id="main_02"))
+        self.assertFalse(service_has_event(journal, "image_persisted", config_id="main_03"))
+        self.assertTrue(service_has_event(journal, "production_completed"))
+        self.assertFalse(
+            service_has_event(journal, "production_completed", config_id="main_01")
+        )
+
+    def test_repaired_projection_backfills_once_when_persisted_node_is_skipped(self) -> None:
+        client, artifact = self._existing_persisted_artifact(
+            "detail_01",
+            source="repaired",
+            width=96,
+            height=128,
+        )
+        repaired_root = artifact.path.parent
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["outputs"]["repaired"] = [str(repaired_root)]
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        journal = self.repo / "manifests" / "cup.events.jsonl"
+        production_service.run_controller.append_event(
+            journal,
+            "repaired_image_persisted",
+            request_id="repair-existing",
+            config_id="main_01",
+        )
+        machine = client.state["nodes"][0]
+        machine["metadata"]["workflowProduction"]["status"] = "completed"
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda *_args: (_ for _ in ()).throw(
+                AssertionError("repaired projection must not build an executor")
+            ),
+            route_reader=lambda _path: {"current_stage": "ready"},
+            clock_ms=lambda: 1_100,
+            batch_lock_root=self.root / "batch-locks",
+        )
+
+        for request_id in ("repair-backfill-first", "repair-backfill-second"):
+            machine["metadata"]["workflowRepairedProjection"] = {
+                "status": "queued",
+                "requestId": request_id,
+                "requestedAt": 1_000,
+                "batchId": "cup",
+            }
+            service.poll_once()
+
+        events = [
+            json.loads(line)
+            for line in journal.read_text(encoding="utf-8").splitlines()
+        ]
+        persisted = [
+            event
+            for event in events
+            if event.get("event") == "repaired_image_persisted"
+            and event.get("config_id") == artifact.config_id
+        ]
+        self.assertEqual(1, len(persisted))
+        self.assertEqual(
+            {
+                "event": "repaired_image_persisted",
+                "request_id": "repair-backfill-first",
+                "config_id": artifact.config_id,
+                "source": artifact.source,
+                "sha256": artifact.sha256,
+                "byte_count": artifact.byte_count,
+                "width": artifact.width,
+                "height": artifact.height,
+                "backfilled": True,
+            },
+            {key: value for key, value in persisted[0].items() if key != "ts"},
+        )
+        repaired_node_id = production_service.output_node_id(
+            artifact.batch_id,
+            artifact.config_id,
+            artifact.source,
+        )
+        self.assertFalse(
+            any(
+                op.get("id") == repaired_node_id
+                for ops in client.ops
+                for op in ops
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
