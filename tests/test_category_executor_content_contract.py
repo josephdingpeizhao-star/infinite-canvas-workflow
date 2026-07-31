@@ -212,6 +212,10 @@ INLINE_EXACT_FIELD_TERMS = {
         ),
     },
 }
+CAT06_DUAL_HEIGHT_CLAUSE_PATTERN = re.compile(
+    r"【尺寸标注信息】\s*与\s*【尺寸标注图规则】\s*"
+    r"(?:都|均)必须包含\s*[“\"]高度约 \{height_cm\} 厘米[”\"]"
+)
 
 
 def _runtime_text(recipe, stage: str) -> str:
@@ -302,7 +306,24 @@ def _field_teaching_evidence(recipe, stage: str, field: str) -> str:
                 if field in line:
                     candidates.append(line.strip())
 
-    return max(candidates, key=lambda item: len(_normalized_contract_text(item)), default="")
+    evidence = max(
+        candidates,
+        key=lambda item: len(_normalized_contract_text(item)),
+        default="",
+    )
+
+    # CAT-06 的双栏要求可以由同一详情运行包中的契约切片集中教学。
+    # 将这条跨字段正文同时计入两栏证据，避免相对长度门禁因切片位置不同而误判。
+    if (
+        stage == "detail"
+        and field in {"尺寸标注信息", "尺寸标注图规则"}
+        and evidence
+    ):
+        match = CAT06_DUAL_HEIGHT_CLAUSE_PATTERN.search(_stage_text(recipe, stage))
+        if match is not None and match.group(0) not in evidence:
+            evidence = f"{evidence}\n{match.group(0)}"
+
+    return evidence
 
 
 def _substantive_teaching_problems(blueprint: str, candidate: str) -> list[str]:

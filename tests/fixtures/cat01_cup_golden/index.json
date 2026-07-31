@@ -6,12 +6,12 @@
       "sha256": "de5dc81f568bc5db823456edf20e5be9a4f2a77df0a7d7882a8a6cf84b6062f2"
     },
     "detail_vc_notes_prompt.txt": {
-      "bytes": 88523,
-      "sha256": "195f00bc567e15e03a0a629ba8acff75a1fce4d3bbd18bedb7a5278da035be5f"
+      "bytes": 88728,
+      "sha256": "10ada8fb768146c6770c1d91b75be54c80873f5addb86a9ef4c523fa8029f2fa"
     },
     "detail_vc_structured_prompt.txt": {
-      "bytes": 88523,
-      "sha256": "195f00bc567e15e03a0a629ba8acff75a1fce4d3bbd18bedb7a5278da035be5f"
+      "bytes": 88728,
+      "sha256": "10ada8fb768146c6770c1d91b75be54c80873f5addb86a9ef4c523fa8029f2fa"
     },
     "final_detail_notes_prompt.txt": {
       "bytes": 65973,

@@ -37,6 +37,13 @@ HANDHELD_BLUEPRINT_TOPICS = {
     "main": "main_handheld_enable_rule",
     "detail": "detail_handheld_enable_rule",
 }
+CAT06_DETAIL_REQUIRED_FIELDS_SLICE_ID = "detail_required_fields_core"
+CAT06_DETAIL_REQUIRED_FIELDS_SOURCE = "详情图单张变量配置提示词生成.txt"
+CAT06_DUAL_HEIGHT_CLAUSE = (
+    "【尺寸标注信息】与【尺寸标注图规则】都必须包含"
+    "“高度约 {height_cm} 厘米”"
+)
+CAT06_RUNTIME_SOURCE_OVERLAY = f"\n{CAT06_DUAL_HEIGHT_CLAUSE}。"
 HANDHELD_SUMMARY_DISCIPLINES = {
     "逐项检查 configs 手持声明并以启用手持场景裁定": (
         "实际启用手持数量必须等于逐项检查 configs 中每套【手持交互声明】后，"
@@ -265,6 +272,21 @@ def _source_range_problems(
 
     ranged_text = "\n".join(source_lines[line_start - 1 : line_end])
     expected_text = _normalize_text_newlines(str(rule_slice.get("text") or ""))
+
+    # CAT-06 只在杯类运行教学上叠加一条由详情 prompt 同步背书的精确句子；
+    # 锁定蓝本保持只读。除这一个逐字匹配的插入外，仍按原规则逐字校验源范围。
+    if (
+        slice_id == CAT06_DETAIL_REQUIRED_FIELDS_SLICE_ID
+        and source_file == CAT06_DETAIL_REQUIRED_FIELDS_SOURCE
+    ):
+        if expected_text.count(CAT06_RUNTIME_SOURCE_OVERLAY) != 1:
+            return [f"{slice_id} CAT-06 双栏高度教学叠加必须恰好出现一次"]
+        prompt_text = (ROOT / "categories" / "杯类" / "prompts" / "detail.md").read_text(
+            encoding="utf-8"
+        )
+        if prompt_text.count(CAT06_DUAL_HEIGHT_CLAUSE) != 1:
+            return [f"{slice_id} CAT-06 双栏高度教学缺少 prompt 背书"]
+        expected_text = expected_text.replace(CAT06_RUNTIME_SOURCE_OVERLAY, "", 1)
 
     runtime_matches: list[Mapping[str, object]] = []
     if source_path.suffix.lower() == ".json":
