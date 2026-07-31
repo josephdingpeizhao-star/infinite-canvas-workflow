@@ -40,6 +40,9 @@ PLATE_FACTS = {
     "forbid_pouring_and_heating": True,
     "missing_d_no_retake": True,
 }
+NEW_PLATE_FACTS = {
+    key: value for key, value in PLATE_FACTS.items() if key != "allow_clear_water"
+}
 
 
 class CategoryRecipeTest(unittest.TestCase):
@@ -285,8 +288,6 @@ class CategoryRecipeTest(unittest.TestCase):
             "6",
             "--handheld-detail",
             "8",
-            "--allow-clear-water",
-            "false",
             "--forbid-pouring-and-heating",
             "true",
             "--missing-d-no-retake",
@@ -307,7 +308,7 @@ class CategoryRecipeTest(unittest.TestCase):
         manifest = json.loads(completed.stdout)["manifest_data"]
         self.assertEqual("盘子", manifest["category"])
         self.assertEqual(
-            PLATE_FACTS
+            NEW_PLATE_FACTS
             | {
                 "main_image_count": 6,
                 "detail_image_count": 8,

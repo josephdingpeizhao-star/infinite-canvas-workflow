@@ -617,8 +617,6 @@ class BatchCreator:
             str(facts.handheld_main),
             "--handheld-detail",
             str(facts.handheld_detail),
-            "--allow-clear-water",
-            str(facts.allow_clear_water).lower(),
             "--forbid-pouring-and-heating",
             str(facts.forbid_pouring_and_heating).lower(),
             "--missing-d-no-retake",
@@ -666,7 +664,6 @@ class BatchCreator:
             detail_image_count=parsed.detail_image_count,
             handheld_main=parsed.handheld_main,
             handheld_detail=parsed.handheld_detail,
-            allow_clear_water=parsed.allow_clear_water,
             forbid_pouring_and_heating=parsed.forbid_pouring_and_heating,
             missing_d_no_retake=parsed.missing_d_no_retake,
         )

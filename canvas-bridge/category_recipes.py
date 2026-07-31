@@ -15,7 +15,6 @@ from image_count_contract import ImageCountContractError, image_count_spec
 DEFAULT_CATEGORY_KEY = "杯类"
 DIMENSION_KEYS = ("length_cm", "width_cm", "height_cm")
 ADVANCED_OPTION_KEYS = (
-    "allow_clear_water",
     "forbid_pouring_and_heating",
     "missing_d_no_retake",
 )

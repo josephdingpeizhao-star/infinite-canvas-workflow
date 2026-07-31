@@ -35,7 +35,6 @@ FACTS = {
     "detail_image_count": 8,
     "handheld_main": 2,
     "handheld_detail": 1,
-    "allow_clear_water": True,
     "forbid_pouring_and_heating": True,
     "missing_d_no_retake": True,
 }
@@ -232,7 +231,7 @@ class BatchIntakeControllerTests(unittest.TestCase):
         request = self.parse(valid_state(info=node), node, future_tolerance_ms=10)
         self.assertEqual(NOW_MS + 10, request.requested_at)
 
-    def test_facts_require_exact_nine_keys_and_types(self) -> None:
+    def test_facts_require_exact_ten_keys_and_types(self) -> None:
         invalid = (
             {key: value for key, value in FACTS.items() if key != "height_cm"},
             {**FACTS, "extra": "private"},

@@ -55,7 +55,6 @@ class ConfirmedFacts:
     detail_image_count: int
     handheld_main: int
     handheld_detail: int
-    allow_clear_water: bool
     forbid_pouring_and_heating: bool
     missing_d_no_retake: bool
     length_cm: int | None = None
@@ -71,7 +70,6 @@ class ConfirmedFacts:
             "detail_image_count": self.detail_image_count,
             "handheld_main": self.handheld_main,
             "handheld_detail": self.handheld_detail,
-            "allow_clear_water": self.allow_clear_water,
             "forbid_pouring_and_heating": self.forbid_pouring_and_heating,
             "missing_d_no_retake": self.missing_d_no_retake,
         }
@@ -177,6 +175,7 @@ def _parse_facts(
             not isinstance(raw, Mapping)
             or "main_image_count" not in raw
             or "detail_image_count" not in raw
+            or "allow_clear_water" in raw
         ):
             raise ExecutorExecutionError("image counts missing")
         parsed = parse_user_confirmed_requirements(
@@ -201,7 +200,6 @@ def _parse_facts(
         detail_image_count=parsed.detail_image_count,
         handheld_main=parsed.handheld_main,
         handheld_detail=parsed.handheld_detail,
-        allow_clear_water=parsed.allow_clear_water,
         forbid_pouring_and_heating=parsed.forbid_pouring_and_heating,
         missing_d_no_retake=parsed.missing_d_no_retake,
     )

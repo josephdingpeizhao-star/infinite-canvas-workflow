@@ -44,7 +44,6 @@ FACTS = ConfirmedFacts(
     detail_image_count=8,
     handheld_main=2,
     handheld_detail=1,
-    allow_clear_water=True,
     forbid_pouring_and_heating=True,
     missing_d_no_retake=True,
 )
@@ -246,7 +245,6 @@ class BatchCreatorTests(unittest.TestCase):
             detail_image_count=8,
             handheld_main=6,
             handheld_detail=8,
-            allow_clear_water=True,
             forbid_pouring_and_heating=True,
             missing_d_no_retake=True,
         )

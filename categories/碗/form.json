@@ -17,12 +17,6 @@
   },
   "advanced_options": [
     {
-      "field": "allow_clear_water",
-      "default": false,
-      "label": "成品图碗里可以出现清水",
-      "description": "开=允许碗内出现清水、水珠等静态清水画面；关=画面中不出现水。"
-    },
-    {
       "field": "forbid_pouring_and_heating",
       "default": true,
       "label": "不出现倾倒、倒水、加热等动作画面",

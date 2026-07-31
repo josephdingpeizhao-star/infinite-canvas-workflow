@@ -39,7 +39,7 @@ from workflow_production_http_server import (  # noqa: E402
 
 
 EXPECTED_CONTRACT_HASH = (
-    "463e993e54610602f6e6118153d91d727329e3c9c7ccf175db5f894f9997bc82"
+    "ac9e633c814b2032eb5d72c436a773c03a7dc3f4500d3383580ee7b3f3c18de0"
 )
 EXPECTED_BOWL_FILES = (
     "form.json",
@@ -160,13 +160,12 @@ def _frontend_valid_category(value: object) -> bool:
             return False
     advanced = form.get("advanced_options")
     expected_advanced = {
-        "allow_clear_water",
         "forbid_pouring_and_heating",
         "missing_d_no_retake",
     }
     return (
         isinstance(advanced, list)
-        and len(advanced) == 3
+        and len(advanced) == 2
         and {
             item.get("field")
             for item in advanced
@@ -300,11 +299,6 @@ class Cat02BowlCategoryTest(unittest.TestCase):
         )
         self.assertEqual(
             [
-                (
-                    "allow_clear_water",
-                    False,
-                    "成品图碗里可以出现清水",
-                ),
                 (
                     "forbid_pouring_and_heating",
                     True,
@@ -651,7 +645,6 @@ class Cat02BowlCategoryTest(unittest.TestCase):
                 detail_image_count=2,
                 handheld_main=2,
                 handheld_detail=1,
-                allow_clear_water=False,
                 forbid_pouring_and_heating=True,
                 missing_d_no_retake=True,
             )
@@ -698,7 +691,7 @@ class Cat02BowlCategoryTest(unittest.TestCase):
 
             self.assertEqual("碗_20260728", result.product_id)
             self.assertEqual("碗", manifest["category"])
-            self.assertEqual(11, len(manifest["user_confirmed_facts"]))
+            self.assertEqual(10, len(manifest["user_confirmed_facts"]))
             self.assertEqual(facts.as_dict(), manifest["user_confirmed_facts"])
             self.assertEqual("碗", receipt["category"])
             self.assertEqual(EXPECTED_CONTRACT_HASH, receipt["contract_hash"])

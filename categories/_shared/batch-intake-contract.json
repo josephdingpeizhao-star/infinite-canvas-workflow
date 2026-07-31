@@ -18,7 +18,6 @@
           "detail_image_count",
           "handheld_main",
           "handheld_detail",
-          "allow_clear_water",
           "forbid_pouring_and_heating",
           "missing_d_no_retake"
         ],
@@ -31,7 +30,6 @@
           "detail_image_count": {"type": "integer"},
           "handheld_main": {"type": "integer"},
           "handheld_detail": {"type": "integer"},
-          "allow_clear_water": {"type": "boolean"},
           "forbid_pouring_and_heating": {"type": "boolean"},
           "missing_d_no_retake": {"type": "boolean"}
         },

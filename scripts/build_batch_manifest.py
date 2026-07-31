@@ -224,7 +224,6 @@ def main() -> int:
     )
     parser.add_argument("--handheld-main", required=True, type=int)
     parser.add_argument("--handheld-detail", required=True, type=int)
-    parser.add_argument("--allow-clear-water", required=True, type=strict_boolean)
     parser.add_argument("--forbid-pouring-and-heating", required=True, type=strict_boolean)
     parser.add_argument("--missing-d-no-retake", required=True, type=strict_boolean)
     parser.add_argument(
@@ -316,7 +315,6 @@ def main() -> int:
         "detail_image_count": detail_count,
         "handheld_main": args.handheld_main,
         "handheld_detail": args.handheld_detail,
-        "allow_clear_water": args.allow_clear_water,
         "forbid_pouring_and_heating": args.forbid_pouring_and_heating,
         "missing_d_no_retake": args.missing_d_no_retake,
     }

@@ -596,7 +596,6 @@ class BatchRecycleGateTests(unittest.TestCase):
             detail_image_count=8,
             handheld_main=0,
             handheld_detail=0,
-            allow_clear_water=False,
             forbid_pouring_and_heating=True,
             missing_d_no_retake=True,
         )

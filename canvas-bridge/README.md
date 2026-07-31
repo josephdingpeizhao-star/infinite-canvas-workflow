@@ -85,7 +85,7 @@ python canvas-bridge/make_demo_workspace.py --prepare-workflow-demo
 python canvas-bridge/make_demo_workspace.py --reset
 
 # 新批次只读预检；去掉 --dry-run 才会创建 manifest 与目录
-python scripts/build_batch_manifest.py --product-id <批次编号> --category 杯类 --product-type 杯子 --height-cm <已确认高度> --handheld-main 2 --handheld-detail 1 --allow-clear-water false --forbid-pouring-and-heating true --missing-d-no-retake true --dry-run
+python scripts/build_batch_manifest.py --product-id <批次编号> --category 杯类 --product-type 杯子 --height-cm <已确认高度> --handheld-main 2 --handheld-detail 1 --forbid-pouring-and-heating true --missing-d-no-retake true --dry-run
 ```
 
 ## M3-a 只读批次问答

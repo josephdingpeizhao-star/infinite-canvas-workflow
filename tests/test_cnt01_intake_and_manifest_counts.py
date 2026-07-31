@@ -160,8 +160,6 @@ class ManifestCliTests(unittest.TestCase):
                 "1",
                 "--handheld-detail",
                 "1",
-                "--allow-clear-water",
-                "true",
                 "--forbid-pouring-and-heating",
                 "true",
                 "--missing-d-no-retake",

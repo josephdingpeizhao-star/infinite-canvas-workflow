@@ -185,6 +185,7 @@ class UserConfirmedRequirements:
     allow_clear_water: bool
     forbid_pouring_and_heating: bool
     missing_d_no_retake: bool
+    allow_clear_water_fact_present: bool = field(default=True, compare=False, repr=False)
     main_image_count: int | None = None
     detail_image_count: int | None = None
     length_cm: int | None = None
@@ -198,9 +199,13 @@ _USER_CONFIRMED_FACT_KEYS = (
     "height_cm",
     "handheld_main",
     "handheld_detail",
-    "allow_clear_water",
     "forbid_pouring_and_heating",
     "missing_d_no_retake",
+)
+_LEGACY_USER_CONFIRMED_FACT_KEYS = (
+    *_USER_CONFIRMED_FACT_KEYS[:-2],
+    "allow_clear_water",
+    *_USER_CONFIRMED_FACT_KEYS[-2:],
 )
 _CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "product_type",
@@ -209,9 +214,13 @@ _CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "height_cm",
     "handheld_main",
     "handheld_detail",
-    "allow_clear_water",
     "forbid_pouring_and_heating",
     "missing_d_no_retake",
+)
+_LEGACY_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
+    *_CATEGORY_USER_CONFIRMED_FACT_KEYS[:-2],
+    "allow_clear_water",
+    *_CATEGORY_USER_CONFIRMED_FACT_KEYS[-2:],
 )
 _COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "product_type",
@@ -222,9 +231,13 @@ _COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "detail_image_count",
     "handheld_main",
     "handheld_detail",
-    "allow_clear_water",
     "forbid_pouring_and_heating",
     "missing_d_no_retake",
+)
+_LEGACY_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
+    *_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS[:-2],
+    "allow_clear_water",
+    *_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS[-2:],
 )
 
 
@@ -351,13 +364,22 @@ def _parse_structured_user_requirements(
         raise ValueError("invalid structured requirements")
     raw_keys = set(raw)
     if explicit_category:
-        if raw_keys == set(_CATEGORY_USER_CONFIRMED_FACT_KEYS):
+        if raw_keys in (
+            set(_CATEGORY_USER_CONFIRMED_FACT_KEYS),
+            set(_LEGACY_CATEGORY_USER_CONFIRMED_FACT_KEYS),
+        ):
             has_counts = False
-        elif raw_keys == set(_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS):
+        elif raw_keys in (
+            set(_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS),
+            set(_LEGACY_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS),
+        ):
             has_counts = True
         else:
             raise ValueError("invalid structured requirements")
-    elif raw_keys == set(_USER_CONFIRMED_FACT_KEYS):
+    elif raw_keys in (
+        set(_USER_CONFIRMED_FACT_KEYS),
+        set(_LEGACY_USER_CONFIRMED_FACT_KEYS),
+    ):
         has_counts = False
     else:
         raise ValueError("invalid structured requirements")
@@ -369,8 +391,9 @@ def _parse_structured_user_requirements(
     handheld_detail = raw["handheld_detail"]
     main_image_count = raw["main_image_count"] if has_counts else None
     detail_image_count = raw["detail_image_count"] if has_counts else None
+    allow_clear_water_fact_present = "allow_clear_water" in raw
     boolean_values = (
-        raw["allow_clear_water"],
+        raw["allow_clear_water"] if allow_clear_water_fact_present else False,
         raw["forbid_pouring_and_heating"],
         raw["missing_d_no_retake"],
     )
@@ -395,6 +418,7 @@ def _parse_structured_user_requirements(
             allow_clear_water=boolean_values[0],
             forbid_pouring_and_heating=boolean_values[1],
             missing_d_no_retake=boolean_values[2],
+            allow_clear_water_fact_present=allow_clear_water_fact_present,
             main_image_count=main_image_count,
             detail_image_count=detail_image_count,
             length_cm=length_cm,
@@ -1520,7 +1544,11 @@ def build_variable_config_prompt(
         "product_type": requirements.product_type,
         "height": f"约 {requirements.height_cm} 厘米",
         "handheld_main": requirements.handheld_main,
-        "allow_clear_water": requirements.allow_clear_water,
+        **(
+            {"allow_clear_water": requirements.allow_clear_water}
+            if requirements.allow_clear_water_fact_present
+            else {}
+        ),
         "forbid_pouring_and_heating": requirements.forbid_pouring_and_heating,
         "missing_d_no_retake": requirements.missing_d_no_retake,
         "unconfirmed": [
@@ -2329,7 +2357,11 @@ def build_final_prompt_batch_prompt(
         "product_type": requirements.product_type,
         "height": f"约 {requirements.height_cm} 厘米",
         "expected_handheld": expected_handheld,
-        "allow_clear_water": requirements.allow_clear_water,
+        **(
+            {"allow_clear_water": requirements.allow_clear_water}
+            if requirements.allow_clear_water_fact_present
+            else {}
+        ),
         "forbid_pouring_and_heating": requirements.forbid_pouring_and_heating,
         "missing_d_no_retake": requirements.missing_d_no_retake,
         "unconfirmed": [

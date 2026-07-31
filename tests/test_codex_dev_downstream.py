@@ -816,7 +816,6 @@ class CodexDevDownstreamTest(unittest.TestCase):
                 "detail_image_count": None,
                 "handheld_main": None,
                 "handheld_detail": None,
-                "allow_clear_water": None,
                 "forbid_pouring_and_heating": None,
                 "missing_d_no_retake": None,
             },
@@ -845,8 +844,6 @@ class CodexDevDownstreamTest(unittest.TestCase):
             "2",
             "--handheld-detail",
             "1",
-            "--allow-clear-water",
-            "false",
             "--forbid-pouring-and-heating",
             "true",
             "--missing-d-no-retake",
@@ -867,14 +864,17 @@ class CodexDevDownstreamTest(unittest.TestCase):
         result = json.loads(completed.stdout)
         self.assertEqual(
             {
-                **STRUCTURED_FACTS,
+                **{
+                    key: value
+                    for key, value in STRUCTURED_FACTS.items()
+                    if key != "allow_clear_water"
+                },
                 "product_type": "玻璃收纳罐",
                 "length_cm": None,
                 "width_cm": None,
                 "height_cm": 31,
                 "main_image_count": 6,
                 "detail_image_count": 8,
-                "allow_clear_water": False,
                 "missing_d_no_retake": False,
             },
             result["manifest_data"]["user_confirmed_facts"],
@@ -904,8 +904,6 @@ class CodexDevDownstreamTest(unittest.TestCase):
             "7",
             "--handheld-detail",
             "1",
-            "--allow-clear-water",
-            "false",
             "--forbid-pouring-and-heating",
             "true",
             "--missing-d-no-retake",
