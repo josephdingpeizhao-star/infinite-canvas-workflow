@@ -44,6 +44,14 @@ CAT06_DUAL_HEIGHT_CLAUSE = (
     "“高度约 {height_cm} 厘米”"
 )
 CAT06_RUNTIME_SOURCE_OVERLAY = f"\n{CAT06_DUAL_HEIGHT_CLAUSE}。"
+CAT07_OPTIONAL_DIMENSION_DISAMBIGUATION_CLAUSE = (
+    "如用户已确认宽度，“宽度”禁止项不得删除该已确认宽度，必须在同栏明确区分"
+    "已确认宽度与“禁止另行编造宽度”；如用户已确认长度，该长度同理必须逐字保留，"
+    "不得被“未确认参数”禁止句削弱"
+)
+CAT07_RUNTIME_SOURCE_OVERLAY = (
+    f"\n{CAT07_OPTIONAL_DIMENSION_DISAMBIGUATION_CLAUSE}。"
+)
 HANDHELD_SUMMARY_DISCIPLINES = {
     "逐项检查 configs 手持声明并以启用手持场景裁定": (
         "实际启用手持数量必须等于逐项检查 configs 中每套【手持交互声明】后，"
@@ -273,8 +281,8 @@ def _source_range_problems(
     ranged_text = "\n".join(source_lines[line_start - 1 : line_end])
     expected_text = _normalize_text_newlines(str(rule_slice.get("text") or ""))
 
-    # CAT-06 只在杯类运行教学上叠加一条由详情 prompt 同步背书的精确句子；
-    # 锁定蓝本保持只读。除这一个逐字匹配的插入外，仍按原规则逐字校验源范围。
+    # CAT-06/CAT-07 只在杯类运行教学上叠加由详情 prompt 同步背书的精确句子；
+    # 锁定蓝本保持只读。除这两条逐字匹配的插入外，仍按原规则逐字校验源范围。
     if (
         slice_id == CAT06_DETAIL_REQUIRED_FIELDS_SLICE_ID
         and source_file == CAT06_DETAIL_REQUIRED_FIELDS_SOURCE
@@ -287,6 +295,11 @@ def _source_range_problems(
         if prompt_text.count(CAT06_DUAL_HEIGHT_CLAUSE) != 1:
             return [f"{slice_id} CAT-06 双栏高度教学缺少 prompt 背书"]
         expected_text = expected_text.replace(CAT06_RUNTIME_SOURCE_OVERLAY, "", 1)
+        if expected_text.count(CAT07_RUNTIME_SOURCE_OVERLAY) != 1:
+            return [f"{slice_id} CAT-07 可选尺寸消歧教学叠加必须恰好出现一次"]
+        if prompt_text.count(CAT07_OPTIONAL_DIMENSION_DISAMBIGUATION_CLAUSE) != 1:
+            return [f"{slice_id} CAT-07 可选尺寸消歧教学缺少 prompt 背书"]
+        expected_text = expected_text.replace(CAT07_RUNTIME_SOURCE_OVERLAY, "", 1)
 
     runtime_matches: list[Mapping[str, object]] = []
     if source_path.suffix.lower() == ".json":

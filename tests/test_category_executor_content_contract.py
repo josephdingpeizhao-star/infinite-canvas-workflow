@@ -125,7 +125,7 @@ PRODUCTION_NEGATIVE_REFERENCE_TEXT_SHA256 = {
     ),
     # categories/碗/runtime/detail.json::bowl-detail-hf02-required-field-teaching
     "bowl-detail-hf02-required-field-teaching": (
-        "dad361abe39276e32b56bc46c67520830e158a37494622d460931ca0d543cb09"
+        "317d392253f7f383df280699f1a56822d2f9f58ad84d401a8120d6ce82fbd2b0"
     ),
 }
 PRODUCTION_NEGATIVE_REFERENCE_SLICE_LOCATIONS = (
@@ -216,6 +216,103 @@ CAT06_DUAL_HEIGHT_CLAUSE_PATTERN = re.compile(
     r"【尺寸标注信息】\s*与\s*【尺寸标注图规则】\s*"
     r"(?:都|均)必须包含\s*[“\"]高度约 \{height_cm\} 厘米[”\"]"
 )
+CAT07_NEGATIVE_RELATION_SUFFIX = re.compile(
+    r"^[”\"']?[^。！？!?；;]{0,32}(?:均|都)?(?:仅|只)?"
+    r"(?:是|为|属于|作|作为|用作|当作|供)\s*"
+    r"(?:错误(?:值|写法|示例)?|禁用(?:值|项|写法|示例)|"
+    r"禁止(?:值|项|写法|示例)|反例|示例|参考值|无效值|"
+    r"错误示例|错误要求|错误规则)"
+)
+
+
+def _optional_dimension_keys(recipe) -> frozenset[str]:
+    dimensions = recipe.form["dimensions"]
+    required = {str(key) for key in dimensions["required"]}
+    return frozenset(
+        str(field["key"])
+        for field in dimensions["fields"]
+        if str(field["key"]) in {"length_cm", "width_cm"}
+        and str(field["key"]) not in required
+    )
+
+
+def _has_positive_required_relation(sentence: str, target: str) -> bool:
+    for match in re.finditer(re.escape(target), sentence):
+        prefix = sentence[: match.start()]
+        local_prefix = re.split(r"[，,:：]", prefix)[-1]
+        suffix = sentence[match.end() :]
+        if re.search(
+            r"(?:"
+            r"(?:不得|禁止|严禁|不应|不能|不可|无需|不必|不要|避免|不再)"
+            r"[^，,:：。！？!?；;]{0,24}"
+            r"|(?:必须|应当|应|要|一律)?\s*"
+            r"(?:取消|删除|删去|去掉|移除|停止|撤销|废止|替换)"
+            r"(?:执行|使用|采用|写入|写|包含|保留|调用|选择|输出)?"
+            r"[^，,:：。！？!?；;]{0,16}"
+            r"|(?:必须|应当|一律)\s*不(?:再)?\s*"
+            r"(?:执行|使用|采用|写入|写|包含|保留|调用|选择|输出)"
+            r"[^，,:：。！？!?；;]{0,16}"
+            r")\s*[“\"]?$",
+            local_prefix,
+        ) or CAT07_NEGATIVE_RELATION_SUFFIX.search(suffix):
+            continue
+        if re.search(
+            r"(?:必须|应当|一律|只能)[^，,:：。！？!?；;]{0,16}$",
+            local_prefix,
+        ):
+            return True
+    return False
+
+
+def _optional_dimension_disambiguation_teaching(recipe, text: str) -> tuple[str, ...]:
+    optional_keys = _optional_dimension_keys(recipe)
+    if not optional_keys:
+        return ()
+    width_matches: list[str] = []
+    length_matches: list[str] = []
+    for raw_line in text.splitlines():
+        for raw_sentence in re.split(r"(?<=[。！？!?；;])", raw_line):
+            sentence = " ".join(raw_sentence.split())
+            if not sentence:
+                continue
+            width_contract = (
+                "宽度" in sentence
+                and "同栏" in sentence
+                and "禁止另行编造宽度" in sentence
+                and any(marker in sentence for marker in ("不得删除", "逐字保留"))
+                and re.search(
+                    r"(?:如|若|如果|当)用户已(?:确认|填写)[^，。！？!?；;]*宽度",
+                    sentence,
+                )
+                is not None
+                and _has_positive_required_relation(sentence, "同栏明确区分")
+            )
+            if width_contract and sentence not in width_matches:
+                width_matches.append(sentence)
+            length_contract = (
+                "长度" in sentence
+                and "未确认参数" in sentence
+                and "削弱" in sentence
+                and any(marker in sentence for marker in ("不得删除", "逐字保留"))
+                and re.search(
+                    r"(?:如|若|如果|当)用户已(?:确认|填写)[^，。！？!?；;]*长度",
+                    sentence,
+                )
+                is not None
+                and _has_positive_required_relation(sentence, "逐字保留")
+            )
+            if length_contract and sentence not in length_matches:
+                length_matches.append(sentence)
+    if not width_matches or ("length_cm" in optional_keys and not length_matches):
+        return ()
+    matches = [
+        min(width_matches, key=lambda item: len(_normalized_contract_text(item)))
+    ]
+    if "length_cm" in optional_keys:
+        matches.append(
+            min(length_matches, key=lambda item: len(_normalized_contract_text(item)))
+        )
+    return tuple(matches)
 
 
 def _runtime_text(recipe, stage: str) -> str:
@@ -312,8 +409,8 @@ def _field_teaching_evidence(recipe, stage: str, field: str) -> str:
         default="",
     )
 
-    # CAT-06 的双栏要求可以由同一详情运行包中的契约切片集中教学。
-    # 将这条跨字段正文同时计入两栏证据，避免相对长度门禁因切片位置不同而误判。
+    # CAT-06/CAT-07 的跨栏要求可以由同一详情运行包中的契约切片集中教学。
+    # 将这些跨字段正文去重后同时计入两栏证据，避免切片位置不同导致相对长度误判。
     if (
         stage == "detail"
         and field in {"尺寸标注信息", "尺寸标注图规则"}
@@ -322,6 +419,12 @@ def _field_teaching_evidence(recipe, stage: str, field: str) -> str:
         match = CAT06_DUAL_HEIGHT_CLAUSE_PATTERN.search(_stage_text(recipe, stage))
         if match is not None and match.group(0) not in evidence:
             evidence = f"{evidence}\n{match.group(0)}"
+        for clause in _optional_dimension_disambiguation_teaching(
+            recipe,
+            _stage_text(recipe, stage),
+        ):
+            if clause not in evidence:
+                evidence = f"{evidence}\n{clause}"
 
     return evidence
 
@@ -449,6 +552,56 @@ def _variable_config_stage_prompt(recipe, mode: str) -> str:
 
 
 class CategoryExecutorContentContractTest(unittest.TestCase):
+    def test_cat07_evidence_rejects_cancelled_optional_dimension_rules(self) -> None:
+        recipe = load_category_recipe(ROOT, "杯类")
+        valid_width = (
+            "如用户已确认宽度，“宽度”禁止项不得删除该已确认宽度，"
+            "必须在同栏明确区分已确认宽度与“禁止另行编造宽度”；"
+        )
+        valid_length = (
+            "如用户已确认长度，该长度同理必须逐字保留，"
+            "不得被“未确认参数”禁止句削弱。"
+        )
+        cases = {
+            "negated-width": (
+                "如用户已确认宽度，“宽度”禁止项不得删除该已确认宽度，"
+                "不得同栏明确区分已确认宽度与“禁止另行编造宽度”；"
+                + valid_length
+            ),
+            "cancelled-width": (
+                "如用户已确认宽度，“宽度”禁止项不得删除该已确认宽度，"
+                "必须取消执行同栏明确区分已确认宽度与“禁止另行编造宽度”；"
+                + valid_length
+            ),
+            "cancelled-length": (
+                valid_width
+                + "如用户已确认长度，该长度必须取消使用逐字保留，"
+                "不得被“未确认参数”禁止句削弱。"
+            ),
+            "example-width": (
+                "如用户已确认宽度，“宽度”禁止项不得删除该已确认宽度，"
+                "必须在同栏明确区分已确认宽度与“禁止另行编造宽度”，"
+                "本条仅作示例；"
+                + valid_length
+            ),
+        }
+        for label, teaching in cases.items():
+            with self.subTest(case=label):
+                self.assertEqual(
+                    (),
+                    _optional_dimension_disambiguation_teaching(recipe, teaching),
+                )
+
+        self.assertEqual(
+            2,
+            len(
+                _optional_dimension_disambiguation_teaching(
+                    recipe,
+                    valid_width + valid_length,
+                )
+            ),
+        )
+
     def test_every_installed_category_teaches_imported_required_fields_in_consuming_stage(
         self,
     ) -> None:
