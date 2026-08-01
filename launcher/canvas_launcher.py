@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from logging import Logger
 from pathlib import Path
 
 if __package__ in {None, ""}:
@@ -17,6 +18,12 @@ from launcher.orchestrator import (
     make_http_health_checker,
 )
 from launcher.process_control import WindowsProcessManager
+from launcher.render_credentials import (
+    DEFAULT_RENDER_CREDENTIALS_PATH,
+    RenderCredentials,
+    RenderCredentialsError,
+    load_render_credentials,
+)
 from launcher.state_store import StateStore
 from launcher.static_server import StaticServerError, validate_dist_root
 from launcher.ui import make_browser_opener, show_message_box
@@ -32,6 +39,32 @@ def _resolve_pythonw() -> Path:
     if not candidate.is_file():
         raise RuntimeError("未找到 pythonw.exe，无法保证启动过程无黑窗。")
     return candidate
+
+
+def _configured_render_credentials_path(config: dict[str, object]) -> Path:
+    paths = config.get("paths")
+    raw_path = paths.get("render_credentials_file") if isinstance(paths, dict) else None
+    if raw_path is None:
+        return DEFAULT_RENDER_CREDENTIALS_PATH.expanduser()
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise RenderCredentialsError("渲染凭据文件路径配置无效")
+    return Path(raw_path).expanduser()
+
+
+def _load_render_credentials_for_launcher(
+    config: dict[str, object],
+    logger: Logger,
+) -> RenderCredentials | None:
+    try:
+        credentials = load_render_credentials(_configured_render_credentials_path(config))
+    except RenderCredentialsError as error:
+        logger.warning("渲染凭据文件无效：%s", error)
+        return None
+    if credentials is None:
+        logger.info("未找到渲染凭据文件（本次启动不含出图能力）")
+        return None
+    logger.info("已加载渲染凭据（出图已启用）")
+    return credentials
 
 
 def main() -> int:
@@ -53,7 +86,13 @@ def main() -> int:
         pythonw_path = _resolve_pythonw()
         if config["web"]["mode"] == "dist":
             validate_dist_root(Path(config["web"]["dist"]["root"]).expanduser())
-        specs = build_service_specs(config, launcher_dir=LAUNCHER_DIR, pythonw_path=pythonw_path)
+        render_credentials = _load_render_credentials_for_launcher(config, logger)
+        specs = build_service_specs(
+            config,
+            launcher_dir=LAUNCHER_DIR,
+            pythonw_path=pythonw_path,
+            render_credentials=render_credentials,
+        )
         controller = LauncherController(
             specs=specs,
             watchdog_spec=(

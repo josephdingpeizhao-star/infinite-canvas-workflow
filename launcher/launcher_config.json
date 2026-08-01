@@ -1,8 +1,9 @@
 {
-  "_comment": "本机路径可在 ~/.infinite-canvas/launcher/config.override.json 中按键覆盖，无需修改仓库文件。",
+  "_comment": "本机路径（含渲染凭据文件路径）可在 ~/.infinite-canvas/launcher/config.override.json 中按键覆盖，无需修改仓库文件。",
   "paths": {
     "state_file": "~/.infinite-canvas/launcher/launcher_state.json",
-    "log_dir": "~/.infinite-canvas/logs"
+    "log_dir": "~/.infinite-canvas/logs",
+    "render_credentials_file": "~/.infinite-canvas/render-credentials.json"
   },
   "runtime": {
     "startup_timeout_seconds": 60,

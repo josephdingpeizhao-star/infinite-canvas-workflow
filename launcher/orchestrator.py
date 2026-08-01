@@ -6,12 +6,13 @@ import logging
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from launcher.process_control import ProcessControlError, matches_identity
+from launcher.render_credentials import RenderCredentials
 from launcher.state_store import StateFileError, StateStore
 
 
@@ -90,6 +91,7 @@ def build_service_specs(
     *,
     launcher_dir: Path,
     pythonw_path: Path,
+    render_credentials: RenderCredentials | None = None,
 ) -> tuple[ServiceSpec, ...]:
     launcher_dir = Path(launcher_dir).resolve()
     dist_root = Path(config["web"]["dist"]["root"]).expanduser()
@@ -111,6 +113,17 @@ def build_service_specs(
     )
     web = _spec_from_config("web", selected_web, context)
     workbench = _spec_from_config("workbench", config["services"]["workbench"], context)
+    if render_credentials is not None:
+        environment = dict(workbench.environment)
+        environment.setdefault("OPENAI_API_KEY", render_credentials.api_key)
+        environment.setdefault("OPENAI_BASE_URL", render_credentials.base_url)
+        environment.setdefault("RENDER_ALLOW_REAL_EXECUTION", "1")
+        if render_credentials.max_images_per_run is not None:
+            environment.setdefault(
+                "RENDER_MAX_IMAGES",
+                str(render_credentials.max_images_per_run),
+            )
+        workbench = replace(workbench, environment=environment)
     return agent, web, workbench
 
 
