@@ -35,7 +35,7 @@ PLATE_FACTS = {
     "width_cm": 28,
     "height_cm": 4,
     "handheld_main": 0,
-    "handheld_detail": 8,
+    "handheld_detail": 7,
     "allow_clear_water": False,
     "forbid_pouring_and_heating": True,
     "missing_d_no_retake": True,
@@ -128,7 +128,7 @@ class CategoryRecipeTest(unittest.TestCase):
             self.assertEqual("产品长", after.form["dimensions"]["fields"][0]["label"])
 
     def test_dimension_requirements_and_handheld_boundaries_come_from_recipe(self) -> None:
-        for main, detail in ((0, 0), (6, 8)):
+        for main, detail in ((0, 0), (6, 7)):
             with self.subTest(main=main, detail=detail):
                 facts = {**PLATE_FACTS, "handheld_main": main, "handheld_detail": detail}
                 parsed = parse_user_confirmed_requirements(
@@ -287,7 +287,7 @@ class CategoryRecipeTest(unittest.TestCase):
             "--handheld-main",
             "6",
             "--handheld-detail",
-            "8",
+            "7",
             "--forbid-pouring-and-heating",
             "true",
             "--missing-d-no-retake",

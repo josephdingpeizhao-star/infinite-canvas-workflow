@@ -12,6 +12,10 @@ from batch_intake_contract import (
 )
 from category_recipes import DEFAULT_CATEGORY_KEY
 from codex_dev_downstream import ExecutorExecutionError, parse_user_confirmed_requirements
+from image_count_contract import (
+    detail_handheld_limit_message,
+    handheld_count_maximum,
+)
 
 
 BATCH_INFO_NODE_TYPE = "batch-info"
@@ -170,6 +174,21 @@ def _parse_facts(
     info_node_id: str,
     request_id: str,
 ) -> ConfirmedFacts:
+    if isinstance(raw, Mapping):
+        detail_image_count = raw.get("detail_image_count")
+        handheld_detail = raw.get("handheld_detail")
+        if (
+            type(detail_image_count) is int
+            and type(handheld_detail) is int
+            and handheld_detail
+            > handheld_count_maximum("detail", detail_image_count)
+        ):
+            raise _error(
+                "invalid_facts",
+                detail_handheld_limit_message(detail_image_count),
+                info_node_id=info_node_id,
+                request_id=request_id,
+            )
     try:
         if (
             not isinstance(raw, Mapping)

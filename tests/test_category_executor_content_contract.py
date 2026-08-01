@@ -117,7 +117,7 @@ PRODUCTION_NEGATIVE_REFERENCE_TEXT_SHA256 = {
     ),
     # categories/盘子/runtime/detail.json::plate-detail-hf02-required-field-teaching
     "plate-detail-hf02-required-field-teaching": (
-        "9700146831bc720e67e0d3396ae16192bb73d7f241a47511f3265fde8adbbc97"
+        "f5af8d14ccae35efbd9fb87865242ffe9f904942b64b980f589a4627934eb4e3"
     ),
     # categories/碗/runtime/main.json::bowl-main-hf02-required-field-teaching
     "bowl-main-hf02-required-field-teaching": (
@@ -125,7 +125,7 @@ PRODUCTION_NEGATIVE_REFERENCE_TEXT_SHA256 = {
     ),
     # categories/碗/runtime/detail.json::bowl-detail-hf02-required-field-teaching
     "bowl-detail-hf02-required-field-teaching": (
-        "317d392253f7f383df280699f1a56822d2f9f58ad84d401a8120d6ce82fbd2b0"
+        "a27812ccff478f4ba4dad38fe93405a34fca3f369b94cda209d6ad737bc6c6a2"
     ),
 }
 PRODUCTION_NEGATIVE_REFERENCE_SLICE_LOCATIONS = (

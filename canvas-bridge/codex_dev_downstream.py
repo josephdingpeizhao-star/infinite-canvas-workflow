@@ -19,6 +19,10 @@ from category_recipes import (
     load_category_recipe,
     load_manifest_category,
 )
+from content_correction import (
+    ContentPredicateViolation,
+    build_content_correction_instruction,
+)
 from executor_contract import ExecutorExecutionError
 from final_prompt_literal_contract import (
     has_required_canvas_ratio_literal,
@@ -26,7 +30,11 @@ from final_prompt_literal_contract import (
     required_canvas_ratio_literal,
     required_confirmed_height_literal,
 )
-from image_count_contract import default_image_counts, validate_image_count
+from image_count_contract import (
+    default_image_counts,
+    handheld_count_maximum,
+    validate_image_count,
+)
 from image_count_contract import (
     chinese_image_count,
     config_ids,
@@ -345,11 +353,16 @@ def _validated_user_requirements(
         ("detail", requirements.handheld_detail, requirements.detail_image_count),
     ):
         metadata = recipe.form["handheld"][mode]
+        maximum = (
+            handheld_count_maximum(mode, image_count)
+            if image_count is not None
+            else None
+        )
         if (
             type(value) is not int
             or value < metadata["minimum"]
-            or image_count is None
-            or value > image_count
+            or maximum is None
+            or value > maximum
         ):
             raise ValueError("invalid handheld count")
     return requirements
@@ -1158,6 +1171,20 @@ def _reject_unicode_damage_or_forbidden_keys(value: Mapping[str, Any], label: st
     inspect(value)
 
 
+def _config_id_for_path(
+    value: Mapping[str, Any],
+    path: Sequence[str],
+) -> str:
+    if len(path) < 2 or path[0] != "configs" or not path[1].isdigit():
+        return ""
+    configs = value.get("configs")
+    index = int(path[1])
+    if not isinstance(configs, list) or not 0 <= index < len(configs):
+        return ""
+    raw = configs[index]
+    return str(raw.get("config_id") or "") if isinstance(raw, Mapping) else ""
+
+
 def _reject_unsupported_claims(
     value: Mapping[str, Any],
     height_cm: int,
@@ -1168,6 +1195,7 @@ def _reject_unsupported_claims(
     confirmed_dimensions: Mapping[str, int] | None = None,
     style_master_text: str | None = None,
     defer_style_master_prop_materials: bool = False,
+    content_correction: bool = False,
 ) -> None:
     if lexicons is None:
         try:
@@ -1334,7 +1362,17 @@ def _reject_unsupported_claims(
                 collect("未确认商品事实", path)
 
     if violations:
-        raise ExecutorExecutionError(_format_unsupported_claims_error(label, violations))
+        message = _format_unsupported_claims_error(label, violations)
+        if content_correction:
+            first_path = violations[0][1]
+            raise ContentPredicateViolation(
+                message,
+                code="unsupported_claims",
+                config_id=_config_id_for_path(value, first_path),
+                field=".".join(first_path),
+                expected="不得写入未确认商品事实或参数",
+            )
+        raise ExecutorExecutionError(message)
 
 
 _SCENE_NEGATION_MARKERS = (
@@ -1429,6 +1467,8 @@ def _reject_scene_policy_violations(
     value: Mapping[str, Any],
     requirements: UserConfirmedRequirements,
     label: str,
+    *,
+    content_correction: bool = False,
 ) -> None:
     recipe = _requirements_recipe(requirements)
     content_terms = tuple(recipe.lexicons["scene_content_terms"])
@@ -1449,6 +1489,14 @@ def _reject_scene_policy_violations(
                     min(content_positions),
                     scanned_terms,
                 ):
+                    if content_correction:
+                        raise ContentPredicateViolation(
+                            f"codex-dev 收到的{label}违反用户确认场景边界",
+                            code="scene_policy",
+                            config_id=_config_id_for_path(value, path),
+                            field=".".join(path),
+                            expected="必须服从用户确认场景边界",
+                        )
                     raise ExecutorExecutionError(
                         f"codex-dev 收到的{label}违反用户确认场景边界"
                     )
@@ -1467,6 +1515,14 @@ def _reject_scene_policy_violations(
                         min(term_positions),
                         scanned_terms,
                     ):
+                        if content_correction:
+                            raise ContentPredicateViolation(
+                                f"codex-dev 收到的{label}违反用户确认场景边界",
+                                code="scene_policy",
+                                config_id=_config_id_for_path(value, path),
+                                field=".".join(path),
+                                expected="必须服从用户确认场景边界",
+                            )
                         raise ExecutorExecutionError(
                             f"codex-dev 收到的{label}违反用户确认场景边界"
                         )
@@ -1693,7 +1749,7 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
         )
     return f"""你正在为单品批次 {product_id} 生成详情图变量配置，且只处理 detail_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
-必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项；{module_clause}；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。
+必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项；{module_clause}；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。标准模块归属包含模块05的项必须不启用手持，且不得调用动态手持样式参考图；这一硬约束优先于手持名额分配，手持名额只在标准模块归属不包含模块05的图位之间分配；建批已将详情图手持上限限制为 {handheld_count_maximum("detail", image_count)} 项，因此两者不构成冲突。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
@@ -1736,6 +1792,7 @@ def build_detail_variable_config_chunk_prompt(
     requirements: UserConfirmedRequirements,
     repair: bool = False,
     structure_correction: bool = False,
+    correction: ContentPredicateViolation | None = None,
 ) -> str:
     """Request one bounded detail-config chunk from the same Codex thread."""
 
@@ -1746,7 +1803,7 @@ def build_detail_variable_config_chunk_prompt(
     chunk_count = len(batches)
     if not 1 <= chunk_index <= chunk_count:
         raise ExecutorExecutionError("codex-dev 收到无效的详情图变量配置分段编号")
-    if repair and structure_correction:
+    if sum((repair, structure_correction, correction is not None)) > 1:
         raise ExecutorExecutionError("codex-dev 收到冲突的详情图变量配置恢复请求")
     expected_ids = batches[chunk_index - 1]
     allowed_keys = ["chunk_index", "chunk_count", "configs"]
@@ -1755,7 +1812,12 @@ def build_detail_variable_config_chunk_prompt(
     if chunk_index == chunk_count:
         allowed_keys.append("handheld_count_summary")
 
-    if structure_correction:
+    if correction is not None:
+        opening = (
+            "继续同一 detail_vc 任务。"
+            + build_content_correction_instruction(correction)
+        )
+    elif structure_correction:
         opening = (
             f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过包装格式门禁；"
             f"请完整重发第 {chunk_index}/{chunk_count} 段。不得引用、解释或局部修补上一段正文，"
@@ -1978,16 +2040,29 @@ def _validate_bound_angle(
     binding: str,
     qualified: Mapping[str, Mapping[str, Any]],
     label: str,
+    *,
+    correction_config_id: str | None = None,
 ) -> None:
+    def fail(message: str) -> None:
+        if correction_config_id is not None:
+            raise ContentPredicateViolation(
+                message,
+                code="angle_binding",
+                config_id=correction_config_id,
+                field="绑定角度槽位",
+                expected="必须只绑定唯一合格 A/B/C 源图并逐字包含对应槽位",
+            )
+        raise ExecutorExecutionError(message)
+
     matches = [asset_id for asset_id in qualified if asset_id in binding]
     if len(matches) != 1:
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}角度绑定异常")
+        fail(f"codex-dev 收到的{label}角度绑定异常")
     record = qualified[matches[0]]
     slot = str(record.get("angle_slot") or "")
     if slot not in {"A", "B", "C"} or not re.search(rf"(?:{slot}\s*槽位|槽位\s*{slot})", binding):
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}角度绑定异常")
+        fail(f"codex-dev 收到的{label}角度绑定异常")
     if re.search(r"(?:D\s*槽位|槽位\s*D)", binding):
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}使用了缺失的 D 槽位")
+        fail(f"codex-dev 收到的{label}使用了缺失的 D 槽位")
 
 
 def _resolve_bound_angle_literal(
@@ -2022,45 +2097,112 @@ def _validate_detail_chunk_business_content(
         lexicons=_requirements_recipe(requirements).lexicons,
         confirmed_dimensions=_confirmed_dimensions(requirements),
         defer_style_master_prop_materials=True,
+        content_correction=True,
     )
-    _reject_scene_policy_violations(value, requirements, label)
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
+    chunk_config_id = str(value["configs"][0].get("config_id") or "")
     if chunk_index == 1 and (
         not isinstance(value.get("common_constraints"), dict)
         or not value["common_constraints"]
     ):
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}数量或结构异常")
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}数量或结构异常",
+            code="common_constraints",
+            config_id=chunk_config_id,
+            field="common_constraints",
+            expected="必须是非空 JSON 对象",
+        )
     qualified = qualified_angle_assets(angle_inventory)
     enabled_handheld = 0
     start_index = sum(len(chunk["configs"]) for chunk in prior_chunks)
     detail_count = _mode_image_count(requirements, "detail")
     groups = detail_module_groups(detail_count)
     for offset, raw in enumerate(value["configs"]):
+        config_id = str(raw.get("config_id") or "")
         overrides = raw["per_image_overrides"]
         if set(overrides) != set(DETAIL_REQUIRED_OVERRIDE_FIELDS):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}缺少规范字段")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少规范字段",
+                code="required_fields",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="必须恰好包含 detail_vc 全部规范字段",
+            )
         if any(
             not isinstance(overrides[field], str) or not overrides[field].strip()
             for field in DETAIL_REQUIRED_OVERRIDE_FIELDS
         ):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}字段内容异常")
-        _validate_bound_angle(overrides["绑定角度槽位"], qualified, label)
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}字段内容异常",
+                code="field_content",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="每个规范字段必须是非空字符串",
+            )
+        _validate_bound_angle(
+            overrides["绑定角度槽位"],
+            qualified,
+            label,
+            correction_config_id=config_id,
+        )
         if overrides["输出画布比例"].strip() != "3:4":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}画布比例异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}画布比例异常",
+                code="canvas_ratio",
+                config_id=config_id,
+                field="输出画布比例",
+                expected="必须逐字写 3:4",
+            )
         if f"约 {requirements.height_cm} 厘米" not in overrides["尺寸比例锁定"]:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}缺少已确认高度")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少已确认高度",
+                code="confirmed_height_literal",
+                config_id=config_id,
+                field="尺寸比例锁定",
+                expected=f"必须包含约 {requirements.height_cm} 厘米",
+            )
 
         handheld_declaration = overrides["手持交互声明"]
         handheld = "本张图不启用手持场景" not in handheld_declaration
         enabled_handheld += int(handheld)
         dynamic_reference = overrides["动态手持样式参考图调用"].strip()
         if not handheld and dynamic_reference != "无":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="不启用手持时必须逐字写无",
+            )
         if handheld and "静态握持" in handheld_declaration and dynamic_reference != "无，仅动态拿起场景可调用":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="静态握持时必须逐字写无，仅动态拿起场景可调用",
+            )
         if handheld and "动态拿起" in handheld_declaration and dynamic_reference != "未提供，不调用":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="动态拿起且未提供参考图时必须逐字写未提供，不调用",
+            )
         if handheld and not any(kind in handheld_declaration for kind in ("静态握持", "动态拿起")):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="手持交互声明",
+                expected="启用手持必须逐字包含静态握持或动态拿起",
+            )
 
         config_index = start_index + offset
         expected_modules = groups[config_index]
@@ -2070,24 +2212,71 @@ def _validate_detail_chunk_business_content(
             for module in re.findall(r"模块(0[1-8])", module_assignment)
         )
         if observed_modules != expected_modules:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}模块覆盖异常")
+            expected_module_literal = " + ".join(
+                f"模块{module:02d}" for module in expected_modules
+            )
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}模块覆盖异常",
+                code="module_coverage",
+                config_id=config_id,
+                field="标准模块归属",
+                expected=f"必须只包含 {expected_module_literal}",
+            )
         if 5 in expected_modules:
             size_info = overrides["尺寸标注信息"]
             size_rule = overrides["尺寸标注图规则"]
             if handheld or f"高度约 {requirements.height_cm} 厘米" not in size_info:
-                raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                if handheld:
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}模块05规则异常",
+                        code="module05_handheld",
+                        config_id=config_id,
+                        field="手持交互声明、动态手持样式参考图调用",
+                        expected="手持交互声明必须逐字包含本张图不启用手持场景，动态手持样式参考图调用必须逐字写无",
+                    )
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}模块05规则异常",
+                    code="module05_height_literal",
+                    config_id=config_id,
+                    field="尺寸标注信息",
+                    expected=f"必须包含高度约 {requirements.height_cm} 厘米",
+                )
             if any(term not in size_info for term in ("禁止", "容量", "宽度", "直径", "重量", "材质")):
-                raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}模块05规则异常",
+                    code="module05_forbidden_terms",
+                    config_id=config_id,
+                    field="尺寸标注信息",
+                    expected="必须逐字包含禁止、容量、宽度、直径、重量、材质",
+                )
             if f"高度约 {requirements.height_cm} 厘米" not in size_rule:
-                raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}模块05规则异常",
+                    code="module05_height_literal",
+                    config_id=config_id,
+                    field="尺寸标注图规则",
+                    expected=f"必须包含高度约 {requirements.height_cm} 厘米",
+                )
         elif (
             "非尺寸标注图" not in overrides["尺寸标注信息"]
             or "非尺寸标注图" not in overrides["尺寸标注图规则"]
         ):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}尺寸标注范围异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}尺寸标注范围异常",
+                code="size_annotation_scope",
+                config_id=config_id,
+                field="尺寸标注信息、尺寸标注图规则",
+                expected="非模块05两栏必须逐字写非尺寸标注图",
+            )
 
     if enabled_handheld > requirements.handheld_detail:
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量异常")
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=str(value["configs"][-1].get("config_id") or ""),
+            field="手持交互声明",
+            expected=f"完整详情图只能恰好 {requirements.handheld_detail} 项启用手持",
+        )
 
     chunk_count = len(pair_config_ids("detail", detail_count))
     if chunk_index == chunk_count:
@@ -2097,7 +2286,13 @@ def _validate_detail_chunk_business_content(
             for raw in chunk["configs"]
         ]
         if len(all_configs) != detail_count:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}分段覆盖异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}分段覆盖异常",
+                code="chunk_coverage",
+                config_id=chunk_config_id,
+                field="configs",
+                expected=f"全部分段必须完整覆盖 detail_01 至 detail_{detail_count:02d}",
+            )
         enabled_ids = [
             str(raw.get("config_id") or "")
             for raw in all_configs
@@ -2105,10 +2300,22 @@ def _validate_detail_chunk_business_content(
             not in raw["per_image_overrides"]["手持交互声明"]
         ]
         if len(enabled_ids) != requirements.handheld_detail:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持数量异常",
+                code="handheld_count",
+                config_id=chunk_config_id,
+                field="手持交互声明",
+                expected=f"完整详情图必须恰好 {requirements.handheld_detail} 项启用手持",
+            )
         summary = value.get("handheld_count_summary")
         if not isinstance(summary, dict):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量说明异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持数量说明异常",
+                code="handheld_summary",
+                config_id=chunk_config_id,
+                field="handheld_count_summary",
+                expected="必须是与完整配置实际手持结果一致的 JSON 对象",
+            )
         _validate_handheld_summary(
             summary,
             mode="detail",
@@ -2116,6 +2323,7 @@ def _validate_detail_chunk_business_content(
             expected_count=detail_count,
             enabled_ids=enabled_ids,
             label=label,
+            correction_config_id=chunk_config_id,
         )
 
 
@@ -2141,6 +2349,7 @@ def _validate_handheld_summary(
     expected_count: int,
     enabled_ids: list[str],
     label: str,
+    correction_config_id: str | None = None,
 ) -> None:
     english_valid = (
         summary.get("requested") == expected_handheld
@@ -2157,6 +2366,14 @@ def _validate_handheld_summary(
         and summary.get("是否完全满足用户数量") in {"是", True}
     )
     if not english_valid and not chinese_valid:
+        if correction_config_id is not None:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持数量说明异常",
+                code="handheld_summary",
+                config_id=correction_config_id,
+                field="handheld_count_summary",
+                expected="必须与要求数量、实际启用数量、未启用数量及启用配置 ID 完全一致",
+            )
         raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量说明异常")
 
 
@@ -2203,8 +2420,14 @@ def parse_variable_config_response(
         lexicons=_requirements_recipe(requirements).lexicons,
         confirmed_dimensions=_confirmed_dimensions(requirements),
         style_master_text=style_master_text,
+        content_correction=True,
     )
-    _reject_scene_policy_violations(value, requirements, label)
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
 
     common = value.get("common_constraints")
     configs = value.get("configs")
@@ -2227,21 +2450,51 @@ def parse_variable_config_response(
     enabled_handheld = 0
     enabled_handheld_ids: list[str] = []
     for index, raw in enumerate(configs):
+        config_id = expected_ids[index]
         if not isinstance(raw, dict) or set(raw) - _VARIABLE_ALLOWED_CONFIG_FIELDS:
             raise ExecutorExecutionError(f"codex-dev 收到的{label}单项结构异常")
         if raw.get("config_id") != expected_ids[index]:
             raise ExecutorExecutionError(f"codex-dev 收到的{label}编号异常")
         overrides = raw.get("per_image_overrides")
         if not isinstance(overrides, dict) or set(overrides) != set(required_fields):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}缺少规范字段")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少规范字段",
+                code="required_fields",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected=f"必须恰好包含 {mode}_vc 全部规范字段",
+            )
         if any(not isinstance(overrides[field], str) or not overrides[field].strip() for field in required_fields):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}字段内容异常")
-        _validate_bound_angle(overrides["绑定角度槽位"], qualified, label)
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}字段内容异常",
+                code="field_content",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="每个规范字段必须是非空字符串",
+            )
+        _validate_bound_angle(
+            overrides["绑定角度槽位"],
+            qualified,
+            label,
+            correction_config_id=config_id,
+        )
         expected_ratio = "1:1" if is_main else "3:4"
         if overrides["输出画布比例"].strip() != expected_ratio:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}画布比例异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}画布比例异常",
+                code="canvas_ratio",
+                config_id=config_id,
+                field="输出画布比例",
+                expected=f"必须逐字写 {expected_ratio}",
+            )
         if f"约 {requirements.height_cm} 厘米" not in overrides["尺寸比例锁定"]:
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}缺少已确认高度")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少已确认高度",
+                code="confirmed_height_literal",
+                config_id=config_id,
+                field="尺寸比例锁定",
+                expected=f"必须包含约 {requirements.height_cm} 厘米",
+            )
         handheld = "本张图不启用手持场景" not in overrides["手持交互声明"]
         enabled_handheld += int(handheld)
         if handheld:
@@ -2249,13 +2502,37 @@ def parse_variable_config_response(
         handheld_declaration = overrides["手持交互声明"]
         dynamic_reference = overrides["动态手持样式参考图调用"].strip()
         if not handheld and dynamic_reference != "无":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="不启用手持时必须逐字写无",
+            )
         if handheld and "静态握持" in handheld_declaration and dynamic_reference != "无，仅动态拿起场景可调用":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="静态握持时必须逐字写无，仅动态拿起场景可调用",
+            )
         if handheld and "动态拿起" in handheld_declaration and dynamic_reference != "未提供，不调用":
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="动态拿起且未提供参考图时必须逐字写未提供，不调用",
+            )
         if handheld and not any(kind in handheld_declaration for kind in ("静态握持", "动态拿起")):
-            raise ExecutorExecutionError(f"codex-dev 收到的{label}手持规则调用异常")
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="手持交互声明",
+                expected="启用手持必须逐字包含静态握持或动态拿起",
+            )
         if not is_main:
             expected_modules = detail_module_groups(expected_count)[index]
             module_assignment = overrides["标准模块归属"].strip()
@@ -2264,19 +2541,60 @@ def parse_variable_config_response(
                 for value in re.findall(r"模块(0[1-8])", module_assignment)
             )
             if observed_modules != expected_modules:
-                raise ExecutorExecutionError(f"codex-dev 收到的{label}模块覆盖异常")
+                expected_module_literal = " + ".join(
+                    f"模块{module:02d}" for module in expected_modules
+                )
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}模块覆盖异常",
+                    code="module_coverage",
+                    config_id=config_id,
+                    field="标准模块归属",
+                    expected=f"必须只包含 {expected_module_literal}",
+                )
             if 5 in expected_modules:
                 size_info = overrides["尺寸标注信息"]
                 size_rule = overrides["尺寸标注图规则"]
                 if handheld or f"高度约 {requirements.height_cm} 厘米" not in size_info:
-                    raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                    if handheld:
+                        raise ContentPredicateViolation(
+                            f"codex-dev 收到的{label}模块05规则异常",
+                            code="module05_handheld",
+                            config_id=config_id,
+                            field="手持交互声明、动态手持样式参考图调用",
+                            expected="手持交互声明必须逐字包含本张图不启用手持场景，动态手持样式参考图调用必须逐字写无",
+                        )
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}模块05规则异常",
+                        code="module05_height_literal",
+                        config_id=config_id,
+                        field="尺寸标注信息",
+                        expected=f"必须包含高度约 {requirements.height_cm} 厘米",
+                    )
                 if any(term not in size_info for term in ("禁止", "容量", "宽度", "直径", "重量", "材质")):
-                    raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}模块05规则异常",
+                        code="module05_forbidden_terms",
+                        config_id=config_id,
+                        field="尺寸标注信息",
+                        expected="必须逐字包含禁止、容量、宽度、直径、重量、材质",
+                    )
                 if f"高度约 {requirements.height_cm} 厘米" not in size_rule:
-                    raise ExecutorExecutionError(f"codex-dev 收到的{label}模块05规则异常")
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}模块05规则异常",
+                        code="module05_height_literal",
+                        config_id=config_id,
+                        field="尺寸标注图规则",
+                        expected=f"必须包含高度约 {requirements.height_cm} 厘米",
+                    )
             else:
                 if "非尺寸标注图" not in overrides["尺寸标注信息"] or "非尺寸标注图" not in overrides["尺寸标注图规则"]:
-                    raise ExecutorExecutionError(f"codex-dev 收到的{label}尺寸标注范围异常")
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}尺寸标注范围异常",
+                        code="size_annotation_scope",
+                        config_id=config_id,
+                        field="尺寸标注信息、尺寸标注图规则",
+                        expected="非模块05两栏必须逐字写非尺寸标注图",
+                    )
 
         resolved = dict(common)
         resolved.update(overrides)
@@ -2292,7 +2610,13 @@ def parse_variable_config_response(
 
     expected_handheld = requirements.handheld_main if is_main else requirements.handheld_detail
     if enabled_handheld != expected_handheld:
-        raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量异常")
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=expected_ids[0],
+            field="手持交互声明",
+            expected=f"完整{label}必须恰好 {expected_handheld} 项启用手持",
+        )
     _validate_handheld_summary(
         summary,
         mode=mode,
@@ -2300,6 +2624,7 @@ def parse_variable_config_response(
         expected_count=expected_count,
         enabled_ids=enabled_handheld_ids,
         label=label,
+        correction_config_id=expected_ids[0],
     )
 
     return {

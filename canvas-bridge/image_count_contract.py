@@ -88,6 +88,20 @@ def validate_image_count(value: object, form: Mapping[str, Any], mode: str) -> i
     return value
 
 
+def handheld_count_maximum(mode: str, image_count: int) -> int:
+    """Return the hard upper bound after reserving detail module05 as non-handheld."""
+
+    if mode not in SUPPORTED_MODES:
+        raise ImageCountContractError("图片类型无效")
+    total = _supported_count(image_count)
+    return total if mode == "main" else total - 1
+
+
+def detail_handheld_limit_message(image_count: int) -> str:
+    maximum = handheld_count_maximum("detail", image_count)
+    return f"含尺寸标注的详情图位不可手持，详情图手持最多 {maximum} 张。"
+
+
 def chinese_image_count(value: int) -> str:
     """Render the one canonical Chinese number spelling for 1–30."""
 

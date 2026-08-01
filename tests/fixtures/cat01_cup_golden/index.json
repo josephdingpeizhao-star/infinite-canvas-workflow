@@ -6,28 +6,28 @@
       "sha256": "de5dc81f568bc5db823456edf20e5be9a4f2a77df0a7d7882a8a6cf84b6062f2"
     },
     "detail_vc_notes_prompt.txt": {
-      "bytes": 89270,
-      "sha256": "62a14869df3983944186dd6693046f464abedcc1bb793e314ffd9953c0843717"
+      "bytes": 91798,
+      "sha256": "6eccf6328f2b1d117ba00b27fda5937a4138feda03acee5c84743e5c44e7b542"
     },
     "detail_vc_structured_prompt.txt": {
-      "bytes": 89270,
-      "sha256": "62a14869df3983944186dd6693046f464abedcc1bb793e314ffd9953c0843717"
+      "bytes": 91798,
+      "sha256": "6eccf6328f2b1d117ba00b27fda5937a4138feda03acee5c84743e5c44e7b542"
     },
     "final_detail_notes_prompt.txt": {
-      "bytes": 65973,
-      "sha256": "66e1b6e894765cf6634b5f0c094868cb78bc2980694362e09b454476482f75c3"
+      "bytes": 66232,
+      "sha256": "38a1c5d7faf92c5e6517eaf03c16e7e424270fa9b60d76fe19fdbb2c0727bbb1"
     },
     "final_detail_structured_prompt.txt": {
-      "bytes": 65973,
-      "sha256": "66e1b6e894765cf6634b5f0c094868cb78bc2980694362e09b454476482f75c3"
+      "bytes": 66232,
+      "sha256": "38a1c5d7faf92c5e6517eaf03c16e7e424270fa9b60d76fe19fdbb2c0727bbb1"
     },
     "final_main_notes_prompt.txt": {
-      "bytes": 64728,
-      "sha256": "46ffefce09d6709f8c664ff3e18e7d5c00e731d94e8e0c4c72f354dd350065ff"
+      "bytes": 64987,
+      "sha256": "38db5ae40a1326cbb857f29334adc0fc07094866e95401f5ce474952ff1df95d"
     },
     "final_main_structured_prompt.txt": {
-      "bytes": 64728,
-      "sha256": "46ffefce09d6709f8c664ff3e18e7d5c00e731d94e8e0c4c72f354dd350065ff"
+      "bytes": 64987,
+      "sha256": "38db5ae40a1326cbb857f29334adc0fc07094866e95401f5ce474952ff1df95d"
     },
     "identity_prompt.txt": {
       "bytes": 21745,

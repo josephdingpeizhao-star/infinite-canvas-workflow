@@ -244,7 +244,7 @@ class BatchCreatorTests(unittest.TestCase):
             main_image_count=6,
             detail_image_count=8,
             handheld_main=6,
-            handheld_detail=8,
+            handheld_detail=7,
             forbid_pouring_and_heating=True,
             missing_d_no_retake=True,
         )

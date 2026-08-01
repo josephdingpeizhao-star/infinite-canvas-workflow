@@ -895,6 +895,25 @@ class WorkflowProductionService:
         )
 
     @staticmethod
+    def _record_content_correction(
+        journal: Path,
+        request_id: str,
+        step: str,
+        chunk_index: int,
+        code: str,
+        config_id: str,
+    ) -> None:
+        run_controller.append_event(
+            journal,
+            "content_correction",
+            request_id=request_id,
+            step=step,
+            chunk_index=chunk_index,
+            code=code,
+            config_id=config_id,
+        )
+
+    @staticmethod
     def _controlled_failure(exc: BaseException) -> tuple[str, str] | None:
         if not isinstance(exc, ExecutorExecutionError):
             return None
@@ -1191,6 +1210,23 @@ class WorkflowProductionService:
             qc_heartbeat_worker: _QcHeartbeatWorker | None = None
             execution_succeeded = False
             try:
+                if step in {"main_vc", "detail_vc"}:
+                    binder = getattr(
+                        executor,
+                        "set_content_correction_callback",
+                        None,
+                    )
+                    if callable(binder):
+                        binder(
+                            lambda chunk_index, code, config_id: self._record_content_correction(
+                                journal,
+                                request_id,
+                                step,
+                                chunk_index,
+                                code,
+                                config_id,
+                            )
+                        )
                 if step == "qc":
                     qc_heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
                     binder = getattr(executor, "set_qc_progress_callback", None)

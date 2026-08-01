@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_category
+from content_correction import (
+    ContentPredicateViolation,
+    build_content_correction_instruction,
+)
 from codex_dev_downstream import (
     DetailChunkEnvelopeCorrection,
     DetailChunkTransportCorruption,
@@ -716,6 +720,9 @@ class CodexDevExecutor:
         self.transport = transport or CanvasAgentCodexTransport()
         self.repository_root = repository_root or self._default_repository_root(context.manifest_path)
         self._qc_progress_callback: Callable[[int, int], None] | None = None
+        self._content_correction_callback: (
+            Callable[[int, str, str], None] | None
+        ) = None
 
     def set_qc_progress_callback(
         self,
@@ -731,6 +738,21 @@ class CodexDevExecutor:
             callback(completed, total)
         except Exception:
             pass
+
+    def set_content_correction_callback(
+        self,
+        callback: Callable[[int, str, str], None] | None,
+    ) -> None:
+        self._content_correction_callback = callback
+
+    def _emit_content_correction(
+        self,
+        chunk_index: int,
+        error: ContentPredicateViolation,
+    ) -> None:
+        callback = self._content_correction_callback
+        if callback is not None:
+            callback(chunk_index, error.code, error.details.config_id)
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         safe_message = ""
@@ -893,18 +915,42 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         turn = self._run_transport(prompt, ())
-        artifact = parse_variable_config_response(
-            turn.text,
-            mode="main",
-            product_id=product_id,
-            requirements=requirements,
-            angle_inventory=angle_inventory,
-            upstream_paths={
-                "product_identity_archive": identity_path,
-                "style_master": style_path,
-                "angle_inventory": angle_path,
-            },
-        )
+        upstream_paths = {
+            "product_identity_archive": identity_path,
+            "style_master": style_path,
+            "angle_inventory": angle_path,
+        }
+        try:
+            artifact = parse_variable_config_response(
+                turn.text,
+                mode="main",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=angle_inventory,
+                upstream_paths=upstream_paths,
+            )
+        except ContentPredicateViolation as error:
+            if self._content_correction_callback is None:
+                raise
+            self._emit_content_correction(1, error)
+            corrected_turn = self._continue_transport(
+                turn.thread_id,
+                build_content_correction_instruction(error),
+                (),
+            )
+            if corrected_turn.thread_id != turn.thread_id:
+                raise ExecutorExecutionError(
+                    "codex-dev 收到无效的主图变量配置线程返回"
+                )
+            turn = corrected_turn
+            artifact = parse_variable_config_response(
+                turn.text,
+                mode="main",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=angle_inventory,
+                upstream_paths=upstream_paths,
+            )
         write_json_exclusive(output_path, artifact, "主图变量配置")
         return ExecutionResult(
             detail="主图变量配置已生成",
@@ -968,6 +1014,7 @@ class CodexDevExecutor:
         chunks: list[Mapping[str, Any]] = []
         recovery_attempts = 0
         structure_correction_attempts = 0
+        content_correction_chunks: set[int] = set()
         thread_id = ""
         chunk_count = detail_variable_config_chunk_count(requirements)
         for chunk_index in range(1, chunk_count + 1):
@@ -1036,6 +1083,29 @@ class CodexDevExecutor:
                         structure_correction=True,
                     )
                     turn = self._continue_transport(thread_id, correction_prompt, ())
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的详情图变量配置线程返回"
+                        )
+                except ContentPredicateViolation as error:
+                    if self._content_correction_callback is None:
+                        raise
+                    if chunk_index in content_correction_chunks:
+                        raise
+                    content_correction_chunks.add(chunk_index)
+                    expected_business_fingerprint = ""
+                    self._emit_content_correction(chunk_index, error)
+                    correction_prompt = build_detail_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        requirements=requirements,
+                        correction=error,
+                    )
+                    turn = self._continue_transport(
+                        thread_id,
+                        correction_prompt,
+                        (),
+                    )
                     if turn.thread_id != thread_id:
                         raise ExecutorExecutionError(
                             "codex-dev 收到无效的详情图变量配置线程返回"

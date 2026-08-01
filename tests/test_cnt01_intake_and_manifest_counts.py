@@ -93,14 +93,14 @@ class ManifestCompatibilityTests(unittest.TestCase):
             "main_image_count": 3,
             "detail_image_count": 2,
             "handheld_main": 3,
-            "handheld_detail": 2,
+            "handheld_detail": 1,
         }
         parsed = parse_user_confirmed_requirements(
             {"category": "杯类", "user_confirmed_facts": facts},
             ROOT,
         )
         self.assertEqual((3, 2), (parsed.main_image_count, parsed.detail_image_count))
-        self.assertEqual((3, 2), (parsed.handheld_main, parsed.handheld_detail))
+        self.assertEqual((3, 1), (parsed.handheld_main, parsed.handheld_detail))
 
     def test_new_manifest_rejects_bad_counts_and_handheld_overflow(self) -> None:
         cases = (
@@ -188,6 +188,8 @@ class ManifestCliTests(unittest.TestCase):
                     str(count),
                     "--detail-count",
                     str(count),
+                    "--handheld-detail",
+                    str(count - 1),
                 )
                 self.assertEqual(
                     0,

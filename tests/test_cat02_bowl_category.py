@@ -465,6 +465,7 @@ class Cat02BowlCategoryTest(unittest.TestCase):
     def test_bowl_count_and_handheld_boundaries_follow_cnt01(self) -> None:
         for count in (1, 30):
             with self.subTest(count=count):
+                detail_handheld = count - 1
                 parsed = parse_user_confirmed_requirements(
                     {
                         "category": "碗",
@@ -473,13 +474,13 @@ class Cat02BowlCategoryTest(unittest.TestCase):
                             "main_image_count": count,
                             "detail_image_count": count,
                             "handheld_main": count,
-                            "handheld_detail": count,
+                            "handheld_detail": detail_handheld,
                         },
                     },
                     ROOT,
                 )
                 self.assertEqual(
-                    (count, count, count, count),
+                    (count, count, count, detail_handheld),
                     (
                         parsed.main_image_count,
                         parsed.detail_image_count,

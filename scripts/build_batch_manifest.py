@@ -18,6 +18,8 @@ from category_recipes import (  # noqa: E402
 )
 from image_count_contract import (  # noqa: E402
     ImageCountContractError,
+    detail_handheld_limit_message,
+    handheld_count_maximum,
     image_count_spec,
     validate_image_count,
 )
@@ -291,10 +293,14 @@ def main() -> int:
         ("detail", args.handheld_detail, detail_count),
     ):
         bounds = recipe.form["handheld"][mode]
-        if type(value) is not int or not bounds["minimum"] <= value <= image_count:
+        maximum = handheld_count_maximum(mode, image_count)
+        if type(value) is not int or not bounds["minimum"] <= value <= maximum:
+            if mode == "detail" and type(value) is int and value > maximum:
+                print(detail_handheld_limit_message(image_count))
+                return 2
             print(
                 f"handheld-{mode} must be an integer from "
-                f"{bounds['minimum']} through the selected {mode} image count"
+                f"{bounds['minimum']} through {maximum}"
             )
             return 2
 
