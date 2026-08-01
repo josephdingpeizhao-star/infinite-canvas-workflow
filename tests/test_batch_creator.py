@@ -11,7 +11,7 @@ import tempfile
 import threading
 import unittest
 from dataclasses import replace
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -70,7 +70,7 @@ class BatchCreatorTests(unittest.TestCase):
             repo_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
-            today=lambda: date(2026, 7, 18),
+            now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
 
     def tearDown(self) -> None:
@@ -189,7 +189,7 @@ class BatchCreatorTests(unittest.TestCase):
 
         product_id = self.creator.product_id_for(request)
 
-        self.assertEqual("餐具_水杯_20260718", product_id)
+        self.assertEqual("餐具_水杯_20260718_123456", product_id)
         self.assertEqual(before, self.snapshot(self.base))
 
     def test_success_preserves_original_bytes_and_writes_manifest_last_contract(self) -> None:
@@ -198,10 +198,10 @@ class BatchCreatorTests(unittest.TestCase):
 
         result = self.creator.create(request, [upload])
 
-        self.assertEqual("餐具_20260718", result.product_id)
+        self.assertEqual("餐具_20260718_123456", result.product_id)
         self.assertEqual(1, result.image_count)
         self.assertEqual(FACTS.as_dict(), result.facts)
-        self.assertEqual(self.test_root / "餐具_20260718", result.workspace_root)
+        self.assertEqual(self.test_root / "餐具_20260718_123456", result.workspace_root)
         copied = result.workspace_root / "inputs" / "white_bg" / "餐具正面.png"
         self.assertEqual(upload.path.read_bytes(), copied.read_bytes())
         self.assertEqual(upload.sha256, hashlib.sha256(copied.read_bytes()).hexdigest())
@@ -221,18 +221,18 @@ class BatchCreatorTests(unittest.TestCase):
         route = json.loads(route_bytes.decode("utf-8"))
 
         self.assertIn("餐具".encode("utf-8"), manifest_bytes)
-        self.assertEqual("餐具_20260718", result.manifest_path.name.removesuffix(".batch_manifest.json"))
-        self.assertEqual("餐具_20260718", Path(manifest["workspace"]["root"]).name)
+        self.assertEqual("餐具_20260718_123456", result.manifest_path.name.removesuffix(".batch_manifest.json"))
+        self.assertEqual("餐具_20260718_123456", Path(manifest["workspace"]["root"]).name)
         self.assertEqual("餐具", manifest["user_confirmed_facts"]["product_type"])
         self.assertEqual("餐具正面.png", receipt["assets"][0]["name"])
-        self.assertEqual("餐具_20260718", route["batchId"])
+        self.assertEqual("餐具_20260718_123456", route["batchId"])
         self.assertEqual("餐具", route["facts"]["product_type"])
 
         routed = read_batch_route(result.manifest_path)
         routed_white_bg = routed["inputs"]["white_bg_images"]["paths"][0]["resolved_path"]
-        self.assertEqual("餐具_20260718", routed["product_id"])
-        self.assertIn("餐具_20260718", routed["manifest_source_path"])
-        self.assertIn("餐具_20260718", routed_white_bg)
+        self.assertEqual("餐具_20260718_123456", routed["product_id"])
+        self.assertIn("餐具_20260718_123456", routed["manifest_source_path"])
+        self.assertIn("餐具_20260718_123456", routed_white_bg)
         self.assertEqual("needs_product_identity_archive", routed["current_stage"])
 
     def test_plate_category_and_three_dimensions_reach_manifest_and_receipt(self) -> None:
@@ -285,7 +285,7 @@ class BatchCreatorTests(unittest.TestCase):
 
         self.assertEqual(
             {
-                "batchId": "餐具_20260718",
+                "batchId": "餐具_20260718_123456",
                 "imageCount": 1,
                 "facts": FACTS.as_dict(),
             },
@@ -322,14 +322,14 @@ class BatchCreatorTests(unittest.TestCase):
         creator = BatchCreator(
             repo_root=self.repo,
             state_root=self.state_root,
-            today=lambda: date(2026, 7, 18),
+            now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
         request = self.request()
         frozen_before = (self.repo / "manifests" / "shuiping_20260712.batch_manifest.json").read_bytes()
 
         result = creator.create(request, [self.upload(request)])
 
-        self.assertEqual(self.production_parent / "餐具_20260718", result.workspace_root)
+        self.assertEqual(self.production_parent / "餐具_20260718_123456", result.workspace_root)
         self.assertEqual(
             frozen_before,
             (self.repo / "manifests" / "shuiping_20260712.batch_manifest.json").read_bytes(),
@@ -356,14 +356,22 @@ class BatchCreatorTests(unittest.TestCase):
             repo_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
-            today=lambda: date(2026, 7, 12),
+            now=lambda: datetime(2026, 7, 12, 12, 34, 56),
         )
         frozen_request = self.request(facts=replace(FACTS, product_type="shuiping"))
-        with self.assertRaises(BatchCreationError) as caught:
-            frozen_creator.create(frozen_request, [self.upload(frozen_request)])
+        with mock.patch(
+            "batch_creator.batch_identity.format_batch_id",
+            return_value="shuiping_20260712",
+        ):
+            with self.assertRaises(BatchCreationError) as caught:
+                frozen_creator.create(frozen_request, [self.upload(frozen_request)])
         self.assertEqual("frozen_batch", caught.exception.code)
+        self.assertEqual(
+            "首批已经关账并受保护，不能重新登记或覆盖。",
+            caught.exception.user_message,
+        )
 
-        target = self.test_root / "餐具_20260718"
+        target = self.test_root / "餐具_20260718_123456"
         target.mkdir()
         (target / "foreign.txt").write_text("keep", encoding="utf-8")
         before = self.snapshot(target)
@@ -373,7 +381,7 @@ class BatchCreatorTests(unittest.TestCase):
         self.assertEqual(before, self.snapshot(target))
 
         shutil.rmtree(target)
-        manifest = self.repo / "manifests" / "餐具_20260718.batch_manifest.json"
+        manifest = self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json"
         manifest.write_text("foreign-manifest", encoding="utf-8")
         with self.assertRaises(BatchCreationError) as caught:
             self.creator.create(self.request(), [self.upload(self.request())])
@@ -394,7 +402,7 @@ class BatchCreatorTests(unittest.TestCase):
         self.assertEqual("duplicate_request", caught.exception.code)
         self.assertEqual(before_test, self.snapshot(self.test_root))
         self.assertEqual(before_repo, self.snapshot(self.repo / "manifests"))
-        self.assertFalse((self.test_root / "茶具_20260718").exists())
+        self.assertFalse((self.test_root / "茶具_20260718_123456").exists())
 
     def test_uploads_must_match_request_exactly_once(self) -> None:
         request = self.request()
@@ -411,8 +419,8 @@ class BatchCreatorTests(unittest.TestCase):
                 with self.assertRaises(BatchCreationError) as caught:
                     self.creator.create(request, uploads)
                 self.assertEqual("invalid_uploads", caught.exception.code)
-                self.assertFalse((self.test_root / "餐具_20260718").exists())
-                self.assertFalse((self.repo / "manifests" / "餐具_20260718.batch_manifest.json").exists())
+                self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
+                self.assertFalse((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").exists())
 
     def test_size_expected_hash_uploaded_hash_and_actual_bytes_must_all_match(self) -> None:
         request = self.request()
@@ -426,7 +434,7 @@ class BatchCreatorTests(unittest.TestCase):
                 with self.assertRaises(BatchCreationError) as caught:
                     self.creator.create(request, [upload])
                 self.assertEqual("integrity_mismatch", caught.exception.code)
-                self.assertFalse((self.test_root / "餐具_20260718").exists())
+                self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
 
         different_expected = replace(
             request,
@@ -492,8 +500,8 @@ class BatchCreatorTests(unittest.TestCase):
         with self.assertRaises(BatchCreationError) as caught:
             self.creator.create(self.request(), [self.upload(self.request())])
         self.assertEqual("planning_failed", caught.exception.code)
-        self.assertFalse((self.test_root / "餐具_20260718").exists())
-        self.assertFalse((self.repo / "manifests" / "餐具_20260718.batch_manifest.json").exists())
+        self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
+        self.assertFalse((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").exists())
 
     def test_failure_before_repository_manifest_compensates_only_owned_workspace(self) -> None:
         request = self.request()
@@ -513,8 +521,8 @@ class BatchCreatorTests(unittest.TestCase):
                 self.creator.create(request, [upload])
 
         self.assertEqual("commit_failed", caught.exception.code)
-        self.assertFalse((self.test_root / "餐具_20260718").exists())
-        self.assertFalse((self.repo / "manifests" / "餐具_20260718.batch_manifest.json").exists())
+        self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
+        self.assertFalse((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").exists())
         self.assertEqual(b"keep", (foreign / "keep.txt").read_bytes())
         self.assert_no_staging(self.test_root)
 
@@ -534,14 +542,14 @@ class BatchCreatorTests(unittest.TestCase):
                 self.creator.create(request, [upload])
 
         self.assertEqual("integrity_mismatch", caught.exception.code)
-        self.assertFalse((self.test_root / "餐具_20260718").exists())
-        self.assertFalse((self.repo / "manifests" / "餐具_20260718.batch_manifest.json").exists())
+        self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
+        self.assertFalse((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").exists())
         self.assert_no_staging(self.test_root)
 
     def test_repository_manifest_publish_never_replaces_racing_foreign_file(self) -> None:
         request = self.request()
         upload = self.upload(request)
-        manifest_path = self.repo / "manifests" / "餐具_20260718.batch_manifest.json"
+        manifest_path = self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json"
         foreign_bytes = b"foreign-manifest-must-survive"
         import batch_creator as module
 
@@ -560,7 +568,7 @@ class BatchCreatorTests(unittest.TestCase):
 
         self.assertEqual("batch_exists", caught.exception.code)
         self.assertEqual(foreign_bytes, manifest_path.read_bytes())
-        self.assertFalse((self.test_root / "餐具_20260718").exists())
+        self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
         self.assert_no_staging(self.test_root)
 
     def test_marker_write_failure_removes_only_exact_empty_stage(self) -> None:
@@ -595,13 +603,13 @@ class BatchCreatorTests(unittest.TestCase):
             repo_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
-            today=lambda: date(2026, 7, 18),
+            now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
         second_creator = BatchCreator(
             repo_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
-            today=lambda: date(2026, 7, 18),
+            now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
         barrier = threading.Barrier(2)
         import batch_creator as module
@@ -635,10 +643,10 @@ class BatchCreatorTests(unittest.TestCase):
         self.assertEqual(1, len(successes), outcomes)
         self.assertEqual(1, len(failures), outcomes)
         self.assertIn(failures[0].code, {"batch_exists", "commit_failed"})
-        self.assertTrue((self.test_root / "餐具_20260718").is_dir())
-        self.assertTrue((self.repo / "manifests" / "餐具_20260718.batch_manifest.json").is_file())
+        self.assertTrue((self.test_root / "餐具_20260718_123456").is_dir())
+        self.assertTrue((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").is_file())
         receipt = json.loads(
-            (self.test_root / "餐具_20260718" / "manifests" / "batch_intake_receipt.json").read_text(
+            (self.test_root / "餐具_20260718_123456" / "manifests" / "batch_intake_receipt.json").read_text(
                 encoding="utf-8"
             )
         )
@@ -662,7 +670,7 @@ class BatchCreatorTests(unittest.TestCase):
             with self.assertRaises(BatchCreationError):
                 self.creator.create(request, [upload])
 
-        target = self.test_root / "餐具_20260718"
+        target = self.test_root / "餐具_20260718_123456"
         self.assertTrue(target.is_dir())
         self.assertEqual("foreign-owner\n", (target / ".canvas_batch").read_text(encoding="utf-8"))
 

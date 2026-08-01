@@ -11,10 +11,11 @@ import unicodedata
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import batch_identity
 from batch_intake_controller import BatchIntakeRequest, ConfirmedFacts, SourceImage
 from batch_recycle_lock import (
     BatchOperationBusy,
@@ -393,7 +394,7 @@ class BatchCreator:
         state_root: Path | None = None,
         *,
         test_root: Path | None = None,
-        today: Callable[[], date] = date.today,
+        now: Callable[[], datetime] = datetime.now,
         desktop_locator: Callable[[], Path] | None = None,
         batch_lock_factory: Callable[..., Any] | None | object = (
             _DEFAULT_BATCH_LOCK_FACTORY
@@ -407,7 +408,7 @@ class BatchCreator:
         )
         default_state = Path.home() / ".infinite-canvas" / "batch-intake"
         self.state_root = prepare_state_root(state_root or default_state)
-        self._today = today
+        self._now = now
         actual_repo = Path(__file__).resolve().parents[1]
         self.desktop_locator = (
             desktop_locator
@@ -492,12 +493,15 @@ class BatchCreator:
 
     def product_id_for(self, request: BatchIntakeRequest) -> str:
         try:
-            value = self._today()
+            value = self._now()
         except Exception:
             raise BatchCreationError("invalid_date", "无法读取本机日期，已停止登记。") from None
-        if not isinstance(value, date):
+        if not isinstance(value, datetime):
             raise BatchCreationError("invalid_date", "无法读取本机日期，已停止登记。")
-        return f"{_clean_product_type(request.facts.product_type)}_{value:%Y%m%d}"
+        return batch_identity.format_batch_id(
+            _clean_product_type(request.facts.product_type),
+            value,
+        )
 
     def _target_paths(self, product_id: str) -> tuple[Path, Path]:
         target = self.workspace_parent / product_id

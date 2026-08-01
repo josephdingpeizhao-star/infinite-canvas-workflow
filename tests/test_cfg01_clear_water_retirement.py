@@ -7,7 +7,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 
@@ -375,7 +375,7 @@ class Cfg01ClearWaterRetirementTest(unittest.TestCase):
                 repository,
                 state_root,
                 test_root=test_root,
-                today=lambda: date(2026, 7, 31),
+                now=lambda: datetime(2026, 7, 31, 12, 34, 56),
             )
             result = creator.create(
                 request,

@@ -6,7 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -683,14 +683,14 @@ class Cat02BowlCategoryTest(unittest.TestCase):
                 repo_root=repository,
                 state_root=state_root,
                 test_root=test_root,
-                today=lambda: date(2026, 7, 28),
+                now=lambda: datetime(2026, 7, 28, 12, 34, 56),
             )
 
             result = creator.create(request, [upload])
             manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
             receipt = json.loads(result.receipt_path.read_text(encoding="utf-8"))
 
-            self.assertEqual("碗_20260728", result.product_id)
+            self.assertEqual("碗_20260728_123456", result.product_id)
             self.assertEqual("碗", manifest["category"])
             self.assertEqual(10, len(manifest["user_confirmed_facts"]))
             self.assertEqual(facts.as_dict(), manifest["user_confirmed_facts"])

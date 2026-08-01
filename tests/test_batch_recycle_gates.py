@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -581,13 +581,13 @@ class BatchRecycleGateTests(unittest.TestCase):
         )
         state_root = self.root / "state"
         batch_creator.prepare_state_root(state_root)
-        expected_manifest = self.manifests / "餐具_20260726.batch_manifest.json"
+        expected_manifest = self.manifests / "餐具_20260726_123456.batch_manifest.json"
         expected_manifest.write_bytes(b'{"audit":"keep"}\n')
         creator = batch_creator.BatchCreator(
             self.repo,
             state_root,
             test_root=test_root,
-            today=lambda: date(2026, 7, 26),
+            now=lambda: datetime(2026, 7, 26, 12, 34, 56),
         )
         facts = ConfirmedFacts(
             product_type="餐具",
@@ -611,7 +611,7 @@ class BatchRecycleGateTests(unittest.TestCase):
             creator.create(request, ())
         self.assertEqual("batch_exists", ctx.exception.code)
         self.assertEqual(b'{"audit":"keep"}\n', expected_manifest.read_bytes())
-        self.assertFalse((test_root / "餐具_20260726").exists())
+        self.assertFalse((test_root / "餐具_20260726_123456").exists())
 
     def test_demo_service_remains_marker_isolated_and_unchanged(self) -> None:
         demo_root = self.root / "demo"

@@ -6,7 +6,7 @@ import shutil
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from unittest import mock
 
@@ -331,7 +331,7 @@ class Nc01IsolatedNormalFlowTests(unittest.TestCase):
                 repo,
                 state_root,
                 test_root=test_root,
-                today=lambda: date(2026, 7, 25),
+                now=lambda: datetime(2026, 7, 25, 12, 34, 56),
             )
             sources = []
             uploads = []

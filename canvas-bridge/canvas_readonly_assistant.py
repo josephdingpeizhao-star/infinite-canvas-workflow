@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import batch_identity
 from batch_recycle_state import (
     BatchLifecycleReadError,
     read_batch_lifecycle,
@@ -265,9 +266,9 @@ class ReadonlyContextAssembler:
         return catalog
 
     @staticmethod
-    def _batch_sort_key(batch_id: str) -> tuple[str, str]:
-        match = re.search(r"(\d{8})$", batch_id)
-        return (match.group(1) if match else "", batch_id)
+    def _batch_sort_key(batch_id: str) -> tuple[str, str, str]:
+        date_stamp, time_stamp = batch_identity.parse_batch_stamp(batch_id)
+        return date_stamp, time_stamp, batch_id
 
     @staticmethod
     def _select_batch(question: str, catalog: list[dict[str, Any]]) -> dict[str, Any]:
@@ -283,11 +284,12 @@ class ReadonlyContextAssembler:
         if date_match:
             year, month, day = date_match.groups()
             suffix = f"{int(month):02d}{int(day):02d}"
+            date_suffix = f"{year}{suffix}" if year else suffix
             candidates = [
                 item
                 for item in catalog
-                if str(item["batch_id"]).endswith(
-                    f"{year}{suffix}" if year else suffix
+                if batch_identity.parse_batch_stamp(str(item["batch_id"]))[0].endswith(
+                    date_suffix
                 )
             ]
             if candidates:

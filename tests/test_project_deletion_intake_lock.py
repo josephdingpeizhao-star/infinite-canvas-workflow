@@ -7,7 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 
@@ -109,7 +109,7 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
             repo_root=self.repo,
             state_root=self.state,
             test_root=self.test_root,
-            today=lambda: date(2099, 1, 1),
+            now=lambda: datetime(2099, 1, 1, 12, 34, 56),
             batch_lock_factory=BatchOperationLock,
         )
 
@@ -126,7 +126,7 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
 
         def hold_delete_lock() -> None:
             with BatchOperationLock(
-                "杯子_20990101",
+                "杯子_20990101_123456",
                 lock_root=self.creator.batch_lock_root,
             ):
                 held.set()
@@ -142,13 +142,13 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
             release.set()
             thread.join(timeout=10)
         self.assertEqual("batch_busy", caught.exception.code)
-        self.assertFalse((self.test_root / "杯子_20990101").exists())
+        self.assertFalse((self.test_root / "杯子_20990101_123456").exists())
         self.assertFalse(
-            (self.repo / "manifests" / "杯子_20990101.batch_manifest.json").exists()
+            (self.repo / "manifests" / "杯子_20990101_123456.batch_manifest.json").exists()
         )
 
         result = self.creator.create(self.request, [self.uploaded])
-        self.assertEqual("杯子_20990101", result.product_id)
+        self.assertEqual("杯子_20990101_123456", result.product_id)
         self.assertTrue(result.workspace_root.is_dir())
 
         def snapshot() -> dict[str, bytes]:
@@ -159,7 +159,7 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
                 and path.name != ".canvas_intake_test_root"
             }
             manifest = (
-                self.repo / "manifests" / "杯子_20990101.batch_manifest.json"
+                self.repo / "manifests" / "杯子_20990101_123456.batch_manifest.json"
             )
             files["repo-manifest"] = manifest.read_bytes()
             return files
@@ -177,7 +177,7 @@ class ProjectDeletionIntakeLockTests(unittest.TestCase):
             repo_root=self.repo,
             state_root=self.state,
             test_root=self.test_root,
-            today=lambda: date(2099, 1, 1),
+            now=lambda: datetime(2099, 1, 1, 12, 34, 56),
         )
         unlocked.create(self.request, [self.uploaded])
         self.assertEqual(locked_snapshot, snapshot())
