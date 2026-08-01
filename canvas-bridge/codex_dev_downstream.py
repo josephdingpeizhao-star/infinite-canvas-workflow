@@ -844,6 +844,10 @@ _CLAUSE_SEPARATOR_PATTERN = r"[，,。；;\n]"
 _NUMBER_PATTERN = r"\d+(?:\.\d+)?"
 _LENGTH_UNIT_PATTERN = r"(?:毫米|mm|厘米|cm)"
 _RANGE_CONNECTOR_PATTERN = r"(?:-|−|－|–|—|~|～|/|／|至|到)"
+# 来自构图/说明文案中的常见非计量词；清单有意封闭，避免放过“4 克的重量”。
+_NON_MEASUREMENT_SINGLE_CHAR_UNIT_WORDS = frozenset(
+    ("克制", "克服", "克隆", "升级", "升华", "升温", "升起", "升值")
+)
 _EXISTING_FACT_PROTECTION_MARKERS = (
     "不得",
     "禁止",
@@ -991,6 +995,34 @@ def _load_style_master_material_reference_text(path: Path, *, product_id: str) -
     if not isinstance(style_master, Mapping):
         raise ExecutorExecutionError("codex-dev 无法读取有效的正式风格母版")
     return style_master_material_reference_text(style_master, product_id=product_id)
+
+
+def _measurement_number_is_ratio(text: str, match: re.Match[str]) -> bool:
+    number_start, number_end = match.span(1)
+    return bool(
+        re.search(
+            r"\d+(?:\.\d+)?\s*[:：]\s*\Z",
+            text[:number_start],
+        )
+        or re.match(
+            r"\s*[:：]\s*\d+(?:\.\d+)?",
+            text[number_end:],
+        )
+    )
+
+
+def _measurement_unit_starts_non_measurement_word(
+    text: str,
+    match: re.Match[str],
+) -> bool:
+    unit = match.group(2)
+    if unit not in {"克", "升"}:
+        return False
+    unit_start = match.start(2)
+    return any(
+        word.startswith(unit) and text.startswith(word, unit_start)
+        for word in _NON_MEASUREMENT_SINGLE_CHAR_UNIT_WORDS
+    )
 
 
 def _is_confirmed_dimension_measurement(
@@ -1254,6 +1286,11 @@ def _reject_unsupported_claims(
         if _DIMENSION_GROUP_PATTERN.search(item):
             collect("未确认参数", path)
         for match in measurement_pattern.finditer(item):
+            if _measurement_number_is_ratio(
+                item,
+                match,
+            ) or _measurement_unit_starts_non_measurement_word(item, match):
+                continue
             number = float(match.group(1))
             unit = match.group(2).casefold()
             if (
