@@ -237,6 +237,7 @@ class Hf04TransportObservabilityTest(unittest.TestCase):
                 route_reader=lambda _path: route,
                 artifact_reader=lambda _manifest: (),
                 clock_ms=lambda: 1_100,
+                step_auto_retry_limit=0,
             )
 
             service.poll_once()

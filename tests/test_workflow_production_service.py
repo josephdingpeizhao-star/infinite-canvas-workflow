@@ -351,6 +351,7 @@ class ProductionServiceTest(unittest.TestCase):
             integrity_reader=self._integrity_reader(executed),
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
+            step_auto_retry_limit=0,
         )
         service.poll_once()
 
@@ -373,6 +374,7 @@ class ProductionServiceTest(unittest.TestCase):
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
             diagnostic_recorder=lambda step, code: diagnostics.append((step, code)),
+            step_auto_retry_limit=0,
         )
 
         service.poll_once()
@@ -416,6 +418,7 @@ class ProductionServiceTest(unittest.TestCase):
             route_reader=self._route_reader(executed),
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
+            step_auto_retry_limit=0,
         )
 
         service.poll_once()
@@ -499,6 +502,7 @@ class ProductionServiceTest(unittest.TestCase):
             route_reader=self._route_reader(executed),
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
+            step_auto_retry_limit=0,
         )
 
         service.poll_once()
@@ -537,6 +541,7 @@ class ProductionServiceTest(unittest.TestCase):
             route_reader=self._route_reader(executed),
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
+            step_auto_retry_limit=0,
         )
 
         service.poll_once()
@@ -619,6 +624,7 @@ class ProductionServiceTest(unittest.TestCase):
                     route_reader=self._route_reader(executed),
                     artifact_reader=lambda _manifest: (),
                     clock_ms=lambda: 1_100,
+                    step_auto_retry_limit=0,
                 )
 
                 service.poll_once()
@@ -657,6 +663,7 @@ class ProductionServiceTest(unittest.TestCase):
             route_reader=self._route_reader(executed),
             artifact_reader=lambda _manifest: (),
             clock_ms=lambda: 1_100,
+            step_auto_retry_limit=0,
         )
 
         service.poll_once()

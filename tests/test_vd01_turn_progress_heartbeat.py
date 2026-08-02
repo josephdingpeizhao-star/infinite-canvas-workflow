@@ -508,6 +508,7 @@ class TurnProgressServiceTest(unittest.TestCase):
                 environment={},
                 persistence_timeout_ms=0,
                 batch_lock_root=root / "locks",
+                step_auto_retry_limit=0,
             )
             sender_calls: list[list[dict[str, object]]] = []
             if sender_failure:

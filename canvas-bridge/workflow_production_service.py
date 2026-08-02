@@ -31,7 +31,7 @@ from failure_text_safety import (
 import ic_client
 import run_controller
 import state_reader
-from executor_contract import Executor, ExecutorContext, ExecutorExecutionError
+from executor_contract import Executor, ExecutorContext, ExecutorExecutionError, ExecutionResult
 from image_production_executor import ImageProductionExecutor
 from openai_image_executor import OpenAIImageExecutor
 from workflow_production_controller import (
@@ -55,6 +55,9 @@ from white_bg_recovery import sanitize_filenames
 
 COMMAND_MAX_AGE_MS = 8_000
 UPSTREAM_STEPS = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc", "final_prompts"}
+STEP_AUTO_RETRY_STEPS = frozenset(UPSTREAM_STEPS)
+DEFAULT_STEP_AUTO_RETRY_LIMIT = 2
+MAX_STEP_AUTO_RETRY_LIMIT = 2
 M2C_STEPS = UPSTREAM_STEPS | {"integrity", "renders", "qc"}
 _M2C_BOUNDARY_MESSAGE = "M2-c 已停在质检完成，返修与交付属后续里程碑。"
 _REAL_EXECUTION_DISABLED_CODE = "real_execution_disabled"
@@ -316,7 +319,16 @@ class WorkflowProductionService:
         environment: Mapping[str, str] | None = None,
         diagnostic_recorder: Callable[[str, str], None] | None = None,
         batch_lock_root: Path | None = None,
+        step_auto_retry_limit: int = DEFAULT_STEP_AUTO_RETRY_LIMIT,
     ) -> None:
+        if (
+            type(step_auto_retry_limit) is not int
+            or not 0 <= step_auto_retry_limit <= MAX_STEP_AUTO_RETRY_LIMIT
+        ):
+            raise ValueError(
+                "step_auto_retry_limit must be an integer between 0 and "
+                f"{MAX_STEP_AUTO_RETRY_LIMIT}"
+            )
         self.repository_root = repository_root.resolve()
         self.client = client
         self._uses_default_executor_builder = executor_builder is None
@@ -351,6 +363,7 @@ class WorkflowProductionService:
         self.environment = environment if environment is not None else os.environ
         self.diagnostic_recorder = diagnostic_recorder
         self.batch_lock_root = batch_lock_root
+        self.step_auto_retry_limit = step_auto_retry_limit
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
         self._qc_heartbeat_workers: set[_QcHeartbeatWorker] = set()
@@ -1339,6 +1352,123 @@ class WorkflowProductionService:
             return controlled[1]
         return "这一步没做好，机器已停下。已经完成的成果都保留了。"
 
+    def _execute_step_attempt(
+        self,
+        *,
+        step: str,
+        manifest: Mapping[str, Any],
+        manifest_path: Path,
+        on_output: Callable[[WorkflowProductionArtifact], None],
+        on_auto_padded: Callable[[Mapping[str, Any]], None],
+        journal: Path,
+        request_id: str,
+        machine: Mapping[str, Any],
+        turn_progress_machine: Mapping[str, Any] | None,
+        accepted_content: str,
+        produced_count: int,
+        total_count: int,
+        expected_ids: tuple[str, ...],
+    ) -> ExecutionResult:
+        if self._uses_default_executor_builder:
+            executor = self._build_executor(
+                step,
+                manifest,
+                manifest_path,
+                on_output,
+                on_auto_padded,
+            )
+        else:
+            executor = self.executor_builder(step, manifest, manifest_path, on_output)
+
+        heartbeat_worker: _QcHeartbeatWorker | None = None
+        execution_succeeded = False
+        try:
+            if step in {"main_vc", "detail_vc"}:
+                binder = getattr(
+                    executor,
+                    "set_content_correction_callback",
+                    None,
+                )
+                if callable(binder):
+                    binder(
+                        lambda chunk_index, code, config_id: self._record_content_correction(
+                            journal,
+                            request_id,
+                            step,
+                            chunk_index,
+                            code,
+                            config_id,
+                        )
+                    )
+            if turn_progress_machine is not None:
+                heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
+                binder = getattr(executor, "set_turn_progress_callback", None)
+                if callable(binder):
+                    binder(
+                        self._turn_progress_callback(
+                            heartbeat_worker,
+                            turn_progress_machine,
+                            accepted_content,
+                            step=step,
+                            produced_count=produced_count,
+                            total_count=total_count,
+                            expected_ids=expected_ids,
+                        )
+                    )
+            if step == "qc":
+                heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
+                binder = getattr(executor, "set_qc_progress_callback", None)
+                if callable(binder):
+                    binder(
+                        self._qc_progress_callback(
+                            heartbeat_worker,
+                            machine,
+                            accepted_content,
+                            total_count=total_count,
+                            expected_ids=expected_ids,
+                            chunk_count=qc_chunk_count(total_count),
+                        )
+                    )
+            result = run_controller.execute_step(executor, step)
+            execution_succeeded = True
+            return result
+        except ExecutorExecutionError as exc:
+            code = getattr(exc, "code", None)
+            if type(code) is not str:
+                code = ""
+            if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
+                self.diagnostic_recorder(step, code)
+            if step == "integrity":
+                try:
+                    integrity_state = self.integrity_reader(self.route_reader(manifest_path))
+                    report_path = Path(str(integrity_state.get("path") or ""))
+                    if (
+                        integrity_state.get("found") is True
+                        and integrity_state.get("status") == "fail"
+                        and integrity_state.get("render_blocked") is True
+                        and report_path.name == "final_prompt_integrity_report.json"
+                    ):
+                        report = json.loads(report_path.read_text(encoding="utf-8"))
+                        count = report.get("blocking_issue_count") if isinstance(report, dict) else None
+                        if (
+                            isinstance(report, dict)
+                            and report.get("status") == "fail"
+                            and report.get("render_blocked") is True
+                            and type(count) is int
+                            and 1 <= count <= 9_999
+                        ):
+                            exc.code = _INTEGRITY_FAILURE_CODE
+                            exc.blocking_issue_count = count
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
+                    pass
+            raise
+        finally:
+            if heartbeat_worker is not None:
+                self._close_qc_heartbeat_worker(
+                    heartbeat_worker,
+                    drain=execution_succeeded,
+                )
+
     def _reject(
         self,
         node: Mapping[str, Any],
@@ -1538,103 +1668,41 @@ class WorkflowProductionService:
             def on_auto_padded(record: Mapping[str, Any]) -> None:
                 self._record_auto_padding(journal, request_id, record)
 
-            if self._uses_default_executor_builder:
-                executor = self._build_executor(
-                    step,
-                    manifest,
-                    manifest_path,
-                    on_output,
-                    on_auto_padded,
-                )
-            else:
-                executor = self.executor_builder(step, manifest, manifest_path, on_output)
-            heartbeat_worker: _QcHeartbeatWorker | None = None
-            execution_succeeded = False
-            try:
-                if step in {"main_vc", "detail_vc"}:
-                    binder = getattr(
-                        executor,
-                        "set_content_correction_callback",
-                        None,
+            attempt = 1
+            while True:
+                try:
+                    result = self._execute_step_attempt(
+                        step=step,
+                        manifest=manifest,
+                        manifest_path=manifest_path,
+                        on_output=on_output,
+                        on_auto_padded=on_auto_padded,
+                        journal=journal,
+                        request_id=request_id,
+                        machine=machine,
+                        turn_progress_machine=turn_progress_machine,
+                        accepted_content=accepted_content,
+                        produced_count=produced_count,
+                        total_count=total_count,
+                        expected_ids=expected_ids,
                     )
-                    if callable(binder):
-                        binder(
-                            lambda chunk_index, code, config_id: self._record_content_correction(
-                                journal,
-                                request_id,
-                                step,
-                                chunk_index,
-                                code,
-                                config_id,
-                            )
-                        )
-                if turn_progress_machine is not None:
-                    heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
-                    binder = getattr(executor, "set_turn_progress_callback", None)
-                    if callable(binder):
-                        binder(
-                            self._turn_progress_callback(
-                                heartbeat_worker,
-                                turn_progress_machine,
-                                accepted_content,
-                                step=step,
-                                produced_count=produced_count,
-                                total_count=total_count,
-                                expected_ids=expected_ids,
-                            )
-                        )
-                if step == "qc":
-                    heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
-                    binder = getattr(executor, "set_qc_progress_callback", None)
-                    if callable(binder):
-                        binder(
-                            self._qc_progress_callback(
-                                heartbeat_worker,
-                                machine,
-                                accepted_content,
-                                total_count=total_count,
-                                expected_ids=expected_ids,
-                                chunk_count=qc_chunk_count(total_count),
-                            )
-                        )
-                result = run_controller.execute_step(executor, step)
-                execution_succeeded = True
-            except ExecutorExecutionError as exc:
-                code = getattr(exc, "code", None)
-                if type(code) is not str:
-                    code = ""
-                if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
-                    self.diagnostic_recorder(step, code)
-                if step == "integrity":
-                    try:
-                        integrity_state = self.integrity_reader(self.route_reader(manifest_path))
-                        report_path = Path(str(integrity_state.get("path") or ""))
-                        if (
-                            integrity_state.get("found") is True
-                            and integrity_state.get("status") == "fail"
-                            and integrity_state.get("render_blocked") is True
-                            and report_path.name == "final_prompt_integrity_report.json"
-                        ):
-                            report = json.loads(report_path.read_text(encoding="utf-8"))
-                            count = report.get("blocking_issue_count") if isinstance(report, dict) else None
-                            if (
-                                isinstance(report, dict)
-                                and report.get("status") == "fail"
-                                and report.get("render_blocked") is True
-                                and type(count) is int
-                                and 1 <= count <= 9_999
-                            ):
-                                exc.code = _INTEGRITY_FAILURE_CODE
-                                exc.blocking_issue_count = count
-                    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
-                        pass
-                raise
-            finally:
-                if heartbeat_worker is not None:
-                    self._close_qc_heartbeat_worker(
-                        heartbeat_worker,
-                        drain=execution_succeeded,
+                    break
+                except ExecutorExecutionError as exc:
+                    if (
+                        step not in STEP_AUTO_RETRY_STEPS
+                        or attempt > self.step_auto_retry_limit
+                        or self.stopping
+                    ):
+                        raise
+                    run_controller.append_event(
+                        journal,
+                        "step_auto_retry",
+                        request_id=request_id,
+                        step=step,
+                        attempt=attempt,
+                        detail=self._safe_event_detail(exc),
                     )
+                    attempt += 1
             run_controller.append_event(journal, "step_succeeded", request_id=request_id, step=step, detail=result.detail[:160])
             if step == "renders":
                 produced_count = len(self.artifact_reader(manifest))
