@@ -323,6 +323,34 @@ class RenderFailureReportingTest(unittest.TestCase):
             self.assertEqual(1, failure.missing_count)
             self.assertNotIn(str(root), str(failure))
 
+    def test_inconsistent_missing_file_list_degrades_to_count_only(self) -> None:
+        failure = self._missing_failure()
+        failure.missing_files = ("白底 背面.png", "白底 背面.png")
+        failure.missing_count = 2
+
+        production, event = self._run_service_failure(failure)
+
+        self.assertEqual("failed", production["status"])
+        self.assertEqual(
+            {
+                "kind": "missing_reference",
+                "files": [],
+                "recomputeEligible": True,
+            },
+            production["recovery"],
+        )
+        self.assertEqual(
+            "有 2 张白底图已不在批次目录里。可恢复文件后重新开始；"
+            "或剔除缺失图，用剩余 3 张重新分配角度与绑定（重排不产生模型费用，"
+            "出图前会重新报价并由你确认）。",
+            production["errorMessage"],
+        )
+        self.assertEqual("渲染失败：缺失 2 张白底图", event["detail"])
+        self.assertNotIn(
+            "白底 背面.png",
+            json.dumps({"production": production, "event": event}, ensure_ascii=False),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

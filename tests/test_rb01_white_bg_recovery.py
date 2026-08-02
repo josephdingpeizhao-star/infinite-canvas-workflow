@@ -199,6 +199,16 @@ class WhiteBgClassificationTest(unittest.TestCase):
             self.assertEqual(1, scan.missing_count)
             self.assertEqual((), scan.missing_files)
 
+    def test_filename_sanitizer_enforces_length_limit_after_pattern_match(self) -> None:
+        filename = "a" * 78 + ".jpg"
+
+        self.assertEqual(82, len(filename))
+        self.assertIsNotNone(
+            white_bg_recovery._SAFE_FILENAME_PATTERN.fullmatch(filename)
+        )
+        self.assertIsNone(sanitize_filename(filename))
+        self.assertEqual((), sanitize_filenames(("safe.png", filename)))
+
 
 class RecoveryArchiveTest(unittest.TestCase):
     def test_archive_rejects_artifacts_root_outside_workspace_without_side_effects(self) -> None:
@@ -400,6 +410,44 @@ class RecoveryArchiveTest(unittest.TestCase):
                 ["angle_inventory"],
                 run_controller.runnable_steps(route, {"found": False}),
             )
+
+    def test_archive_rejects_source_outside_artifacts_root_without_side_effects(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            fixture = RecoveryFixture(Path(temp))
+            external_final = Path(temp) / "external-final-prompts"
+            external_file = external_final / "marker.json"
+            _write_json(external_file, {"safe": True})
+            fixture.manifest["artifacts"]["final_prompts"] = [str(external_final)]
+
+            with self.assertRaises(WhiteBgRecoveryError) as caught:
+                archive_recompute_artifacts(
+                    fixture.manifest,
+                    fixture.repository_root,
+                    archive_id_factory=lambda: ARCHIVE_ID,
+                )
+
+            self.assertEqual(
+                "final_prompts 越出批次派生产物目录",
+                str(caught.exception),
+            )
+            self.assertTrue(external_file.is_file())
+            self.assertFalse((fixture.artifacts_root / "_superseded").exists())
+            self.assertFalse(
+                (fixture.repository_root / "reports" / "_superseded").exists()
+            )
+            for source in (
+                fixture.identity / "identity.json",
+                fixture.style / "style.json",
+                fixture.angle / "angle.json",
+                fixture.variables / "main.json",
+                fixture.variables / "detail.json",
+                fixture.final / "final_prompt_index.json",
+                fixture.jobs / "job.json",
+                fixture.qc / "qc.json",
+                fixture.repo_integrity_json,
+                fixture.repo_integrity_md,
+            ):
+                self.assertTrue(source.is_file(), source)
 
 
 if __name__ == "__main__":
