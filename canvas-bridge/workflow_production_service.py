@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import queue
@@ -62,6 +63,7 @@ _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览�
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
 _QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
 _QC_HEARTBEAT_STOP = object()
+_TURN_PROGRESS_HEARTBEAT_STEPS = {"main_vc", "detail_vc", "final_prompts"}
 BATCH_CLOSED_MESSAGE = "本批次已关账，不能再发起制作、质检、返修或上桌操作。"
 
 
@@ -218,6 +220,8 @@ def discover_accepted_artifacts(
 
 
 class _QcHeartbeatWorker:
+    """Asynchronously send canvas heartbeat ops for QC and turn progress."""
+
     def __init__(
         self,
         request_id: str,
@@ -544,6 +548,34 @@ class WorkflowProductionService:
                         total_count=total_count,
                         expected_ids=expected_ids,
                         message=message,
+                    )
+                ]
+            )
+
+        return report
+
+    def _turn_progress_callback(
+        self,
+        worker: _QcHeartbeatWorker,
+        machine: Mapping[str, Any],
+        accepted_content: str,
+        *,
+        step: str,
+        produced_count: int,
+        total_count: int,
+        expected_ids: tuple[str, ...],
+    ) -> Callable[[], None]:
+        def report() -> None:
+            worker.submit(
+                [
+                    self._machine_update(
+                        machine,
+                        status="running",
+                        content=accepted_content,
+                        step=step,
+                        produced_count=produced_count,
+                        total_count=total_count,
+                        expected_ids=expected_ids,
                     )
                 ]
             )
@@ -1129,6 +1161,11 @@ class WorkflowProductionService:
             step = resolve_gated_step(command_text, route, integrity)
             if step not in M2C_STEPS:
                 raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
+            turn_progress_machine = (
+                copy.deepcopy(machine)
+                if step in _TURN_PROGRESS_HEARTBEAT_STEPS
+                else None
+            )
             # This is a deny-only phase boundary, not an execution route.  The
             # existing run controller has already parsed and resolved the next
             # step above; when the image gate is closed we stop before gate 3,
@@ -1207,7 +1244,7 @@ class WorkflowProductionService:
                 )
             else:
                 executor = self.executor_builder(step, manifest, manifest_path, on_output)
-            qc_heartbeat_worker: _QcHeartbeatWorker | None = None
+            heartbeat_worker: _QcHeartbeatWorker | None = None
             execution_succeeded = False
             try:
                 if step in {"main_vc", "detail_vc"}:
@@ -1227,13 +1264,28 @@ class WorkflowProductionService:
                                 config_id,
                             )
                         )
+                if turn_progress_machine is not None:
+                    heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
+                    binder = getattr(executor, "set_turn_progress_callback", None)
+                    if callable(binder):
+                        binder(
+                            self._turn_progress_callback(
+                                heartbeat_worker,
+                                turn_progress_machine,
+                                accepted_content,
+                                step=step,
+                                produced_count=produced_count,
+                                total_count=total_count,
+                                expected_ids=expected_ids,
+                            )
+                        )
                 if step == "qc":
-                    qc_heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
+                    heartbeat_worker = self._start_qc_heartbeat_worker(request_id)
                     binder = getattr(executor, "set_qc_progress_callback", None)
                     if callable(binder):
                         binder(
                             self._qc_progress_callback(
-                                qc_heartbeat_worker,
+                                heartbeat_worker,
                                 machine,
                                 accepted_content,
                                 total_count=total_count,
@@ -1272,9 +1324,9 @@ class WorkflowProductionService:
                         pass
                 raise
             finally:
-                if qc_heartbeat_worker is not None:
+                if heartbeat_worker is not None:
                     self._close_qc_heartbeat_worker(
-                        qc_heartbeat_worker,
+                        heartbeat_worker,
                         drain=execution_succeeded,
                     )
             run_controller.append_event(journal, "step_succeeded", request_id=request_id, step=step, detail=result.detail[:160])

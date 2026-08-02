@@ -720,9 +720,25 @@ class CodexDevExecutor:
         self.transport = transport or CanvasAgentCodexTransport()
         self.repository_root = repository_root or self._default_repository_root(context.manifest_path)
         self._qc_progress_callback: Callable[[int, int], None] | None = None
+        self._turn_progress_callback: Callable[[], None] | None = None
         self._content_correction_callback: (
             Callable[[int, str, str], None] | None
         ) = None
+
+    def set_turn_progress_callback(
+        self,
+        callback: Callable[[], None] | None,
+    ) -> None:
+        self._turn_progress_callback = callback
+
+    def _emit_turn_progress(self) -> None:
+        callback = self._turn_progress_callback
+        if callback is None:
+            return
+        try:
+            callback()
+        except Exception:
+            pass
 
     def set_qc_progress_callback(
         self,
@@ -915,6 +931,7 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         turn = self._run_transport(prompt, ())
+        self._emit_turn_progress()
         upstream_paths = {
             "product_identity_archive": identity_path,
             "style_master": style_path,
@@ -938,6 +955,7 @@ class CodexDevExecutor:
                 build_content_correction_instruction(error),
                 (),
             )
+            self._emit_turn_progress()
             if corrected_turn.thread_id != turn.thread_id:
                 raise ExecutorExecutionError(
                     "codex-dev 收到无效的主图变量配置线程返回"
@@ -1029,6 +1047,7 @@ class CodexDevExecutor:
                 if chunk_index == 1
                 else self._continue_transport(thread_id, prompt, ())
             )
+            self._emit_turn_progress()
             if chunk_index == 1:
                 thread_id = turn.thread_id
             elif turn.thread_id != thread_id:
@@ -1065,6 +1084,7 @@ class CodexDevExecutor:
                         repair=True,
                     )
                     turn = self._continue_transport(thread_id, repair_prompt, ())
+                    self._emit_turn_progress()
                     if turn.thread_id != thread_id:
                         raise ExecutorExecutionError(
                             "codex-dev 收到无效的详情图变量配置线程返回"
@@ -1083,6 +1103,7 @@ class CodexDevExecutor:
                         structure_correction=True,
                     )
                     turn = self._continue_transport(thread_id, correction_prompt, ())
+                    self._emit_turn_progress()
                     if turn.thread_id != thread_id:
                         raise ExecutorExecutionError(
                             "codex-dev 收到无效的详情图变量配置线程返回"
@@ -1106,6 +1127,7 @@ class CodexDevExecutor:
                         correction_prompt,
                         (),
                     )
+                    self._emit_turn_progress()
                     if turn.thread_id != thread_id:
                         raise ExecutorExecutionError(
                             "codex-dev 收到无效的详情图变量配置线程返回"
@@ -1190,6 +1212,7 @@ class CodexDevExecutor:
                     ),
                     (),
                 )
+                self._emit_turn_progress()
                 if turn.thread_id != thread_id:
                     raise ExecutorExecutionError(
                         f"codex-dev 收到无效的{label}最终提示词线程返回"
@@ -1268,6 +1291,7 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         main_turn = self._run_transport(main_prompt, ())
+        self._emit_turn_progress()
         correction_attempts = 0
         main_batch, main_turn, correction_attempts = (
             self._parse_final_prompt_with_bounded_correction(
@@ -1293,6 +1317,7 @@ class CodexDevExecutor:
             requirements=requirements,
         )
         detail_turn = self._run_transport(detail_prompt, ())
+        self._emit_turn_progress()
         detail_batch, detail_turn, correction_attempts = (
             self._parse_final_prompt_with_bounded_correction(
                 detail_turn,
