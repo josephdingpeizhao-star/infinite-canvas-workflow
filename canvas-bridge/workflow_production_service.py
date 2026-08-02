@@ -59,6 +59,22 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 )
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
+_RENDER_FAILURE_CODES = frozenset(
+    {"render_http_error", "render_timeout", "render_network_error"}
+)
+_SAFE_RENDER_FAILURE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_RENDER_FAILURE_INTEGER_RANGES = {
+    "http_status": (100, 599),
+    "successful_count": (0, 9_999),
+    "planned_count": (0, 9_999),
+    "skipped_count": (0, 9_999),
+    "timeout_seconds": (1, 9_999),
+}
+_RENDER_FAILURE_TOKEN_FIELDS = (
+    "provider_error_type",
+    "provider_error_code",
+    "provider_request_id",
+)
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
 _QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
@@ -949,13 +965,16 @@ class WorkflowProductionService:
     def _controlled_failure(exc: BaseException) -> tuple[str, str] | None:
         if not isinstance(exc, ExecutorExecutionError):
             return None
-        if getattr(exc, "code", "") == _INTEGRITY_FAILURE_CODE:
+        code = getattr(exc, "code", None)
+        if type(code) is not str:
+            code = ""
+        if code == _INTEGRITY_FAILURE_CODE:
             count = getattr(exc, "blocking_issue_count", None)
             if type(count) is not int or not 1 <= count <= 9_999:
                 return None
             event_detail = f"完整性检查未通过：{count} 项阻塞，报告已写入 qc_reports"
             return event_detail, f"{event_detail}。机器已停下，未自动重试。"
-        if getattr(exc, "code", "") == _REAL_EXECUTION_DISABLED_CODE:
+        if code == _REAL_EXECUTION_DISABLED_CODE:
             return (
                 _REAL_EXECUTION_DISABLED_EVENT_DETAIL,
                 _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE,
@@ -1008,10 +1027,127 @@ class WorkflowProductionService:
         return detail, workbench
 
     @classmethod
+    def _structured_render_failure(cls, exc: BaseException) -> dict[str, object] | None:
+        if not isinstance(exc, ExecutorExecutionError):
+            return None
+        code = getattr(exc, "code", None)
+        if type(code) is not str or code not in _RENDER_FAILURE_CODES:
+            return None
+
+        fields: dict[str, object] = {"code": code}
+        for name, (minimum, maximum) in _RENDER_FAILURE_INTEGER_RANGES.items():
+            value = getattr(exc, name, None)
+            if value is None:
+                continue
+            if type(value) is not int or not minimum <= value <= maximum:
+                return None
+            fields[name] = value
+        for name in _RENDER_FAILURE_TOKEN_FIELDS:
+            value = getattr(exc, name, None)
+            if value is None:
+                continue
+            if type(value) is not str:
+                return None
+            if value == "":
+                continue
+            if (
+                _SAFE_RENDER_FAILURE_TOKEN_PATTERN.fullmatch(value) is None
+                or _UNSAFE_FAILURE_DETAIL_PATTERN.search(value)
+            ):
+                return None
+            fields[name] = value
+        return fields
+
+    @classmethod
+    def _structured_render_failure_messages(
+        cls,
+        exc: BaseException,
+    ) -> tuple[str, str, str] | None:
+        fields = cls._structured_render_failure(exc)
+        if fields is None:
+            return None
+
+        code = str(fields["code"])
+        count_labels = (
+            ("successful_count", "成功"),
+            ("planned_count", "计划"),
+            ("skipped_count", "跳过"),
+        )
+        workbench_counts = [
+            f"{label} {fields[name]} 张"
+            for name, label in count_labels
+            if name in fields
+        ]
+        event_counts = [
+            f"{label} {fields[name]}"
+            for name, label in count_labels
+            if name in fields
+        ]
+        count_sentence = f"本轮{'、'.join(workbench_counts)}。" if workbench_counts else ""
+        stop_sentence = "机器已停下，未自动重试，已完成的成果都保留了。"
+
+        if code == "render_http_error":
+            description_parts: list[str] = []
+            if "http_status" in fields:
+                description_parts.append(f"HTTP {fields['http_status']}")
+            if "provider_error_type" in fields:
+                description_parts.append(f"类型 {fields['provider_error_type']}")
+            if "provider_error_code" in fields:
+                description_parts.append(f"代码 {fields['provider_error_code']}")
+            title = (
+                f"图片服务返回错误（{'，'.join(description_parts)}）。"
+                if description_parts
+                else "图片服务返回错误。"
+            )
+            request_sentence = (
+                f"服务商请求编号：{fields['provider_request_id']}（可凭此联系服务商）。"
+                if "provider_request_id" in fields
+                else ""
+            )
+            workbench = f"{title}{count_sentence}{stop_sentence}{request_sentence}"
+            event_parts = [
+                (
+                    f"渲染失败：HTTP {fields['http_status']}"
+                    if "http_status" in fields
+                    else "渲染失败：图片服务返回错误"
+                )
+            ]
+            if "provider_error_type" in fields:
+                event_parts.append(f"类型 {fields['provider_error_type']}")
+            if "provider_error_code" in fields:
+                event_parts.append(f"代码 {fields['provider_error_code']}")
+        elif code == "render_timeout":
+            timeout = (
+                f"（{fields['timeout_seconds']} 秒）"
+                if "timeout_seconds" in fields
+                else ""
+            )
+            workbench = f"图片服务等待超时{timeout}。{count_sentence}{stop_sentence}"
+            event_parts = [
+                (
+                    f"渲染失败：图片服务等待超时 {fields['timeout_seconds']} 秒"
+                    if "timeout_seconds" in fields
+                    else "渲染失败：图片服务等待超时"
+                )
+            ]
+        else:
+            workbench = f"无法连接图片服务。{count_sentence}{stop_sentence}"
+            event_parts = ["渲染失败：无法连接图片服务"]
+
+        if event_counts:
+            event_parts.append("/".join(event_counts))
+        if code == "render_http_error" and "provider_request_id" in fields:
+            event_parts.append(f"请求编号 {fields['provider_request_id']}")
+        return "；".join(event_parts)[:160], workbench, code
+
+    @classmethod
     def _safe_event_detail(cls, exc: BaseException) -> str:
         controlled = cls._controlled_failure(exc)
         if controlled is not None:
             return controlled[0][:160]
+        structured = cls._structured_render_failure_messages(exc)
+        if structured is not None:
+            return structured[0]
         raw_detail = str(exc)
         if (
             not raw_detail
@@ -1027,16 +1163,22 @@ class WorkflowProductionService:
     def _safe_failure(cls, exc: BaseException) -> str:
         if isinstance(exc, ProductionGateError):
             return str(exc)
+        code = getattr(exc, "code", None)
+        if type(code) is not str:
+            code = ""
         if (
             isinstance(exc, ExecutorExecutionError)
-            and getattr(exc, "code", "") == _REAL_EXECUTION_DISABLED_CODE
+            and code == _REAL_EXECUTION_DISABLED_CODE
         ):
             return _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE
+        structured = cls._structured_render_failure_messages(exc)
+        if structured is not None:
+            return structured[1]
         if isinstance(exc, ExecutorExecutionError) and "2:3" in str(exc):
             return "详情图返回 2:3，原图已保留。机器已停下，等待人工尺寸处理批准。"
         if isinstance(exc, ExecutorExecutionError) and "OPENAI_API_KEY" in str(exc):
             return "前面的成果已保留。本机还没有准备图片服务凭据，当前未出图、未产生新的图片费用。"
-        if isinstance(exc, ExecutorExecutionError) and getattr(exc, "code", "") == "empty_assistant_response":
+        if isinstance(exc, ExecutorExecutionError) and code == "empty_assistant_response":
             return "本地 Codex 本轮没有返回内容，机器已停下，未自动重试。"
         controlled = cls._controlled_failure(exc)
         if controlled is not None:
@@ -1296,7 +1438,9 @@ class WorkflowProductionService:
                 result = run_controller.execute_step(executor, step)
                 execution_succeeded = True
             except ExecutorExecutionError as exc:
-                code = str(getattr(exc, "code", ""))
+                code = getattr(exc, "code", None)
+                if type(code) is not str:
+                    code = ""
                 if code == "empty_assistant_response" and self.diagnostic_recorder is not None:
                     self.diagnostic_recorder(step, code)
                 if step == "integrity":
@@ -1416,11 +1560,18 @@ class WorkflowProductionService:
                 ):
                     try:
                         manifest_path = self._manifest_path(batch_id)
+                        structured_failure = self._structured_render_failure(exc)
+                        failure_fields = (
+                            {"failure_code": structured_failure["code"]}
+                            if structured_failure is not None
+                            else {}
+                        )
                         run_controller.append_event(
                             self._journal_path(manifest_path, batch_id),
                             "step_failed",
                             request_id=request_id,
                             detail=self._safe_event_detail(exc),
+                            **failure_fields,
                         )
                     except ProductionGateError:
                         pass

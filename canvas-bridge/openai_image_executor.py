@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import socket
 import uuid
 from dataclasses import dataclass
@@ -32,6 +33,15 @@ REFERENCE_IMAGE_MAX_BYTES_ENV = "OPENAI_IMAGE_REFERENCE_MAX_BYTES"
 DEFAULT_REFERENCE_IMAGE_MAX_BYTES = 2_000_000
 MIN_REFERENCE_IMAGE_MAX_BYTES = 500_000
 MAX_REFERENCE_IMAGE_MAX_BYTES = 20_000_000
+_SAFE_UPSTREAM_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_UNSAFE_UPSTREAM_TOKEN_PATTERN = re.compile(
+    r"(?:bearer|token|api[_-]?key|secret|sk-[A-Za-z0-9])",
+    flags=re.IGNORECASE,
+)
+_BODY_REQUEST_ID_PATTERN = re.compile(
+    r"\brequest\s+id\s*:\s*([A-Za-z0-9_.-]{1,64})(?![A-Za-z0-9_.-])",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +49,69 @@ class HttpResponse:
     status: int
     headers: Mapping[str, str]
     body: bytes
+
+
+def _safe_upstream_token(value: object) -> str:
+    if type(value) is not str or _SAFE_UPSTREAM_TOKEN_PATTERN.fullmatch(value) is None:
+        return ""
+    if _UNSAFE_UPSTREAM_TOKEN_PATTERN.search(value):
+        return ""
+    return value
+
+
+def _response_header(headers: Mapping[str, str], name: str) -> str:
+    target = name.lower()
+    return next(
+        (
+            value
+            for key, value in headers.items()
+            if type(key) is str and key.lower() == target and type(value) is str
+        ),
+        "",
+    )
+
+
+def _extract_upstream_failure(response: HttpResponse) -> dict[str, object]:
+    """Extract only fixed-shape fields that are safe to surface to users."""
+
+    http_status = response.status if type(response.status) is int and 100 <= response.status <= 599 else None
+    error_value: Mapping[str, object] = {}
+    try:
+        payload = json.loads(response.body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = None
+    if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+        error_value = payload["error"]
+
+    provider_error_type = _safe_upstream_token(error_value.get("type"))
+    provider_error_code = _safe_upstream_token(error_value.get("code"))
+    provider_request_id = _safe_upstream_token(
+        _response_header(response.headers, "x-request-id")
+    )
+    if not provider_request_id:
+        message = error_value.get("message")
+        if type(message) is str:
+            match = _BODY_REQUEST_ID_PATTERN.search(message)
+            if match is not None:
+                provider_request_id = _safe_upstream_token(match.group(1))
+
+    return {
+        "http_status": http_status,
+        "provider_error_type": provider_error_type,
+        "provider_error_code": provider_error_code,
+        "provider_request_id": provider_request_id,
+    }
+
+
+def _attach_render_failure(
+    failure: ExecutorExecutionError,
+    code: str,
+    **fields: object,
+) -> ExecutorExecutionError:
+    failure.code = code
+    for name, value in fields.items():
+        setattr(failure, name, value)
+    return failure
 
 
 class HttpTransport(Protocol):
@@ -52,8 +125,20 @@ class UrllibTransport:
     @staticmethod
     def _timeout_error(timeout: float, exc: BaseException) -> ExecutorExecutionError:
         timeout_label = f"{timeout:g}"
-        return ExecutorExecutionError(
-            f"图片服务连续 {timeout_label} 秒未返回新数据，已停止等待"
+        timeout_seconds = (
+            int(timeout)
+            if isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and float(timeout).is_integer()
+            and 1 <= int(timeout) <= 9_999
+            else None
+        )
+        return _attach_render_failure(
+            ExecutorExecutionError(
+                f"图片服务连续 {timeout_label} 秒未返回新数据，已停止等待"
+            ),
+            "render_timeout",
+            timeout_seconds=timeout_seconds,
         )
 
     @classmethod
@@ -86,7 +171,10 @@ class UrllibTransport:
         except error.URLError as exc:
             if isinstance(exc.reason, (TimeoutError, socket.timeout)):
                 raise self._timeout_error(timeout, exc) from exc
-            raise ExecutorExecutionError(f"无法连接图片生成服务：{exc.reason}") from exc
+            raise _attach_render_failure(
+                ExecutorExecutionError(f"无法连接图片生成服务：{exc.reason}"),
+                "render_network_error",
+            ) from exc
 
 
 class OpenAIImageExecutor:
@@ -283,14 +371,34 @@ class OpenAIImageExecutor:
         try:
             payload = json.loads(response.body.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise ExecutorExecutionError(f"图片服务返回了无法解析的响应（HTTP {response.status}）") from exc
+            failure = ExecutorExecutionError(
+                f"图片服务返回了无法解析的响应（HTTP {response.status}）"
+            )
+            if response.status >= 400:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_http_error",
+                    **_extract_upstream_failure(response),
+                )
+            raise failure from exc
         if not isinstance(payload, dict):
-            raise ExecutorExecutionError("图片服务响应格式不正确")
+            failure = ExecutorExecutionError("图片服务响应格式不正确")
+            if response.status >= 400:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_http_error",
+                    **_extract_upstream_failure(response),
+                )
+            raise failure
         if response.status >= 400:
             error_value = payload.get("error") if isinstance(payload.get("error"), dict) else {}
             code = str(error_value.get("code") or "api_error")
             message = str(error_value.get("message") or f"HTTP {response.status}").replace(api_key, "[REDACTED]")
-            raise ExecutorExecutionError(f"OpenAI Image API {response.status} {code}: {message}")
+            raise _attach_render_failure(
+                ExecutorExecutionError(f"OpenAI Image API {response.status} {code}: {message}"),
+                "render_http_error",
+                **_extract_upstream_failure(response),
+            )
         return payload
 
     def _decode_image(self, payload: dict) -> bytes:
@@ -319,5 +427,4 @@ class OpenAIImageExecutor:
 
     @staticmethod
     def _header(headers: Mapping[str, str], name: str) -> str:
-        target = name.lower()
-        return next((str(value) for key, value in headers.items() if key.lower() == target), "")
+        return _response_header(headers, name)

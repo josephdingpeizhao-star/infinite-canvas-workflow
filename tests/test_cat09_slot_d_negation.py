@@ -179,6 +179,17 @@ class Cat09SlotDNegationTest(unittest.TestCase):
             str(caught.exception),
         )
 
+    def test_negation_must_end_immediately_before_slot_d_mention(self) -> None:
+        with self.assertRaisesRegex(
+            ExecutorExecutionError,
+            "使用了缺失的 D 槽位",
+        ):
+            _validate_bound_angle(
+                "唯一合格源图：img_001；绑定 B 槽位；不调用A，D 槽位可用。",
+                {"img_001": {"angle_slot": "B"}},
+                "详情图变量配置",
+            )
+
 
 class Cat09PublicExecutionPathTest(CodexDevFixture):
     @staticmethod

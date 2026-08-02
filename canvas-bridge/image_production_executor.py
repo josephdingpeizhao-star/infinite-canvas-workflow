@@ -25,6 +25,14 @@ from render_task_assembler import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+_RENDER_FAILURE_FIELDS = (
+    "code",
+    "http_status",
+    "provider_error_type",
+    "provider_error_code",
+    "provider_request_id",
+    "timeout_seconds",
+)
 
 
 def _first_path(value: Any, label: str) -> Path:
@@ -35,6 +43,24 @@ def _first_path(value: Any, label: str) -> Path:
     if not isinstance(value, str) or not value.strip():
         raise ExecutorExecutionError(f"{label} 未声明路径")
     return Path(value)
+
+
+def _wrapped_render_failure(
+    message: str,
+    cause: BaseException,
+    *,
+    successful_count: int,
+    planned_count: int,
+    skipped_count: int,
+) -> ExecutorExecutionError:
+    failure = ExecutorExecutionError(message)
+    for name in _RENDER_FAILURE_FIELDS:
+        if hasattr(cause, name):
+            setattr(failure, name, getattr(cause, name))
+    failure.successful_count = successful_count
+    failure.planned_count = planned_count
+    failure.skipped_count = skipped_count
+    return failure
 
 
 class ImageProductionExecutor:
@@ -158,8 +184,12 @@ class ImageProductionExecutor:
             image_executor = self.image_executor_factory(self.context)
         except Exception as exc:
             reason = self._sanitize_reason(exc, api_key, selected)
-            raise ExecutorExecutionError(
-                f"渲染中止：成功 0/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}"
+            raise _wrapped_render_failure(
+                f"渲染中止：成功 0/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}",
+                exc,
+                successful_count=0,
+                planned_count=planned_count,
+                skipped_count=skipped_count,
             ) from exc
 
         outputs: list[Path] = []
@@ -172,8 +202,12 @@ class ImageProductionExecutor:
                 )
             except Exception as exc:
                 reason = self._sanitize_reason(exc, api_key, selected)
-                raise ExecutorExecutionError(
-                    f"渲染中止：成功 {successful_count}/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}"
+                raise _wrapped_render_failure(
+                    f"渲染中止：成功 {successful_count}/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}",
+                    exc,
+                    successful_count=successful_count,
+                    planned_count=planned_count,
+                    skipped_count=skipped_count,
                 ) from exc
             successful_count += 1
             outputs.extend(result.outputs)
