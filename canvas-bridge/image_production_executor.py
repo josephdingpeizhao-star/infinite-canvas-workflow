@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+import ic_client
 from executor_contract import (
     ExecutionRequest,
     ExecutionResult,
@@ -15,6 +16,7 @@ from executor_contract import (
     ExecutorContext,
     ExecutorExecutionError,
 )
+from failure_text_safety import is_disclosable
 from openai_image_executor import OpenAIImageExecutor
 from render_task_assembler import (
     RenderTaskAssemblyError,
@@ -56,10 +58,16 @@ def _wrapped_render_failure(
     planned_count: int,
     skipped_count: int,
 ) -> ExecutorExecutionError:
+    message = message[:200]
     failure = ExecutorExecutionError(message)
     for name in _RENDER_FAILURE_FIELDS:
         if hasattr(cause, name):
             setattr(failure, name, getattr(cause, name))
+    if not hasattr(cause, "code"):
+        if isinstance(cause, ic_client.CanvasAgentError):
+            failure.code = "render_canvas_unavailable"
+        elif is_disclosable(message):
+            failure.code = "render_pipeline_error"
     failure.successful_count = successful_count
     failure.planned_count = planned_count
     failure.skipped_count = skipped_count
@@ -192,7 +200,7 @@ class ImageProductionExecutor:
         except Exception as exc:
             reason = self._sanitize_reason(exc, api_key, selected)
             raise _wrapped_render_failure(
-                f"渲染中止：成功 0/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}",
+                reason,
                 exc,
                 successful_count=0,
                 planned_count=planned_count,
@@ -210,7 +218,7 @@ class ImageProductionExecutor:
             except Exception as exc:
                 reason = self._sanitize_reason(exc, api_key, selected)
                 raise _wrapped_render_failure(
-                    f"渲染中止：成功 {successful_count}/计划 {planned_count}（跳过 {skipped_count}）；原因：{reason}",
+                    reason,
                     exc,
                     successful_count=successful_count,
                     planned_count=planned_count,

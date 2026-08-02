@@ -24,6 +24,10 @@ from batch_recycle_state import (
     read_batch_lifecycle,
 )
 import executor_factory
+from failure_text_safety import (
+    _UNSAFE_FAILURE_DETAIL_PATTERN,
+    is_disclosable,
+)
 import ic_client
 import run_controller
 import state_reader
@@ -67,6 +71,8 @@ _RENDER_FAILURE_CODES = frozenset(
         "render_network_error",
         "render_input_missing",
         "render_inputs_unavailable",
+        "render_pipeline_error",
+        "render_canvas_unavailable",
     }
 )
 _SAFE_RENDER_FAILURE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
@@ -168,13 +174,6 @@ _CONTROLLED_CODEX_CLAIM_PATH_PATTERN = re.compile(
     r"configs/\d+/(?:notes|per_image_overrides/(?:未知字段\d+|[\u4e00-\u9fffA-Za-z0-9_]+))|"
     r"prompts/\d+/(?:final_prompt|negative_prompt))"
 )
-_UNSAFE_FAILURE_DETAIL_PATTERN = re.compile(
-    r"(?:[A-Za-z]:[\\/]|\\\\|(?:^|[\s（：；])/[^/]|https?://|ftp://|www\.|"
-    r"bearer|token|api[_ -]?key|secret|令牌|密钥|sk-[A-Za-z0-9])",
-    flags=re.IGNORECASE,
-)
-
-
 def _inside(path: Path, parent: Path) -> bool:
     try:
         path.resolve(strict=False).relative_to(parent.resolve(strict=False))
@@ -506,14 +505,20 @@ class WorkflowProductionService:
             "metadata": {"content": content, "workflowProduction": state},
         }
 
-    def _apply_with_reconnect(self, ops: list[dict[str, Any]]) -> None:
+    def _call_with_reconnect(
+        self,
+        operation: Callable[..., Any],
+        *args: Any,
+    ) -> Any:
         while not self.stopping:
             try:
-                self.client.apply_ops(ops)
-                return
+                return operation(*args)
             except ic_client.CanvasAgentError:
                 self.sleep(max(self.interval, 2.0))
         raise ExecutorExecutionError("真实工作流服务已停止")
+
+    def _apply_with_reconnect(self, ops: list[dict[str, Any]]) -> None:
+        self._call_with_reconnect(self.client.apply_ops, ops)
 
     def _send_qc_heartbeat_once(self, ops: list[dict[str, Any]]) -> None:
         if self.client is ic_client:
@@ -628,7 +633,11 @@ class WorkflowProductionService:
         node_id = output_node_id(artifact.batch_id, artifact.config_id, artifact.source)
         deadline = time.monotonic() + self.persistence_timeout_ms / 1000
         while True:
-            if self._persisted(node_id, artifact.sha256, artifact.source):
+            try:
+                persisted = self._persisted(node_id, artifact.sha256, artifact.source)
+            except ic_client.CanvasAgentError:
+                persisted = False
+            if persisted:
                 return
             if time.monotonic() >= deadline or self.stopping:
                 raise ExecutorExecutionError(_PERSISTENCE_TIMEOUT_DETAIL)
@@ -651,7 +660,10 @@ class WorkflowProductionService:
             if expected_ids is not None
             else None
         )
-        state = self.client.call_tool("canvas_get_state")
+        state = self._call_with_reconnect(
+            self.client.call_tool,
+            "canvas_get_state",
+        )
         current_machine = next(
             (item for item in state.get("nodes") or [] if item.get("id") == machine.get("id")),
             dict(machine),
@@ -720,7 +732,8 @@ class WorkflowProductionService:
         ):
             raise ProductionGateError("磁盘成图与批次登记图位不一致。")
         for artifact in artifacts:
-            if not self._persisted(
+            if not self._call_with_reconnect(
+                self._persisted,
                 output_node_id(artifact.batch_id, artifact.config_id, artifact.source),
                 artifact.sha256,
                 artifact.source,
@@ -864,7 +877,12 @@ class WorkflowProductionService:
                 artifact.config_id,
                 artifact.source,
             )
-            if not self._persisted(node_id, artifact.sha256, artifact.source):
+            if not self._call_with_reconnect(
+                self._persisted,
+                node_id,
+                artifact.sha256,
+                artifact.source,
+            ):
                 self._project_artifact(
                     machine,
                     artifact,
@@ -1046,7 +1064,18 @@ class WorkflowProductionService:
         if type(code) is not str or code not in _RENDER_FAILURE_CODES:
             return None
 
+        if code == "render_pipeline_error":
+            if cls._controlled_failure(exc) is not None:
+                return None
+            reason = str(exc)
+            if not is_disclosable(reason):
+                return None
+        else:
+            reason = ""
+
         fields: dict[str, object] = {"code": code}
+        if reason:
+            fields["reason"] = reason
         if code == "render_inputs_unavailable":
             if getattr(exc, "missing_files", None) not in (None, (), []):
                 return None
@@ -1190,7 +1219,20 @@ class WorkflowProductionService:
         count_sentence = f"本轮{'、'.join(workbench_counts)}。" if workbench_counts else ""
         stop_sentence = "机器已停下，未自动重试，已完成的成果都保留了。"
 
-        if code == "render_http_error":
+        if code == "render_pipeline_error":
+            reason = str(fields["reason"])
+            display_reason = reason.rstrip("。") or reason
+            event_suffix = f"；{'/'.join(event_counts)}" if event_counts else ""
+            event_prefix = "渲染失败："
+            available = max(0, 160 - len(event_prefix) - len(event_suffix))
+            event = f"{event_prefix}{display_reason[:available]}{event_suffix}"
+            workbench = f"{display_reason}。{count_sentence}{stop_sentence}"
+            return event, workbench, code
+        if code == "render_canvas_unavailable":
+            title = "画布暂时不可用，真实图片未完成上桌"
+            workbench = f"{title}。{count_sentence}{stop_sentence}"
+            event_parts = [f"渲染失败：{title}"]
+        elif code == "render_http_error":
             description_parts: list[str] = []
             if "http_status" in fields:
                 description_parts.append(f"HTTP {fields['http_status']}")

@@ -168,7 +168,9 @@ class ImageProductionExecutorTest(unittest.TestCase):
                 executor.execute(ExecutionRequest(step="renders"))
 
             message = str(ctx.exception)
-            self.assertIn("成功 2/计划 14（跳过 0）", message)
+            self.assertEqual(ctx.exception.successful_count, 2)
+            self.assertEqual(ctx.exception.planned_count, 14)
+            self.assertEqual(ctx.exception.skipped_count, 0)
             self.assertNotIn("server-secret", message)
             self.assertNotIn("测试电商图", message)
             self.assertTrue((bundle.renders_dir / "main_01.png").is_file())
