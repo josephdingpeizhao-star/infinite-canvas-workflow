@@ -22,6 +22,7 @@ from executor_contract import (
     ImageGenerationTask,
 )
 from reference_image_compression import compress_reference_image
+from white_bg_recovery import sanitize_filename
 
 
 CLIENT_USER_AGENT = "Codex-Canvas-Bridge/1.0"
@@ -300,7 +301,18 @@ class OpenAIImageExecutor:
             raise ExecutorExecutionError(f"不支持的图片质量：{task.quality}")
         for image in task.reference_images:
             if not image.is_file():
-                raise ExecutorExecutionError(f"参考图不存在：{image}")
+                filename = sanitize_filename(image.name)
+                message = (
+                    f"参考图不存在：{filename}"
+                    if filename is not None
+                    else "参考图缺失 1 张"
+                )
+                raise _attach_render_failure(
+                    ExecutorExecutionError(message),
+                    "render_input_missing",
+                    missing_files=(filename,) if filename is not None else (),
+                    missing_count=1,
+                )
 
     def _request_fields(self, task: ImageGenerationTask) -> dict[str, object]:
         return {

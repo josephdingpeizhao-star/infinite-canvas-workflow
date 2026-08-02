@@ -32,6 +32,9 @@ _RENDER_FAILURE_FIELDS = (
     "provider_error_code",
     "provider_request_id",
     "timeout_seconds",
+    "missing_files",
+    "missing_count",
+    "remaining_count",
 )
 
 
@@ -169,7 +172,11 @@ class ImageProductionExecutor:
             plan = self.task_assembler(self.manifest, index_path)
         except (RenderTaskAssemblyError, OSError, ValueError) as exc:
             reason = self._sanitize_reason(exc, api_key, ())
-            raise ExecutorExecutionError(f"渲染任务组装失败：{reason}") from exc
+            failure = ExecutorExecutionError(f"渲染任务组装失败：{reason}")
+            for name in _RENDER_FAILURE_FIELDS:
+                if hasattr(exc, name):
+                    setattr(failure, name, getattr(exc, name))
+            raise failure from exc
 
         selected = plan.tasks if limit is None else plan.tasks[:limit]
         planned_count = len(selected)

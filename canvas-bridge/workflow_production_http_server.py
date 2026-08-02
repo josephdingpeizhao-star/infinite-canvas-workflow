@@ -15,6 +15,11 @@ from batch_intake_contract import (
     BatchIntakeContractError,
     batch_intake_contract_sha256,
 )
+from batch_recycle_lock import (
+    BatchOperationBusy,
+    BatchOperationLock,
+    BatchOperationLockUnavailable,
+)
 from batch_recycle_service import BatchRecycleError
 from category_recipes import (
     CategoryRecipeError,
@@ -36,6 +41,14 @@ from canvas_command_assistant import (
     CommandDraftNotFound,
 )
 from project_deletion_service import ProjectDeletionError
+import run_controller
+from white_bg_recovery import (
+    WhiteBgRecoveryError,
+    archive_recompute_artifacts,
+    evaluate_rebind_eligibility,
+    rollback_recompute_archive,
+    scan_white_bg_recovery,
+)
 
 
 DEFAULT_PRODUCTION_HOST = "127.0.0.1"
@@ -45,6 +58,7 @@ MAX_ACCEPTANCE_BODY_BYTES = 64 * 1024
 MAX_READONLY_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_COMMAND_ASSISTANT_BODY_BYTES = 16 * 1024
 MAX_BATCH_RECYCLE_BODY_BYTES = 256
+MAX_REBIND_RECOMPUTE_BODY_BYTES = 256
 MAX_PROJECT_DELETION_BODY_BYTES = 64 * 1024
 DRAIN_CAP = 256 * 1024
 ALLOWED_ORIGINS = frozenset({"http://localhost:3000", "http://127.0.0.1:3000"})
@@ -62,6 +76,12 @@ class ProductionHttpError(ValueError):
     def __init__(self, status: int, message: str):
         super().__init__(message)
         self.status = status
+
+
+class RebindRecomputeRejected(ProductionHttpError):
+    def __init__(self, status: int, error_code: str, message: str):
+        super().__init__(status, message)
+        self.error_code = error_code
 
 
 def _drain_unread_request_body(
@@ -116,6 +136,7 @@ class WorkflowProductionHttpApplication:
         command_assistant_service: Any | None = None,
         batch_recycle_service: Any | None = None,
         project_deletion_service: Any | None = None,
+        batch_lock_root: Path | None = None,
     ):
         self.repository_root = repository_root.resolve()
         self.token = token
@@ -125,6 +146,7 @@ class WorkflowProductionHttpApplication:
         self.command_assistant_service = command_assistant_service
         self.batch_recycle_service = batch_recycle_service
         self.project_deletion_service = project_deletion_service
+        self.batch_lock_root = batch_lock_root
         self.acceptance = BatchAcceptanceService(self.repository_root)
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
@@ -259,6 +281,148 @@ class WorkflowProductionHttpApplication:
             "estimatedUnitUsd": UNIT_PRICE_USD,
             "estimatedTotalUsd": round(remaining * UNIT_PRICE_USD, 2),
             "estimatedMinutes": (30 if not ready else 0) + round(remaining * 1.8),
+        }
+
+    def rebind_recompute(self, batch_id: str) -> dict[str, Any]:
+        # Resolve the batch read-only before creating/opening a lock file, then
+        # resolve it again while locked so qualification uses one fresh view.
+        self._manifest(batch_id)
+        try:
+            with BatchOperationLock(batch_id, lock_root=self.batch_lock_root):
+                manifest, manifest_path, _workspace = self._manifest(batch_id)
+                try:
+                    scan = scan_white_bg_recovery(manifest)
+                except WhiteBgRecoveryError as exc:
+                    raise RebindRecomputeRejected(
+                        409,
+                        "recompute_state_invalid",
+                        str(exc),
+                    ) from None
+                quote = self.quote(batch_id)
+                ready_count = quote.get("readyCount")
+                if type(ready_count) is not int or ready_count < 0:
+                    raise RebindRecomputeRejected(
+                        409,
+                        "render_outputs_unavailable",
+                        "无法确认本批是否已有成图，请稍后重试。",
+                    )
+                try:
+                    eligibility = evaluate_rebind_eligibility(scan, ready_count)
+                except WhiteBgRecoveryError as exc:
+                    raise RebindRecomputeRejected(
+                        409,
+                        "recompute_state_invalid",
+                        str(exc),
+                    ) from None
+                if not eligibility.eligible:
+                    raise RebindRecomputeRejected(
+                        409,
+                        eligibility.code,
+                        eligibility.message,
+                    )
+                journal_path = run_controller.journal_path(manifest_path, batch_id)
+                try:
+                    manifests_path = self.repository_root / "manifests"
+                    manifests_root = manifests_path.resolve(strict=False)
+                    journal_resolved = journal_path.resolve(strict=False)
+                    if (
+                        manifests_path.is_symlink()
+                        or journal_path.is_symlink()
+                        or not _inside(manifests_root, self.repository_root)
+                        or manifests_root == self.repository_root
+                        or not _inside(journal_resolved, manifests_root)
+                        or journal_resolved.parent != manifests_root
+                    ):
+                        raise OSError("journal boundary is unsafe")
+                    journal_size = journal_path.stat().st_size
+                    if not journal_path.is_file():
+                        raise OSError("journal is not a regular file")
+                    journal_existed = True
+                except FileNotFoundError:
+                    journal_size = 0
+                    journal_existed = False
+                except (OSError, RuntimeError):
+                    raise RebindRecomputeRejected(
+                        503,
+                        "recompute_journal_unavailable",
+                        "暂时无法准备本次重排记录，请稍后重试。",
+                    ) from None
+                try:
+                    archived = archive_recompute_artifacts(
+                        manifest,
+                        self.repository_root,
+                    )
+                except WhiteBgRecoveryError as exc:
+                    raise RebindRecomputeRejected(
+                        409,
+                        "recompute_archive_failed",
+                        str(exc),
+                    ) from None
+                try:
+                    run_controller.append_event(
+                        journal_path,
+                        "white_bg_rebind_recompute",
+                        missing=list(scan.missing_files),
+                        remaining_count=scan.remaining_count,
+                        superseded=list(archived.superseded),
+                        superseded_dir=archived.superseded_dir,
+                    )
+                except OSError:
+                    journal_restore_error: OSError | None = None
+                    try:
+                        if journal_existed:
+                            with journal_path.open("r+b") as handle:
+                                handle.truncate(journal_size)
+                        else:
+                            try:
+                                journal_path.unlink()
+                            except FileNotFoundError:
+                                pass
+                    except OSError as exc:
+                        journal_restore_error = exc
+                    try:
+                        rollback_recompute_archive(
+                            manifest,
+                            self.repository_root,
+                            archived,
+                        )
+                    except WhiteBgRecoveryError:
+                        raise RebindRecomputeRejected(
+                            500,
+                            "recompute_journal_rollback_failed",
+                            "重排记录写入失败，且无法自动恢复派生产物。请停止操作并检查本批。",
+                        ) from None
+                    if journal_restore_error is not None:
+                        raise RebindRecomputeRejected(
+                            500,
+                            "recompute_journal_cleanup_failed",
+                            "派生产物已恢复，但无法确认重排记录是否完整。请停止操作并检查本批。",
+                        ) from None
+                    raise RebindRecomputeRejected(
+                        503,
+                        "recompute_journal_failed",
+                        "本次重排记录写入失败，原有派生产物已恢复。请稍后重试。",
+                    ) from None
+        except BatchOperationBusy:
+            raise RebindRecomputeRejected(
+                409,
+                "batch_busy",
+                "本批当前有任务正在运行，请稍后再试。",
+            ) from None
+        except BatchOperationLockUnavailable:
+            raise RebindRecomputeRejected(
+                503,
+                "batch_lock_unavailable",
+                "暂时无法取得批次独占保护，请稍后再试。",
+            ) from None
+        return {
+            "ok": True,
+            "batchId": batch_id,
+            "message": "缺失白底图已剔除，已回到角度入库步骤。",
+            "missing": list(scan.missing_files),
+            "remainingCount": scan.remaining_count,
+            "superseded": list(archived.superseded),
+            "supersededDir": archived.superseded_dir,
         }
 
     def output_bytes(
@@ -405,6 +569,7 @@ class WorkflowProductionHttpServer:
         command_assistant_service: Any | None = None,
         batch_recycle_service: Any | None = None,
         project_deletion_service: Any | None = None,
+        batch_lock_root: Path | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
@@ -419,6 +584,7 @@ class WorkflowProductionHttpServer:
             command_assistant_service=command_assistant_service,
             batch_recycle_service=batch_recycle_service,
             project_deletion_service=project_deletion_service,
+            batch_lock_root=batch_lock_root,
         )
         self.host = host
         self.port = port
@@ -500,6 +666,24 @@ class WorkflowProductionHttpServer:
                     {
                         "ok": False,
                         "error": "batch_recycle_rejected",
+                        "batchId": batch_id,
+                        "message": str(exc),
+                    },
+                    origin=origin,
+                )
+
+            def _rebind_recompute_error(
+                self,
+                batch_id: str,
+                exc: RebindRecomputeRejected,
+                *,
+                origin: str | None,
+            ) -> None:
+                self._assistant_response(
+                    exc.status,
+                    {
+                        "ok": False,
+                        "error": exc.error_code,
                         "batchId": batch_id,
                         "message": str(exc),
                     },
@@ -890,6 +1074,77 @@ class WorkflowProductionHttpServer:
                             origin=origin,
                         )
                         return
+                    is_rebind_recompute = (
+                        len(assistant_segments) == 3
+                        and assistant_segments[0] == "workflow-production"
+                        and assistant_segments[2] == "rebind-recompute"
+                        and not assistant_path.query
+                        and not assistant_path.fragment
+                    )
+                    if is_rebind_recompute:
+                        batch_id = assistant_segments[1]
+                        if (
+                            not batch_id
+                            or Path(batch_id).name != batch_id
+                            or any(
+                                char in batch_id
+                                for char in ("/", "\\", "\0", "\r", "\n")
+                            )
+                        ):
+                            raise ProductionHttpError(400, "bad route")
+                        if self.headers.get("Transfer-Encoding"):
+                            raise ProductionHttpError(
+                                400, "transfer encoding rejected"
+                            )
+                        rebind_lengths = self.headers.get_all("Content-Length") or []
+                        if len(rebind_lengths) != 1:
+                            raise ProductionHttpError(411, "length required")
+                        try:
+                            rebind_length = int(rebind_lengths[0])
+                        except ValueError:
+                            raise ProductionHttpError(400, "bad length") from None
+                        declared_body_length = rebind_length
+                        if not 0 < rebind_length <= MAX_REBIND_RECOMPUTE_BODY_BYTES:
+                            raise ProductionHttpError(413, "body too large")
+                        rebind_content_types = self.headers.get_all("Content-Type") or []
+                        if len(rebind_content_types) != 1:
+                            raise ProductionHttpError(415, "json required")
+                        rebind_media_type = (
+                            rebind_content_types[0].split(";", 1)[0].strip().lower()
+                        )
+                        if rebind_media_type != "application/json":
+                            raise ProductionHttpError(415, "json required")
+                        rebind_data = self.rfile.read(rebind_length)
+                        consumed_body_length = len(rebind_data)
+                        if len(rebind_data) != rebind_length:
+                            raise ProductionHttpError(400, "short body")
+                        try:
+                            rebind_payload = json.loads(rebind_data.decode("utf-8"))
+                        except (UnicodeError, json.JSONDecodeError):
+                            raise ProductionHttpError(400, "bad json") from None
+                        if not isinstance(rebind_payload, dict) or rebind_payload:
+                            raise ProductionHttpError(400, "empty object required")
+                        try:
+                            rebind_result = application.rebind_recompute(batch_id)
+                        except RebindRecomputeRejected as exc:
+                            self._rebind_recompute_error(
+                                batch_id,
+                                exc,
+                                origin=origin,
+                            )
+                            return
+                        self._assistant_response(
+                            200,
+                            rebind_result,
+                            origin=origin,
+                        )
+                        return
+                    if (
+                        assistant_segments
+                        and assistant_segments[0] == "workflow-production"
+                        and "rebind-recompute" in assistant_segments
+                    ):
+                        raise ProductionHttpError(404, "not found")
                     if self.headers.get("Transfer-Encoding"):
                         raise ProductionHttpError(400, "transfer encoding rejected")
                     length_values = self.headers.get_all("Content-Length") or []

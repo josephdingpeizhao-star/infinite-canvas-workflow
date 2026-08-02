@@ -11,6 +11,11 @@ from typing import Any, Mapping
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ImageGenerationTask
 from executor_contract import ExecutorExecutionError
+from white_bg_recovery import (
+    WhiteBgRecoveryError,
+    WhiteBgScan,
+    scan_white_bg_recovery,
+)
 
 
 NEGATIVE_PROMPT_SEPARATOR = "\n\n--- negative_prompt（以下内容必须避免）---\n"
@@ -21,6 +26,31 @@ SUPPORTED_REFERENCE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
 
 class RenderTaskAssemblyError(ValueError):
     """The complete render batch could not be assembled safely."""
+
+
+def _white_bg_failure(message: str, scan: WhiteBgScan) -> RenderTaskAssemblyError:
+    failure = RenderTaskAssemblyError(message)
+    if scan.kind == "inputs_unavailable":
+        failure.code = "render_inputs_unavailable"
+        return failure
+    if scan.kind == "missing_reference":
+        failure.code = "render_input_missing"
+        failure.missing_files = scan.missing_files
+        failure.missing_count = scan.missing_count
+        failure.remaining_count = scan.remaining_count
+    return failure
+
+
+def _scan_reference_failure(
+    manifest: Mapping[str, Any],
+    filename: str,
+) -> WhiteBgScan:
+    """Prefer every recorded binding while retaining a safe legacy fallback."""
+
+    try:
+        return scan_white_bg_recovery(manifest)
+    except WhiteBgRecoveryError:
+        return scan_white_bg_recovery(manifest, bound_references=(filename,))
 
 
 @dataclass(frozen=True)
@@ -100,15 +130,22 @@ def _reference_image(manifest: Mapping[str, Any], filename: str) -> Path:
                     item for item in root.rglob("*") if item.is_file() and item.name == filename
                 )
             except OSError as exc:
-                raise RenderTaskAssemblyError("白底图目录无法读取") from exc
+                scan = WhiteBgScan("inputs_unavailable", (), 0, 0)
+                raise _white_bg_failure("白底图目录无法读取", scan) from exc
             boundary = root
         else:
-            raise RenderTaskAssemblyError("白底图路径不存在")
+            scan = WhiteBgScan("inputs_unavailable", (), 0, 0)
+            raise _white_bg_failure("白底图路径不存在", scan)
         for candidate in candidates:
             resolved = candidate.resolve(strict=False)
             if not _is_within(candidate, boundary):
                 raise RenderTaskAssemblyError("绑定参考图越出白底图目录")
             matches[resolved] = candidate
+    if not matches:
+        scan = _scan_reference_failure(manifest, filename)
+        if scan.kind in {"missing_reference", "inputs_unavailable"}:
+            raise _white_bg_failure("绑定参考图不在白底图目录中", scan)
+        raise RenderTaskAssemblyError("绑定参考图必须在白底图目录中唯一匹配")
     if len(matches) != 1:
         raise RenderTaskAssemblyError("绑定参考图必须在白底图目录中唯一匹配")
     reference = next(iter(matches.values()))
@@ -118,7 +155,15 @@ def _reference_image(manifest: Mapping[str, Any], filename: str) -> Path:
         with reference.open("rb") as handle:
             handle.read(1)
     except OSError as exc:
-        raise RenderTaskAssemblyError("绑定参考图无法读取") from exc
+        scan = _scan_reference_failure(manifest, filename)
+        if scan.kind == "available":
+            scan = WhiteBgScan(
+                kind="missing_reference",
+                missing_files=(filename,),
+                missing_count=1,
+                remaining_count=0,
+            )
+        raise _white_bg_failure("绑定参考图无法读取", scan) from exc
     return reference
 
 

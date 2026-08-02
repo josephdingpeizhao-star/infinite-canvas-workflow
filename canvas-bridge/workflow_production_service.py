@@ -46,6 +46,7 @@ from workflow_production_projection import (
     output_node_id,
 )
 from workflow_production_render_observer import ProductionRenderObserverExecutor
+from white_bg_recovery import sanitize_filenames
 
 
 COMMAND_MAX_AGE_MS = 8_000
@@ -60,7 +61,13 @@ _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE = (
 _REAL_EXECUTION_DISABLED_EVENT_DETAIL = "真实执行开关未开启，执行已停止，未自动重试"
 _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
 _RENDER_FAILURE_CODES = frozenset(
-    {"render_http_error", "render_timeout", "render_network_error"}
+    {
+        "render_http_error",
+        "render_timeout",
+        "render_network_error",
+        "render_input_missing",
+        "render_inputs_unavailable",
+    }
 )
 _SAFE_RENDER_FAILURE_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 _RENDER_FAILURE_INTEGER_RANGES = {
@@ -457,6 +464,7 @@ class WorkflowProductionService:
         expected_ids: tuple[str, ...] | None = None,
         error_message: str | None = None,
         message: str | None = None,
+        recovery: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         state = self._production_state(node)
         state["status"] = status
@@ -488,6 +496,10 @@ class WorkflowProductionService:
             state["errorMessage"] = error_message
         else:
             state.pop("errorMessage", None)
+        if recovery is not None:
+            state["recovery"] = dict(recovery)
+        else:
+            state.pop("recovery", None)
         return {
             "type": "update_node",
             "id": str(node.get("id") or ""),
@@ -1035,6 +1047,33 @@ class WorkflowProductionService:
             return None
 
         fields: dict[str, object] = {"code": code}
+        if code == "render_inputs_unavailable":
+            if getattr(exc, "missing_files", None) not in (None, (), []):
+                return None
+            if getattr(exc, "missing_count", None) is not None:
+                return None
+            if getattr(exc, "remaining_count", None) is not None:
+                return None
+            return fields
+        if code == "render_input_missing":
+            missing_count = getattr(exc, "missing_count", None)
+            if type(missing_count) is not int or not 1 <= missing_count <= 9_999:
+                return None
+            raw_files = getattr(exc, "missing_files", ())
+            if not isinstance(raw_files, (tuple, list)):
+                return None
+            missing_files = sanitize_filenames(raw_files)
+            if missing_files and len(missing_files) != missing_count:
+                missing_files = ()
+            fields["missing_count"] = missing_count
+            fields["missing_files"] = missing_files
+            remaining_count = getattr(exc, "remaining_count", None)
+            if remaining_count is not None:
+                if type(remaining_count) is not int or not 0 <= remaining_count <= 9_999:
+                    return None
+                fields["remaining_count"] = remaining_count
+            return fields
+
         for name, (minimum, maximum) in _RENDER_FAILURE_INTEGER_RANGES.items():
             value = getattr(exc, name, None)
             if value is None:
@@ -1058,16 +1097,81 @@ class WorkflowProductionService:
             fields[name] = value
         return fields
 
+    def _render_failure_recovery(
+        self,
+        fields: Mapping[str, object],
+        manifest: Mapping[str, Any],
+    ) -> dict[str, object] | None:
+        code = fields.get("code")
+        if code == "render_inputs_unavailable":
+            return {
+                "kind": "inputs_unavailable",
+                "files": [],
+                "recomputeEligible": False,
+            }
+        if code != "render_input_missing":
+            return None
+        missing_count = fields.get("missing_count")
+        remaining_count = fields.get("remaining_count")
+        if type(missing_count) is not int or missing_count < 1:
+            return None
+        eligible = False
+        if type(remaining_count) is int and remaining_count >= 1:
+            try:
+                eligible = len(self.artifact_reader(manifest)) == 0
+            except Exception:
+                eligible = False
+        return {
+            "kind": "missing_reference",
+            "files": list(fields.get("missing_files") or ()),
+            "recomputeEligible": eligible,
+        }
+
     @classmethod
     def _structured_render_failure_messages(
         cls,
         exc: BaseException,
+        *,
+        recompute_eligible: bool = False,
     ) -> tuple[str, str, str] | None:
         fields = cls._structured_render_failure(exc)
         if fields is None:
             return None
 
         code = str(fields["code"])
+        if code == "render_input_missing":
+            missing_count = int(fields["missing_count"])
+            missing_files = tuple(fields.get("missing_files") or ())
+            if missing_files:
+                introduction = (
+                    f"白底图 {'、'.join(str(item) for item in missing_files)} "
+                    "已不在批次目录里。"
+                )
+                event = f"渲染失败：白底图 {'、'.join(str(item) for item in missing_files)} 缺失"
+            else:
+                introduction = f"有 {missing_count} 张白底图已不在批次目录里。"
+                event = f"渲染失败：缺失 {missing_count} 张白底图"
+            remaining_count = fields.get("remaining_count")
+            if (
+                recompute_eligible
+                and type(remaining_count) is int
+                and remaining_count >= 1
+            ):
+                workbench = (
+                    f"{introduction}可恢复文件后重新开始；或剔除缺失图，"
+                    f"用剩余 {remaining_count} 张重新分配角度与绑定"
+                    "（重排不产生模型费用，出图前会重新报价并由你确认）。"
+                )
+            else:
+                workbench = f"{introduction}可恢复文件后重新开始。"
+            return event[:160], workbench, code
+        if code == "render_inputs_unavailable":
+            return (
+                "渲染失败：白底图目录整体无法访问",
+                "白底图目录整体无法访问，本次已停止。请恢复 inputs/white_bg 后再重新开始。",
+                code,
+            )
+
         count_labels = (
             ("successful_count", "成功"),
             ("planned_count", "计划"),
@@ -1160,7 +1264,12 @@ class WorkflowProductionService:
         return detail[:160] if detail else "执行已停止，未自动重试"
 
     @classmethod
-    def _safe_failure(cls, exc: BaseException) -> str:
+    def _safe_failure(
+        cls,
+        exc: BaseException,
+        *,
+        recompute_eligible: bool = False,
+    ) -> str:
         if isinstance(exc, ProductionGateError):
             return str(exc)
         code = getattr(exc, "code", None)
@@ -1171,7 +1280,10 @@ class WorkflowProductionService:
             and code == _REAL_EXECUTION_DISABLED_CODE
         ):
             return _REAL_EXECUTION_DISABLED_WORKBENCH_MESSAGE
-        structured = cls._structured_render_failure_messages(exc)
+        structured = cls._structured_render_failure_messages(
+            exc,
+            recompute_eligible=recompute_eligible,
+        )
         if structured is not None:
             return structured[1]
         if isinstance(exc, ExecutorExecutionError) and "2:3" in str(exc):
@@ -1185,7 +1297,14 @@ class WorkflowProductionService:
             return controlled[1]
         return "这一步没做好，机器已停下。已经完成的成果都保留了。"
 
-    def _reject(self, node: Mapping[str, Any], request_id: str, message: str) -> None:
+    def _reject(
+        self,
+        node: Mapping[str, Any],
+        request_id: str,
+        message: str,
+        *,
+        recovery: Mapping[str, Any] | None = None,
+    ) -> None:
         self._apply_with_reconnect(
             [
                 self._machine_update(
@@ -1193,6 +1312,7 @@ class WorkflowProductionService:
                     status="failed",
                     content=f"# request-id: {request_id}\n# failed",
                     error_message=message,
+                    recovery=recovery,
                 )
             ]
         )
@@ -1549,6 +1669,7 @@ class WorkflowProductionService:
                 self._process(node, state)
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
+                recovery: dict[str, object] | None = None
                 if not isinstance(
                     exc,
                     (
@@ -1561,6 +1682,15 @@ class WorkflowProductionService:
                     try:
                         manifest_path = self._manifest_path(batch_id)
                         structured_failure = self._structured_render_failure(exc)
+                        if structured_failure is not None:
+                            try:
+                                manifest = self._load_manifest(manifest_path, batch_id)
+                                recovery = self._render_failure_recovery(
+                                    structured_failure,
+                                    manifest,
+                                )
+                            except ProductionGateError:
+                                recovery = None
                         failure_fields = (
                             {"failure_code": structured_failure["code"]}
                             if structured_failure is not None
@@ -1575,7 +1705,19 @@ class WorkflowProductionService:
                         )
                     except ProductionGateError:
                         pass
-                self._reject(node, request_id, self._safe_failure(exc))
+                recompute_eligible = bool(
+                    recovery is not None
+                    and recovery.get("recomputeEligible") is True
+                )
+                self._reject(
+                    node,
+                    request_id,
+                    self._safe_failure(
+                        exc,
+                        recompute_eligible=recompute_eligible,
+                    ),
+                    recovery=recovery,
+                )
 
     def serve_forever(self) -> None:
         while not self.stopping:
