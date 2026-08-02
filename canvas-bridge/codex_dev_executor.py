@@ -20,10 +20,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
 from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_category
-from content_correction import (
-    ContentPredicateViolation,
-    build_content_correction_instruction,
-)
+from content_correction import ContentPredicateViolation
 from codex_dev_downstream import (
     DetailChunkEnvelopeCorrection,
     DetailChunkTransportCorruption,
@@ -37,6 +34,7 @@ from codex_dev_downstream import (
     build_final_prompt_batch_prompt,
     build_final_prompt_repair_prompt,
     build_final_prompt_bundle,
+    build_variable_config_correction_prompt,
     build_variable_config_prompt,
     final_prompt_bundle_targets,
     load_typed_artifact,
@@ -952,7 +950,11 @@ class CodexDevExecutor:
             self._emit_content_correction(1, error)
             corrected_turn = self._continue_transport(
                 turn.thread_id,
-                build_content_correction_instruction(error),
+                build_variable_config_correction_prompt(
+                    error,
+                    mode="main",
+                    requirements=requirements,
+                ),
                 (),
             )
             self._emit_turn_progress()

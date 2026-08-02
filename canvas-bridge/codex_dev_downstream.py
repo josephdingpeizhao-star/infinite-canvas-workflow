@@ -1785,6 +1785,39 @@ handheld_count_summary 使用业务字段：用户要求详情图手持数量、
 """
 
 
+def build_variable_config_correction_prompt(
+    correction: ContentPredicateViolation,
+    *,
+    mode: str,
+    requirements: UserConfirmedRequirements,
+) -> str:
+    """Request one complete variable-config correction in the current thread."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的变量配置模式")
+    image_count = _mode_image_count(requirements, mode)
+    identifiers = config_ids(mode, image_count)
+    allowed_keys = [
+        "common_constraints",
+        "configs",
+        "handheld_count_summary",
+        "notes",
+    ]
+    return (
+        f"继续同一 {mode}_vc 任务。"
+        + build_content_correction_instruction(correction)
+        + "必须完整重发整份变量配置 JSON 文档，不得只重发单条配置。"
+        + f"顶层键仅允许：{json.dumps(allowed_keys, ensure_ascii=False)}。"
+        + "configs 必须按顺序包含全部"
+        + f"{chinese_image_count(image_count)}项配置："
+        + "、".join(identifiers)
+        + "。每项只包含 config_id、per_image_overrides、notes。"
+        + "common_constraints 必须是非空 JSON 对象；"
+        + "handheld_count_summary 必须是 JSON 对象。"
+        + "只返回一个完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
+    )
+
+
 def build_detail_variable_config_chunk_prompt(
     base_prompt: str,
     chunk_index: int,

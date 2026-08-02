@@ -275,11 +275,20 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
             self.assertEqual([(1, "canvas_ratio", "main_01")], corrections)
             self.assertEqual(1, len(transport.calls))
             self.assertEqual(1, len(transport.continuation_calls))
-            self.assertEqual(
+            correction_prompt = transport.continuation_calls[0][1]
+            self.assertIn(
                 "配置 ID：main_01；违规字段：输出画布比例；必须满足：必须逐字写 1:1。"
                 "其余内容不变，完整重发本段。",
-                transport.continuation_calls[0][1],
+                correction_prompt,
             )
+            self.assertIn(
+                '["common_constraints", "configs", "handheld_count_summary", "notes"]',
+                correction_prompt,
+            )
+            for config_id in (f"main_{index:02d}" for index in range(1, 7)):
+                self.assertIn(config_id, correction_prompt)
+            self.assertIn("不得只重发单条配置", correction_prompt)
+            self.assertIn("只返回一个完整 JSON 对象", correction_prompt)
 
     def test_detail_module05_correction_writes_safe_event_and_succeeds(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
