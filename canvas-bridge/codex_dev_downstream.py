@@ -2036,6 +2036,32 @@ def assemble_detail_variable_config_chunks(
     }
 
 
+_SLOT_D_NEGATION_CONTEXT_WINDOW = 8
+_SLOT_D_NEGATION_PREFIXES = frozenset(
+    (
+        "不调用",
+        "不使用",
+        "不绑定",
+        "不得调用",
+        "不得使用",
+        "不得绑定",
+        "禁止调用",
+        "禁止使用",
+        "禁止绑定",
+        "禁止",
+        "避免",
+        "排除",
+        "无",
+    )
+)
+
+
+def _slot_d_mention_is_negated(binding: str, match_start: int) -> bool:
+    context_start = max(0, match_start - _SLOT_D_NEGATION_CONTEXT_WINDOW)
+    prefix = binding[context_start:match_start].rstrip()
+    return any(prefix.endswith(term) for term in _SLOT_D_NEGATION_PREFIXES)
+
+
 def _validate_bound_angle(
     binding: str,
     qualified: Mapping[str, Mapping[str, Any]],
@@ -2061,7 +2087,11 @@ def _validate_bound_angle(
     slot = str(record.get("angle_slot") or "")
     if slot not in {"A", "B", "C"} or not re.search(rf"(?:{slot}\s*槽位|槽位\s*{slot})", binding):
         fail(f"codex-dev 收到的{label}角度绑定异常")
-    if re.search(r"(?:D\s*槽位|槽位\s*D)", binding):
+    slot_d_mentions = re.finditer(r"(?:D\s*槽位|槽位\s*D)", binding)
+    if any(
+        not _slot_d_mention_is_negated(binding, match.start())
+        for match in slot_d_mentions
+    ):
         fail(f"codex-dev 收到的{label}使用了缺失的 D 槽位")
 
 
