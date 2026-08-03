@@ -96,6 +96,7 @@ _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
 _QC_HEARTBEAT_JOIN_TIMEOUT_SECONDS = 12.0
 _QC_HEARTBEAT_STOP = object()
 _TURN_PROGRESS_HEARTBEAT_STEPS = {"main_vc", "detail_vc", "final_prompts"}
+_STATUS_PROJECTION_HTTP_TIMEOUT_SECONDS = 1.0
 BATCH_CLOSED_MESSAGE = "本批次已关账，不能再发起制作、质检、返修或上桌操作。"
 
 
@@ -299,6 +300,66 @@ class _QcHeartbeatWorker:
                 pass
 
 
+class _StatusProjectionOutbox:
+    """Coalesce idempotent node updates and retry them without blocking work."""
+
+    def __init__(
+        self,
+        sender: Callable[[list[dict[str, Any]]], None],
+        *,
+        retry_seconds: float,
+        should_stop: Callable[[], bool],
+    ) -> None:
+        self.sender = sender
+        self.retry_seconds = max(0.05, float(retry_seconds))
+        self.should_stop = should_stop
+        self._lock = threading.Lock()
+        self._wake = threading.Event()
+        self._pending: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._version = 0
+        self._thread: threading.Thread | None = None
+
+    def submit(self, ops: list[dict[str, Any]]) -> None:
+        with self._lock:
+            for op in ops:
+                node_id = str(op.get("id") or "")
+                if op.get("type") != "update_node" or not node_id:
+                    raise ValueError(
+                        "status projection outbox accepts update_node ops only"
+                    )
+                self._version += 1
+                self._pending[node_id] = (self._version, dict(op))
+            if self._thread is None or not self._thread.is_alive():
+                self._thread = threading.Thread(
+                    target=self._run,
+                    name="workflow-status-projection",
+                    daemon=True,
+                )
+                self._thread.start()
+        self._wake.set()
+
+    def _run(self) -> None:
+        while not self.should_stop():
+            with self._lock:
+                if not self._pending:
+                    self._thread = None
+                    return
+                snapshot = dict(self._pending)
+            self._wake.clear()
+            try:
+                self.sender([item[1] for item in snapshot.values()])
+            except ic_client.CanvasAgentError:
+                self._wake.wait(self.retry_seconds)
+                continue
+            with self._lock:
+                for node_id, (version, _op) in snapshot.items():
+                    current = self._pending.get(node_id)
+                    if current is not None and current[0] == version:
+                        self._pending.pop(node_id, None)
+        with self._lock:
+            self._thread = None
+
+
 class WorkflowProductionService:
     def __init__(
         self,
@@ -367,6 +428,11 @@ class WorkflowProductionService:
         self.consumed_content: dict[str, str] = {}
         self.stopping = False
         self._qc_heartbeat_workers: set[_QcHeartbeatWorker] = set()
+        self._status_projection_outbox = _StatusProjectionOutbox(
+            self._send_status_projection_once,
+            retry_seconds=self.interval,
+            should_stop=lambda: self.stopping,
+        )
 
     @staticmethod
     def _production_state(node: Mapping[str, Any]) -> dict[str, Any]:
@@ -532,6 +598,24 @@ class WorkflowProductionService:
 
     def _apply_with_reconnect(self, ops: list[dict[str, Any]]) -> None:
         self._call_with_reconnect(self.client.apply_ops, ops)
+
+    def _send_status_projection_once(self, ops: list[dict[str, Any]]) -> None:
+        if self.client is ic_client:
+            ic_client.call_tool(
+                "canvas_apply_ops",
+                {"ops": ops},
+                timeout=_STATUS_PROJECTION_HTTP_TIMEOUT_SECONDS,
+            )
+            return
+        self.client.apply_ops(ops)
+
+    def _apply_status_projection(self, ops: list[dict[str, Any]]) -> None:
+        if self.stopping:
+            raise ExecutorExecutionError("真实工作流服务已停止")
+        try:
+            self._send_status_projection_once(ops)
+        except ic_client.CanvasAgentError:
+            self._status_projection_outbox.submit(ops)
 
     def _send_qc_heartbeat_once(self, ops: list[dict[str, Any]]) -> None:
         if self.client is ic_client:
@@ -866,7 +950,7 @@ class WorkflowProductionService:
         if route.get("current_stage") != "ready":
             raise ProductionGateError("本批次尚未完成质检，暂不能上桌返修图。")
         artifacts = self.repaired_artifact_reader(manifest)
-        self._apply_with_reconnect(
+        self._apply_status_projection(
             [
                 self._repaired_projection_update(
                     machine,
@@ -917,7 +1001,7 @@ class WorkflowProductionService:
             request_id=request_id,
             count=projected_count,
         )
-        self._apply_with_reconnect(
+        self._apply_status_projection(
             [
                 self._repaired_projection_update(
                     machine,
@@ -1477,7 +1561,7 @@ class WorkflowProductionService:
         *,
         recovery: Mapping[str, Any] | None = None,
     ) -> None:
-        self._apply_with_reconnect(
+        self._apply_status_projection(
             [
                 self._machine_update(
                     node,
@@ -1563,7 +1647,7 @@ class WorkflowProductionService:
                         request_id=request_id,
                         produced_count=total_count,
                     )
-                self._apply_with_reconnect(
+                self._apply_status_projection(
                     [
                         self._machine_update(
                             machine,
@@ -1605,7 +1689,7 @@ class WorkflowProductionService:
             # step above; when the image gate is closed we stop before gate 3,
             # so no integrity/render executor is called or recorded as started.
             if step in {"integrity", "renders"} and self.environment.get("RENDER_ALLOW_REAL_EXECUTION") != "1":
-                self._apply_with_reconnect(
+                self._apply_status_projection(
                     [
                         self._machine_update(
                             machine,
@@ -1628,7 +1712,7 @@ class WorkflowProductionService:
                 )
                 return
             run_controller.append_event(journal, "step_started", request_id=request_id, step=step)
-            self._apply_with_reconnect(
+            self._apply_status_projection(
                 [
                     self._machine_update(
                         machine,
@@ -1651,7 +1735,7 @@ class WorkflowProductionService:
                     expected_ids=expected_ids,
                 )
                 current = len(self.artifact_reader(manifest))
-                self._apply_with_reconnect(
+                self._apply_status_projection(
                     [
                         self._machine_update(
                             machine,
@@ -1718,7 +1802,7 @@ class WorkflowProductionService:
                     produced_count < total_count
                     or not completed_render_stage
                 ):
-                    self._apply_with_reconnect(
+                    self._apply_status_projection(
                         [
                             self._machine_update(
                                 machine,
@@ -1754,7 +1838,7 @@ class WorkflowProductionService:
                 try:
                     self._process_repaired_projection(node, state)
                 except ProductionGateError as exc:
-                    self._apply_with_reconnect(
+                    self._apply_status_projection(
                         [
                             self._repaired_projection_update(
                                 node,

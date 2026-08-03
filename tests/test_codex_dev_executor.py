@@ -3175,6 +3175,60 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         )
         self.assertTrue(all(item[0].get_header("X-canvas-agent-token") == "test-token" for item in requests))
 
+    def test_sse_ping_cannot_extend_the_hard_turn_deadline(self) -> None:
+        clock = [0.0]
+
+        class PingResponse:
+            def __init__(self) -> None:
+                self.index = 0
+                self.lines = (
+                    b"event: ping\n",
+                    b'data: {"time":1}\n',
+                    b"\n",
+                )
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def readline(self) -> bytes:
+                clock[0] += 1.0
+                if self.index >= 30:
+                    return b""
+                line = self.lines[self.index % len(self.lines)]
+                self.index += 1
+                return line
+
+        responses = [
+            PingResponse(),
+            FakeResponse(b'{"ok":true,"thread":{"id":"thread-timeout"}}'),
+            FakeResponse(b'{"ok":true,"threadId":"thread-timeout"}'),
+            FakeResponse(b'{"ok":true}'),
+        ]
+        requests: list[tuple[urllib.request.Request, float]] = []
+
+        def opener(request, timeout):
+            requests.append((request, timeout))
+            return responses.pop(0)
+
+        transport = CanvasAgentCodexTransport(
+            config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+            opener=opener,
+            timeout=300.0,
+            turn_timeout=3.0,
+            monotonic=lambda: clock[0],
+        )
+
+        with self.assertRaises(CanvasAgentTransportError) as caught:
+            transport.run_turn("offline prompt", ())
+
+        paths = [urllib.parse.urlparse(item[0].full_url).path for item in requests]
+        self.assertEqual("timeout", caught.exception.code)
+        self.assertEqual("/agent/codex/interrupt", paths[-1])
+        self.assertLessEqual(requests[-1][1], 2.0)
+
     def test_existing_thread_continuation_reuses_thread_without_creating_another(self) -> None:
         sse = b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
         responses = [

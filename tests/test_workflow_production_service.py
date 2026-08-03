@@ -5,6 +5,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -19,6 +20,7 @@ from executor_contract import ExecutionResult, ExecutorExecutionError  # noqa: E
 from codex_dev_executor import CodexDevExecutionError  # noqa: E402
 from workflow_demo_executor import write_placeholder_png  # noqa: E402
 from workflow_production_projection import artifact_from_path  # noqa: E402
+import ic_client  # noqa: E402
 import workflow_production_service as production_service  # noqa: E402
 
 
@@ -843,6 +845,69 @@ class ProductionServiceTest(unittest.TestCase):
             [(event["event"], event.get("step")) for event in events],
         )
         self.assertIn("production_paused", [event["event"] for event in events])
+
+    def test_offline_status_projection_never_blocks_upstream_execution_and_replays_latest(self) -> None:
+        class OfflineStatusCanvas(FakeCanvasClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.online = threading.Event()
+                self.apply_attempted = threading.Event()
+
+            def apply_ops(self, ops: list[dict]):
+                self.apply_attempted.set()
+                if not self.online.is_set():
+                    raise ic_client.CanvasAgentError("canvas offline")
+                return super().apply_ops(ops)
+
+        client = OfflineStatusCanvas()
+        executed: list[str] = []
+        executor_started = threading.Event()
+
+        class SignalingExecutor(FakeExecutor):
+            def execute(self, request):
+                executor_started.set()
+                return super().execute(request)
+
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=client,
+            executor_builder=lambda step, _manifest, _path, on_output: SignalingExecutor(
+                step,
+                executed,
+                on_output=on_output,
+            ),
+            route_reader=self._route_reader(executed),
+            integrity_reader=self._integrity_reader(executed),
+            artifact_reader=lambda _manifest: (),
+            clock_ms=lambda: 1_100,
+            sleep=lambda _seconds: None,
+            interval=0.05,
+            environment={},
+        )
+        worker = threading.Thread(target=service.poll_once)
+        worker.start()
+
+        self.assertTrue(client.apply_attempted.wait(timeout=1.0))
+        started_while_offline = executor_started.wait(timeout=1.0)
+        worker.join(timeout=2.0)
+        completed_while_offline = not worker.is_alive()
+
+        client.online.set()
+        worker.join(timeout=3.0)
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline:
+            status = client.state["nodes"][0]["metadata"]["workflowProduction"]["status"]
+            if status == "paused":
+                break
+            time.sleep(0.02)
+
+        self.assertTrue(started_while_offline)
+        self.assertTrue(completed_while_offline)
+        self.assertEqual(STEPS[:6], executed)
+        self.assertEqual(
+            "paused",
+            client.state["nodes"][0]["metadata"]["workflowProduction"]["status"],
+        )
 
     def test_partial_batch_requires_existing_retry_renders_gate(self) -> None:
         image = self.workspace / "outputs" / "renders" / "main_01.png"

@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import base64
 import json
+import math
 import os
 import re
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -330,13 +332,24 @@ class CanvasAgentCodexTransport:
         config: Mapping[str, str] | None = None,
         opener: Callable[..., Any] | None = None,
         timeout: float = 300.0,
+        turn_timeout: float = 600.0,
+        monotonic: Callable[[], float] = time.monotonic,
         max_attachment_payload_bytes: int = 20 * 1024 * 1024,
         max_request_body_bytes: int = 28 * 1024 * 1024,
     ) -> None:
+        if (
+            isinstance(turn_timeout, bool)
+            or not isinstance(turn_timeout, (int, float))
+            or not math.isfinite(float(turn_timeout))
+            or turn_timeout <= 0
+        ):
+            raise ValueError("turn_timeout must be a finite positive number")
         self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.config = dict(config) if config is not None else None
         self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({})).open
         self.timeout = timeout
+        self.turn_timeout = float(turn_timeout)
+        self.monotonic = monotonic
         self.model = PRODUCTION_CODEX_MODEL
         self.effort = PRODUCTION_CODEX_REASONING_EFFORT
         self.max_attachment_payload_bytes = max_attachment_payload_bytes
@@ -416,6 +429,7 @@ class CanvasAgentCodexTransport:
                         thread_id,
                         previous_assistant_count=0,
                         previous_user_count=0,
+                        deadline=self.monotonic() + self.turn_timeout,
                     )
                     return CodexTurnResult(text=final_text, thread_id=thread_id)
 
@@ -443,6 +457,7 @@ class CanvasAgentCodexTransport:
                         thread_id,
                         previous_assistant_count=assistant_count,
                         previous_user_count=user_count,
+                        deadline=self.monotonic() + self.turn_timeout,
                     )
 
                 final_prompt = (
@@ -458,6 +473,7 @@ class CanvasAgentCodexTransport:
                     thread_id,
                     previous_assistant_count=assistant_count,
                     previous_user_count=user_count,
+                    deadline=self.monotonic() + self.turn_timeout,
                 )
                 return CodexTurnResult(text=final_text, thread_id=thread_id)
         except CanvasAgentTransportError:
@@ -502,6 +518,7 @@ class CanvasAgentCodexTransport:
                     thread_id,
                     previous_assistant_count=len(previous_messages),
                     previous_user_count=previous_user_count,
+                    deadline=self.monotonic() + self.turn_timeout,
                 )
                 return CodexTurnResult(text=final_text, thread_id=thread_id)
         except CanvasAgentTransportError:
@@ -551,10 +568,14 @@ class CanvasAgentCodexTransport:
         payload: Any,
         *,
         error_code: str,
+        timeout: float | None = None,
     ) -> dict[str, Any]:
         request = self._request(method, url, token, payload)
         try:
-            with self.opener(request, timeout=self.timeout) as response:
+            with self.opener(
+                request,
+                timeout=self.timeout if timeout is None else timeout,
+            ) as response:
                 result = json.loads(response.read().decode("utf-8"))
         except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise CanvasAgentTransportError(error_code) from None
@@ -621,12 +642,15 @@ class CanvasAgentCodexTransport:
         *,
         previous_assistant_count: int,
         previous_user_count: int,
+        deadline: float,
     ) -> tuple[str, int, int]:
         event_name = ""
         data_lines: list[str] = []
 
         while True:
+            self._raise_if_turn_expired(base_url, token, deadline)
             raw_line = stream.readline()
+            self._raise_if_turn_expired(base_url, token, deadline)
             if not raw_line:
                 raise CanvasAgentTransportError("thread")
             line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -658,6 +682,27 @@ class CanvasAgentCodexTransport:
 
             event_name = ""
             data_lines = []
+
+    def _raise_if_turn_expired(
+        self,
+        base_url: str,
+        token: str,
+        deadline: float,
+    ) -> None:
+        if self.monotonic() < deadline:
+            return
+        try:
+            self._json_request(
+                "POST",
+                f"{base_url}/agent/codex/interrupt",
+                token,
+                {},
+                error_code="thread",
+                timeout=min(self.timeout, 2.0),
+            )
+        except CanvasAgentTransportError:
+            pass
+        raise CanvasAgentTransportError("timeout")
 
     def _thread_message_summary(
         self, base_url: str, token: str, thread_id: str
