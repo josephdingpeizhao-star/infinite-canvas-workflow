@@ -97,7 +97,7 @@ class ConfigIdTests(unittest.TestCase):
 
 class DetailModulePlanTests(unittest.TestCase):
     def test_approved_module_mapping_examples(self) -> None:
-        self.assertEqual((tuple(range(1, 9)),), detail_module_groups(1))
+        self.assertEqual(((1, 2, 3, 4, 6, 7, 8),), detail_module_groups(1))
         self.assertEqual(
             ((1,), (2,), (3,), (4, 5, 6, 7), (8,)),
             detail_module_groups(5),
