@@ -27,6 +27,7 @@ import executor_factory
 from failure_text_safety import (
     _UNSAFE_FAILURE_DETAIL_PATTERN,
     is_disclosable,
+    is_sensitive_identifier,
 )
 import ic_client
 import run_controller
@@ -70,6 +71,7 @@ _INTEGRITY_FAILURE_CODE = "integrity_check_failed"
 _RENDER_FAILURE_CODES = frozenset(
     {
         "render_http_error",
+        "render_response_invalid",
         "render_timeout",
         "render_network_error",
         "render_input_missing",
@@ -90,6 +92,19 @@ _RENDER_FAILURE_TOKEN_FIELDS = (
     "provider_error_type",
     "provider_error_code",
     "provider_request_id",
+)
+_RENDER_FAILURE_SHAPE_FIELDS = (
+    "response_top_keys",
+    "response_data0_keys",
+)
+_IMAGE_SERVICE_FAILURE_SOURCE = "image_service"
+_IMAGE_SERVICE_FAILURE_CODES = frozenset(
+    {
+        "render_http_error",
+        "render_response_invalid",
+        "render_timeout",
+        "render_network_error",
+    }
 )
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
@@ -543,6 +558,7 @@ class WorkflowProductionService:
         error_message: str | None = None,
         message: str | None = None,
         recovery: Mapping[str, Any] | None = None,
+        failure_source: str | None = None,
     ) -> dict[str, Any]:
         state = self._production_state(node)
         state["status"] = status
@@ -578,6 +594,12 @@ class WorkflowProductionService:
             state["recovery"] = dict(recovery)
         else:
             state.pop("recovery", None)
+        if failure_source is not None:
+            if failure_source != _IMAGE_SERVICE_FAILURE_SOURCE:
+                raise ProductionGateError("生产失败来源无效。")
+            state["failureSource"] = failure_source
+        else:
+            state.pop("failureSource", None)
         return {
             "type": "update_node",
             "id": str(node.get("id") or ""),
@@ -1167,6 +1189,9 @@ class WorkflowProductionService:
             reason = str(exc)
             if not is_disclosable(reason):
                 return None
+        elif code == "render_response_invalid":
+            raw_reason = str(exc)
+            reason = raw_reason if is_disclosable(raw_reason) else ""
         else:
             reason = ""
 
@@ -1221,6 +1246,24 @@ class WorkflowProductionService:
             ):
                 return None
             fields[name] = value
+        for name in _RENDER_FAILURE_SHAPE_FIELDS:
+            value = getattr(exc, name, None)
+            if not isinstance(value, tuple):
+                continue
+            sanitized = tuple(
+                sorted(
+                    {
+                        item
+                        for item in value
+                        if type(item) is str
+                        and _SAFE_RENDER_FAILURE_TOKEN_PATTERN.fullmatch(item) is not None
+                        and _UNSAFE_FAILURE_DETAIL_PATTERN.search(item) is None
+                        and not is_sensitive_identifier(item)
+                    }
+                )[:8]
+            )
+            if sanitized:
+                fields[name] = sanitized
         return fields
 
     def _render_failure_recovery(
@@ -1325,6 +1368,51 @@ class WorkflowProductionService:
             event = f"{event_prefix}{display_reason[:available]}{event_suffix}"
             workbench = f"{display_reason}。{count_sentence}{stop_sentence}"
             return event, workbench, code
+        if code == "render_response_invalid":
+            reason = str(fields.get("reason") or "图片服务返回的内容无法使用")
+            display_reason = reason.rstrip("。") or reason
+            shape_parts: list[str] = []
+            if "response_top_keys" in fields:
+                shape_parts.append(
+                    f"响应字段：{'、'.join(str(item) for item in fields['response_top_keys'])}"
+                )
+            if "response_data0_keys" in fields:
+                shape_parts.append(
+                    "data[0] 字段："
+                    + "、".join(str(item) for item in fields["response_data0_keys"])
+                )
+            shape_sentence = f"{'；'.join(shape_parts)}。" if shape_parts else ""
+            event_reason = display_reason
+            if "reason" not in fields:
+                event_reason += "。"
+            event_counts_text = "、".join(event_counts)
+            event_suffix = (
+                ("" if event_reason.endswith("。") else "；") + event_counts_text
+                if event_counts_text
+                else ""
+            )
+            event_prefix = "渲染失败："
+            available = max(0, 160 - len(event_prefix) - len(event_suffix))
+            base_event = f"{event_prefix}{event_reason[:available]}{event_suffix}"
+            base_workbench = f"{display_reason}。{count_sentence}{stop_sentence}"
+            if shape_sentence:
+                shaped_event = f"{event_prefix}{event_reason}"
+                shaped_event += (
+                    "" if shaped_event.endswith("。") else "；"
+                ) + shape_sentence.rstrip("。")
+                if event_counts_text:
+                    shaped_event += f"；{event_counts_text}"
+                shaped_workbench = (
+                    f"{display_reason}。{shape_sentence}{count_sentence}{stop_sentence}"
+                )
+                if (
+                    len(shaped_event) <= 160
+                    and is_disclosable(shaped_event)
+                    and is_disclosable(shaped_workbench)
+                ):
+                    base_event = shaped_event
+                    base_workbench = shaped_workbench
+            return base_event, base_workbench, code
         if code == "render_canvas_unavailable":
             title = "画布暂时不可用，真实图片未完成上桌"
             workbench = f"{title}。{count_sentence}{stop_sentence}"
@@ -1560,6 +1648,7 @@ class WorkflowProductionService:
         message: str,
         *,
         recovery: Mapping[str, Any] | None = None,
+        failure_source: str | None = None,
     ) -> None:
         self._apply_status_projection(
             [
@@ -1569,6 +1658,7 @@ class WorkflowProductionService:
                     content=f"# request-id: {request_id}\n# failed",
                     error_message=message,
                     recovery=recovery,
+                    failure_source=failure_source,
                 )
             ]
         )
@@ -1864,6 +1954,7 @@ class WorkflowProductionService:
             except (ProductionGateError, run_controller.RunExecutionError, ExecutorExecutionError) as exc:
                 batch_id = str(production.get("batchId") or "")
                 recovery: dict[str, object] | None = None
+                failure_source: str | None = None
                 if not isinstance(
                     exc,
                     (
@@ -1877,6 +1968,8 @@ class WorkflowProductionService:
                         manifest_path = self._manifest_path(batch_id)
                         structured_failure = self._structured_render_failure(exc)
                         if structured_failure is not None:
+                            if structured_failure["code"] in _IMAGE_SERVICE_FAILURE_CODES:
+                                failure_source = _IMAGE_SERVICE_FAILURE_SOURCE
                             try:
                                 manifest = self._load_manifest(manifest_path, batch_id)
                                 recovery = self._render_failure_recovery(
@@ -1911,6 +2004,7 @@ class WorkflowProductionService:
                         recompute_eligible=recompute_eligible,
                     ),
                     recovery=recovery,
+                    failure_source=failure_source,
                 )
 
     def serve_forever(self) -> None:

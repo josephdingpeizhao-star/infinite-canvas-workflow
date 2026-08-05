@@ -21,6 +21,7 @@ from executor_contract import (
     ExecutorExecutionError,
     ImageGenerationTask,
 )
+from failure_text_safety import is_sensitive_identifier
 from reference_image_compression import compress_reference_image
 from white_bg_recovery import sanitize_filename
 
@@ -58,6 +59,33 @@ def _safe_upstream_token(value: object) -> str:
     if _UNSAFE_UPSTREAM_TOKEN_PATTERN.search(value):
         return ""
     return value
+
+
+def _response_shape_keys(value: object) -> tuple[str, ...]:
+    if not isinstance(value, Mapping):
+        return ()
+    return tuple(
+        sorted(
+            {
+                token
+                for key in value
+                if (token := _safe_upstream_token(key))
+                and not is_sensitive_identifier(token)
+            }
+        )[:8]
+    )
+
+
+def _extract_response_shape(payload: object) -> dict[str, tuple[str, ...]]:
+    """Return sanitized response key names without retaining provider values."""
+
+    top_keys = _response_shape_keys(payload)
+    data = payload.get("data") if isinstance(payload, Mapping) else None
+    data0 = data[0] if isinstance(data, list) and data else None
+    return {
+        "response_top_keys": top_keys,
+        "response_data0_keys": _response_shape_keys(data0),
+    }
 
 
 def _response_header(headers: Mapping[str, str], name: str) -> str:
@@ -274,7 +302,7 @@ class OpenAIImageExecutor:
 
         response = self.transport.post(endpoint, headers, body, self.timeout)
         payload = self._response_payload(response, api_key)
-        image_bytes = self._decode_image(payload)
+        image_bytes = self._decode_image(payload, response_status=response.status)
         self._atomic_write(task.output_path, image_bytes)
 
         request_id = self._header(response.headers, "x-request-id")
@@ -392,6 +420,12 @@ class OpenAIImageExecutor:
                     "render_http_error",
                     **_extract_upstream_failure(response),
                 )
+            elif 200 <= response.status < 300:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_response_invalid",
+                    **_extract_response_shape(None),
+                )
             raise failure from exc
         if not isinstance(payload, dict):
             failure = ExecutorExecutionError("图片服务响应格式不正确")
@@ -400,6 +434,12 @@ class OpenAIImageExecutor:
                     failure,
                     "render_http_error",
                     **_extract_upstream_failure(response),
+                )
+            elif 200 <= response.status < 300:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_response_invalid",
+                    **_extract_response_shape(payload),
                 )
             raise failure
         if response.status >= 400:
@@ -413,15 +453,29 @@ class OpenAIImageExecutor:
             )
         return payload
 
-    def _decode_image(self, payload: dict) -> bytes:
+    def _decode_image(self, payload: dict, *, response_status: int = 200) -> bytes:
         data = payload.get("data")
         encoded = data[0].get("b64_json") if isinstance(data, list) and data and isinstance(data[0], dict) else None
         if not isinstance(encoded, str) or not encoded:
-            raise ExecutorExecutionError("图片服务响应缺少 data[0].b64_json")
+            failure = ExecutorExecutionError("图片服务响应缺少 data[0].b64_json")
+            if 200 <= response_status < 300:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_response_invalid",
+                    **_extract_response_shape(payload),
+                )
+            raise failure
         try:
             return base64.b64decode(encoded, validate=True)
         except ValueError as exc:
-            raise ExecutorExecutionError("图片服务返回的 Base64 图片无效") from exc
+            failure = ExecutorExecutionError("图片服务返回的 Base64 图片无效")
+            if 200 <= response_status < 300:
+                failure = _attach_render_failure(
+                    failure,
+                    "render_response_invalid",
+                    **_extract_response_shape(payload),
+                )
+            raise failure from exc
 
     def _atomic_write(self, output_path: Path, content: bytes) -> None:
         temporary = output_path.with_name(f".{output_path.name}.{uuid.uuid4().hex}.tmp")

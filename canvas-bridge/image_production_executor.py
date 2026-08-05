@@ -37,6 +37,8 @@ _RENDER_FAILURE_FIELDS = (
     "missing_files",
     "missing_count",
     "remaining_count",
+    "response_top_keys",
+    "response_data0_keys",
 )
 
 

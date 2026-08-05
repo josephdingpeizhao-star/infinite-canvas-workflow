@@ -13,9 +13,10 @@ SUPPORTED_COUNT_MAXIMUM = 30
 DIMENSION_MODULE = 5
 # 模块05“规格尺寸与容量”是唯一承担尺寸标注职责的详情模块。
 _CHINESE_DIGITS = ("零", "一", "二", "三", "四", "五", "六", "七", "八", "九")
-_DETAIL_EXTRA_MODULE_CYCLE = tuple(
+_NON_DIMENSION_MODULES = tuple(
     module for module in range(1, 9) if module != DIMENSION_MODULE
 )
+_DETAIL_EXTRA_MODULE_CYCLE = _NON_DIMENSION_MODULES
 DETAIL_MODULE_LABELS = (
     "首屏 · 主视觉与卖点承接",
     "核心卖点证明",
@@ -145,7 +146,7 @@ def detail_module_groups(count: int) -> tuple[tuple[int, ...], ...]:
 
     total = _supported_count(count)
     if total == 1:
-        return (_DETAIL_EXTRA_MODULE_CYCLE,)
+        return (_NON_DIMENSION_MODULES,)
     if total < 8:
         independent = tuple((module,) for module in range(1, total - 1))
         merged = (tuple(range(total - 1, 8)),)
