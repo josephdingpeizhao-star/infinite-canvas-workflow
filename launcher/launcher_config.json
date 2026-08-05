@@ -29,13 +29,13 @@
     "agent": {
       "label": "canvas-agent",
       "command": [
-        "C:\\Users\\John\\.bun\\bin\\bun.exe",
+        "{bun}",
         "run",
         "--cwd",
-        "D:/dev/infinite-canvas/canvas-agent",
+        "{project_root}/infinite-canvas/canvas-agent",
         "dev"
       ],
-      "cwd": "D:\\dev\\infinite-canvas\\canvas-agent",
+      "cwd": "{project_root}\\infinite-canvas\\canvas-agent",
       "ports": [
         17371
       ],
@@ -61,13 +61,13 @@
       "label": "画布工作台服务",
       "command": [
         "python",
-        "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份\\canvas-bridge\\spike_canvas_push.py",
+        "{repo_root}\\canvas-bridge\\spike_canvas_push.py",
         "--serve-canvas-workbench",
-        "D:\\dev\\canvas-demo-workspace\\manifests\\batch_manifest.json",
+        "{project_root}\\canvas-demo-workspace\\manifests\\batch_manifest.json",
         "--interval",
         "2"
       ],
-      "cwd": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类6.22版本代码仓库（水壶类）备份",
+      "cwd": "{repo_root}",
       "ports": [
         17372,
         17373
@@ -106,7 +106,7 @@
       ]
     },
     "dist": {
-      "root": "D:\\dev\\infinite-canvas\\web\\dist",
+      "root": "{project_root}\\infinite-canvas\\web\\dist",
       "command": [
         "{pythonw}",
         "{launcher_dir}\\static_server.py",
@@ -127,13 +127,13 @@
     },
     "dev": {
       "command": [
-        "C:\\Users\\John\\.bun\\bin\\bun.exe",
+        "{bun}",
         "run",
         "--cwd",
-        "D:/dev/infinite-canvas/web",
+        "{project_root}/infinite-canvas/web",
         "dev"
       ],
-      "cwd": "D:\\dev\\infinite-canvas\\web",
+      "cwd": "{project_root}\\infinite-canvas\\web",
       "identity_marker_groups": [
         [
           "infinite-canvas/web",

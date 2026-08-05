@@ -438,42 +438,73 @@ class BatchCreator:
             _require_test_root(test_root) if test_root is not None else self._production_parent()
         )
 
-    def _production_parent(self) -> Path:
+    def _frozen_anchor_parent(self, *, allow_unavailable: bool = False) -> Path | None:
         manifest_path = self.repo_root / "manifests" / f"{FROZEN_PRODUCT_ID}.batch_manifest.json"
-        anchor_parent: Path | None = None
-        if manifest_path.exists() or _is_unsafe_reparse(manifest_path):
-            _assert_regular_unlinked(
-                manifest_path,
-                code="invalid_repository",
-                message="无法核对既有批次目录，已停止登记。",
-            )
-            try:
-                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                root_text = manifest["workspace"]["root"]
-            except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
-                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。") from None
-            if manifest.get("product_id") != FROZEN_PRODUCT_ID or not isinstance(root_text, str):
-                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
-            frozen_root = _absolute(Path(root_text))
-            if frozen_root.name != FROZEN_PRODUCT_ID:
-                raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
-            anchor_parent = _assert_directory_unlinked(
+        if not (manifest_path.exists() or _is_unsafe_reparse(manifest_path)):
+            return None
+        _assert_regular_unlinked(
+            manifest_path,
+            code="invalid_repository",
+            message="无法核对既有批次目录，已停止登记。",
+        )
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            root_text = manifest["workspace"]["root"]
+        except (OSError, UnicodeError, json.JSONDecodeError, KeyError, TypeError):
+            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。") from None
+        if manifest.get("product_id") != FROZEN_PRODUCT_ID or not isinstance(root_text, str):
+            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
+        frozen_root = _absolute(Path(root_text))
+        if frozen_root.name != FROZEN_PRODUCT_ID:
+            raise BatchCreationError("invalid_repository", "无法核对既有批次目录，已停止登记。")
+        try:
+            return _assert_directory_unlinked(
                 frozen_root.parent,
                 code="invalid_repository",
                 message="既有批次的父目录不可用，已停止登记。",
             )
+        except BatchCreationError as error:
+            if allow_unavailable and error.code == "invalid_repository":
+                return None
+            raise
 
-        desktop_parent: Path | None = None
+    def _desktop_workspace_parent(self) -> Path | None:
         if self.desktop_locator is not None:
             try:
                 desktop = _absolute(Path(self.desktop_locator()))
-                desktop_parent = _assert_directory_unlinked(
+                return _assert_directory_unlinked(
                     desktop / "杯类",
                     code="invalid_repository",
                     message="Windows 桌面批次目录不可用，已停止登记。",
                 )
             except (OSError, RuntimeError, BatchCreationError):
-                desktop_parent = None
+                pass
+        return None
+
+    def _production_parent(self) -> Path:
+        project_candidate = self.repo_root.parent / "杯类"
+        if project_candidate.exists() or _is_unsafe_reparse(project_candidate):
+            project_parent = _assert_directory_unlinked(
+                project_candidate,
+                code="invalid_repository",
+                message="项目内批次目录不可用，已停止登记。",
+            )
+            anchor_parent = self._frozen_anchor_parent(allow_unavailable=True)
+            if anchor_parent is not None and anchor_parent.resolve() != project_parent.resolve():
+                raise BatchCreationError(
+                    "workspace_root_mismatch",
+                    "项目内批次目录与既有登记位置不一致，已安全停止。",
+                )
+            desktop_parent = self._desktop_workspace_parent()
+            if desktop_parent is not None and desktop_parent.resolve() != project_parent.resolve():
+                raise BatchCreationError(
+                    "workspace_root_mismatch",
+                    "既有批次目录与 Windows 桌面位置不一致，已安全停止。",
+                )
+            return project_parent
+
+        anchor_parent = self._frozen_anchor_parent()
+        desktop_parent = self._desktop_workspace_parent()
         if anchor_parent is not None:
             if (
                 desktop_parent is not None

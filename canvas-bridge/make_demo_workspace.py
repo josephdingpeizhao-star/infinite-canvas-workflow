@@ -1,6 +1,7 @@
 """Scaffold a throwaway external demo workspace for canvas phase-1 testing.
 
-Writes ONLY inside the given --root (default D:/dev/canvas-demo-workspace).
+Writes ONLY inside the given --root (default beside the repository at
+<project-root>/canvas-demo-workspace).
 Never touches the repository: the demo batch manifest lives inside the
 workspace itself, so detect_current_state / workflow_doctor will not discover
 it as an active batch.
@@ -23,7 +24,7 @@ import json
 import sys
 from pathlib import Path
 
-DEFAULT_ROOT = Path("D:/dev/canvas-demo-workspace")
+DEFAULT_ROOT = Path(__file__).resolve().parents[2] / "canvas-demo-workspace"
 PRODUCT_ID = "demo_live"
 MARKER = ".canvas_demo"
 

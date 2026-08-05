@@ -29,13 +29,14 @@ class LauncherConfigTests(unittest.TestCase):
         )
         self.assertEqual([spec.name for spec in specs], ["agent", "web", "workbench"])
         agent, web, workbench = specs
+        self.assertTrue(agent.command[0])
+        self.assertIn(Path(agent.command[0]).name.casefold(), {"bun", "bun.exe", "bun.cmd"})
         self.assertEqual(
-            agent.command,
+            agent.command[1:],
             (
-                r"C:\Users\John\.bun\bin\bun.exe",
                 "run",
                 "--cwd",
-                "D:/dev/infinite-canvas/canvas-agent",
+                f"{REPO_ROOT.parent}/infinite-canvas/canvas-agent",
                 "dev",
             ),
         )

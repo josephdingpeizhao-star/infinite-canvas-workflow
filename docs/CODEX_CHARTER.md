@@ -15,7 +15,7 @@
 
 - 产品：画布创作工作台，批量生产电商产品图。管线：identity → style_master → angle_inventory → main_vc → detail_vc → final_prompts → integrity 闸门 → renders（qc 休眠）。**只有 renders 花真钱（$0.06/张）**；上游步骤走本地 codex，钉死 gpt-5.5 + xhigh（thread+turn 双层显式），零美元。
 - 主仓（Git 根＝双层同名嵌套的内层）：`D:\onedrive\OneDrive\Desktop\杯类6.22版本代码仓库（水壶类）备份\杯类6.22版本代码仓库（水壶类）备份`。后端逻辑在 `canvas-bridge/`（纯标准库），启动器在 `launcher/`，品类配方在 `categories/`（纯数据、运行时实时生效），测试在 `tests/`。
-- 前端 fork：`D:\dev\infinite-canvas`，**分支必须始终停在 `workflow-editor`**。低侵入规则：只允许新增文件 + 在 `FORK_NOTES.md` 登记锚点，逻辑优先放 canvas-bridge；fork 任务白名单必须含 `CHANGELOG.md` 与 `docs/content/docs/progress/pending-test.mdx`（fork 文档不写日期）；`dist` 为本机产物不入提交；canvas-agent 走 tsx 直读源码。
+- 前端 fork：`<伞形根>\infinite-canvas`（迁移前为 `D:\dev\infinite-canvas`），**分支必须始终停在 `workflow-editor`**。低侵入规则：只允许新增文件 + 在 `FORK_NOTES.md` 登记锚点，逻辑优先放 canvas-bridge；fork 任务白名单必须含 `CHANGELOG.md` 与 `docs/content/docs/progress/pending-test.mdx`（fork 文档不写日期）；`dist` 为本机产物不入提交；canvas-agent 走 tsx 直读源码。
 - 权威文档（先读再动手）：`docs/CANVAS_PROJECT_STATE.md`（唯一权威）、`docs/PRODUCT_BLUEPRINT.md`、`canvas-bridge/README.md`、fork `FORK_NOTES.md`。
 - 排障资产：批次账本 `manifests/<批次>.events.jsonl` 在仓库内可直接读；工作台日志（`~/.infinite-canvas/logs/`）与 codex rollout（`~/.codex/sessions/`）在 Codex 沙箱外——需要时开列清单由顾问或用户取片段。
 
@@ -24,7 +24,7 @@
 1. **涉钱**：renders 永不自动重试；费用确认卡是唯一人工费用关卡；每次重提须重新报价并由用户亲手确认（决策⑬/⑰）。
 2. **只严不宽**：严禁放宽 codex_dev_downstream / qc / executor / 闸门的任何既有校验。检测器**精度修复**不算放宽，但必须自证真实违规仍被拦截并做反向探测。
 3. **品类即数据**：严禁按品类写代码分支，品类差异全部进 `categories/` 配方。
-4. **密钥**：真实密钥在 `~/.infinite-canvas/render-credentials.json` 与 `canvas-agent.json`，**绝不读取、打印、复制**；仓库文件、Git 提交、任何输出零密钥；用户的 `~/.codex/config.toml` 绝不动。
+4. **密钥**：真实密钥仅允许存在于 `deploy/credentials/` 与本机个人目录 `~/.infinite-canvas/` 两处；仓库仅限公司内部私有使用，密钥禁止进入公开渠道。除 `deploy/credentials/` 外，其余仓库文件、Git 提交信息、日志、账本、简报及任何输出仍须保持零密钥；用户的 `~/.codex/config.toml` 不随部署包迁移且绝不改动。
 5. **零费用测试**：所有测试离线——tempfile、假 transport、不绑真实端口、不调真实模型、不触达本机外资源（该红线只约束新写测试，既有离线套件照常全量跑）。
 6. 完整性闸门 `scripts/validate_final_prompt_integrity.py` 永远禁止与编译期共用实现；纠正回合只给字面判据，不重述教学。
 7. 休眠三件套（QC、收货关账、上桌返修）**代码零删除**；`盘子_20260728` 以 completed+open 为正式终态不关账。

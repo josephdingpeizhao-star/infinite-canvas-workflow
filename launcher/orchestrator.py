@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from launcher.process_control import ProcessControlError, matches_identity
 from launcher.render_credentials import RenderCredentials
+from launcher.runtime_paths import base_context, expand_template, resolve_dist_root
 from launcher.state_store import StateFileError, StateStore
 
 
@@ -62,19 +63,12 @@ class LaunchResult:
     already_running: bool = False
 
 
-def _expand_template(value: str, context: Mapping[str, str]) -> str:
-    try:
-        return value.format_map(context)
-    except KeyError as error:
-        raise RuntimeError(f"启动配置包含未知占位符：{error.args[0]}") from None
-
-
 def _spec_from_config(name: str, value: Mapping[str, Any], context: Mapping[str, str]) -> ServiceSpec:
     return ServiceSpec(
         name=name,
         label=str(value["label"]),
-        command=tuple(_expand_template(item, context) for item in value["command"]),
-        cwd=Path(_expand_template(str(value["cwd"]), context)).expanduser(),
+        command=tuple(expand_template(item, context) for item in value["command"]),
+        cwd=Path(expand_template(str(value["cwd"]), context)).expanduser(),
         ports=tuple(int(port) for port in value["ports"]),
         health_url=str(value["health"]["url"]),
         expected_statuses=tuple(int(status) for status in value["health"]["expected_statuses"]),
@@ -94,8 +88,9 @@ def build_service_specs(
     render_credentials: RenderCredentials | None = None,
 ) -> tuple[ServiceSpec, ...]:
     launcher_dir = Path(launcher_dir).resolve()
-    dist_root = Path(config["web"]["dist"]["root"]).expanduser()
+    dist_root = resolve_dist_root(config, launcher_dir)
     context = {
+        **base_context(launcher_dir),
         "launcher_dir": str(launcher_dir),
         "pythonw": str(Path(pythonw_path)),
         "dist_root": str(dist_root),

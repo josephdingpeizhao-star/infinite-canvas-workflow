@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 import sys
 from logging import Logger
 from pathlib import Path
@@ -24,6 +25,7 @@ from launcher.render_credentials import (
     RenderCredentialsError,
     load_render_credentials,
 )
+from launcher.runtime_paths import resolve_dist_root
 from launcher.state_store import StateStore
 from launcher.static_server import StaticServerError, validate_dist_root
 from launcher.ui import make_browser_opener, show_message_box
@@ -84,8 +86,10 @@ def main() -> int:
             backups=int(runtime["log_backups"]),
         )
         pythonw_path = _resolve_pythonw()
+        if shutil.which("bun") is None:
+            raise RuntimeError("未找到 bun，请先安装 bun 并确保命令行可以找到它。")
         if config["web"]["mode"] == "dist":
-            validate_dist_root(Path(config["web"]["dist"]["root"]).expanduser())
+            validate_dist_root(resolve_dist_root(config, LAUNCHER_DIR))
         render_credentials = _load_render_credentials_for_launcher(config, logger)
         specs = build_service_specs(
             config,

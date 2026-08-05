@@ -48,7 +48,7 @@
 - 载荷摘要只覆盖 `categories/_shared/batch-intake-contract.json` 中的字段名、类型和必填结构语义。表单文案、默认值与手持范围来自品类端点，不进入摘要，调整这些内容不要求重建 fork 的 `web/dist`；只有真正新增、删除或改变载荷字段结构时，才必须同步两端摘要并重建 dist。
 - `codex_dev_qc.py`：`codex-dev / qc` 的纯标准库业务模块。它在首个传输前按 manifest 核对整批 PNG 编号、1:1/3:4 比例、最终提示词绑定、手持声明、白底参考图格式、QC Skill、当前品类 QC 配方、`qc_report.schema.json` 合同以及 20/28 MiB 请求上限；随后沿用每组最多两图、末组全批总结的既有分批体系。全部批次通过后才以排他原子方式只写 `qc_report.json`，永不覆盖既有报告，也不改动同目录完整性报告。
 - `ic_client.py`：canvas-agent HTTP 客户端。从 `~/.infinite-canvas/canvas-agent.json` 读取 url/token。
-- `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `D:/dev/canvas-demo-workspace`，带安全标记，绝不写仓库）；M1-b 只新增 `--prepare-workflow-demo` 分支，补齐 demo 路由所需的最小档案且永不覆盖既有文件。
+- `make_demo_workspace.py`：演示用外部工作区脚手架（默认 `<伞形根>/canvas-demo-workspace`，带安全标记，绝不写仓库）；M1-b 只新增 `--prepare-workflow-demo` 分支，补齐 demo 路由所需的最小档案且永不覆盖既有文件。
 - `spike_canvas_push.py`：驱动脚本，见 `--help`。`--clear-projection <manifest>` 只删除指定批次当前活跃且在册的投影节点，并保护其他批次、未知同前缀节点和用户自建节点；`--serve` 正常仍一次提交完整初始投影，若网页端对整批投影超时，则保持原操作顺序按小批次回退，避免运行台停在只完成部分节点的旧状态。M1-b 另增 `--serve-workflow-demo` 与只供人工验收使用的 `--clear-workflow-demo <machine-id>`；后者只删除精确 `wfdemo-output:` 前缀结果，未接入启动器。
 
 ## 前置条件
