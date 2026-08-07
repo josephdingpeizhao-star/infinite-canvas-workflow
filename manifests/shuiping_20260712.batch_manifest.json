@@ -13,61 +13,61 @@
   "next_skill": "workflow-router",
   "workspace": {
     "mode": "external",
-    "root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712",
+    "root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712",
     "layout": "external_run_folder_v1",
-    "manifests_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\manifests",
-    "inputs_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\inputs",
-    "drafts_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\drafts",
-    "artifacts_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts",
-    "outputs_root": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\outputs"
+    "manifests_root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\manifests",
+    "inputs_root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\inputs",
+    "drafts_root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\drafts",
+    "artifacts_root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts",
+    "outputs_root": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\outputs"
   },
   "inputs": {
     "white_bg_images": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\inputs\\white_bg"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\inputs\\white_bg"
     ],
     "style_reference_images": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\inputs\\style_refs"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\inputs\\style_refs"
     ],
     "set_group_images": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\inputs\\set_group"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\inputs\\set_group"
     ],
     "component_white_bg_images": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\inputs\\component_white_bg"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\inputs\\component_white_bg"
     ]
   },
   "drafts": {
-    "product_identity_draft": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\drafts\\product_identity_draft.md",
-    "style_master_draft": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\drafts\\style_master_draft.md"
+    "product_identity_draft": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\drafts\\product_identity_draft.md",
+    "style_master_draft": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\drafts\\style_master_draft.md"
   },
   "artifacts": {
-    "asset_manifest": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\manifests\\asset_manifest.json",
-    "product_identity_archive": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\identity",
-    "style_master": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\style_master",
-    "angle_inventory": "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\angle_inventory",
+    "asset_manifest": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\manifests\\asset_manifest.json",
+    "product_identity_archive": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\identity",
+    "style_master": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\style_master",
+    "angle_inventory": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\angle_inventory",
     "main_variable_configs": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\variable_configs"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\variable_configs"
     ],
     "detail_variable_configs": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\variable_configs"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\variable_configs"
     ],
     "set_product_identity": "",
     "set_angle_layout_inventory": "",
     "final_prompts": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\final_prompts"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\final_prompts"
     ],
     "comfyui_jobs": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\comfyui_jobs"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\comfyui_jobs"
     ],
     "qc_reports": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\artifacts\\qc_reports"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\artifacts\\qc_reports"
     ]
   },
   "outputs": {
     "renders": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\outputs\\renders"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\outputs\\renders"
     ],
     "repaired": [
-      "D:\\onedrive\\OneDrive\\Desktop\\杯类6.22版本代码仓库（水壶类）备份\\杯类\\shuiping_20260712\\outputs\\repaired"
+      "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\shuiping_20260712\\outputs\\repaired"
     ]
   },
   "missing_required_artifacts": [],
