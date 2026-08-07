@@ -14,7 +14,7 @@
 ## 1. 产品与架构事实
 
 - 产品：画布创作工作台，批量生产电商产品图。管线：identity → style_master → angle_inventory → main_vc → detail_vc → final_prompts → integrity 闸门 → renders（qc 休眠）。**只有 renders 花真钱（$0.06/张）**；上游步骤走本地 codex，钉死 gpt-5.5 + xhigh（thread+turn 双层显式），零美元。
-- 主仓（Git 根＝双层同名嵌套的内层）：`D:\onedrive\OneDrive\Desktop\杯类6.22版本代码仓库（水壶类）备份\杯类6.22版本代码仓库（水壶类）备份`。后端逻辑在 `canvas-bridge/`（纯标准库），启动器在 `launcher/`，品类配方在 `categories/`（纯数据、运行时实时生效），测试在 `tests/`。
+- 主仓（Git 根＝双层同名嵌套的内层）：`D:\onedrive\OneDrive\Desktop\无限画布工作流\无限画布工作流`（2026-08-07 DP-04 起用新名，旧名「杯类6.22版本代码仓库（水壶类）备份」已全面废弃）。后端逻辑在 `canvas-bridge/`（纯标准库），启动器在 `launcher/`，品类配方在 `categories/`（纯数据、运行时实时生效），测试在 `tests/`。
 - 前端 fork：`<伞形根>\infinite-canvas`（迁移前为 `D:\dev\infinite-canvas`），**分支必须始终停在 `workflow-editor`**。低侵入规则：只允许新增文件 + 在 `FORK_NOTES.md` 登记锚点，逻辑优先放 canvas-bridge；fork 任务白名单必须含 `CHANGELOG.md` 与 `docs/content/docs/progress/pending-test.mdx`（fork 文档不写日期）；`dist` 为本机产物不入提交；canvas-agent 走 tsx 直读源码。
 - 权威文档（先读再动手）：`docs/CANVAS_PROJECT_STATE.md`（唯一权威）、`docs/PRODUCT_BLUEPRINT.md`、`canvas-bridge/README.md`、fork `FORK_NOTES.md`。
 - 排障资产：批次账本 `manifests/<批次>.events.jsonl` 在仓库内可直接读；工作台日志（`~/.infinite-canvas/logs/`）与 codex rollout（`~/.codex/sessions/`）在 Codex 沙箱外——需要时开列清单由顾问或用户取片段。
