@@ -46,12 +46,10 @@ def _render_snapshot(renders_dir: Path) -> dict[str, str]:
 
 def _valid_existing(order: RepairWorkOrder) -> bool:
     try:
-        width, height = read_png_dimensions(order.task.output_path)
+        read_png_dimensions(order.task.output_path)
     except (OSError, ValueError):
         return False
-    if order.output_type == "main":
-        return width == height
-    return width * 4 == height * 3
+    return True
 
 
 class QcRepairExecutor:
@@ -86,29 +84,10 @@ class QcRepairExecutor:
         self,
         order: RepairWorkOrder,
     ) -> ImageProductionExecutor:
-        workspace = self.context.manifest.get("workspace")
-        if not isinstance(workspace, Mapping):
-            raise ExecutorExecutionError("manifest.workspace 缺失")
-        workspace_root = _first_path(workspace.get("root"), "workspace.root")
-        audit_root = workspace_root / "artifacts" / "audit" / "repaired"
-
-        def on_auto_padded(record: Mapping[str, Any]) -> None:
-            self._event(
-                "repair_auto_padded",
-                config_id=str(record["config_id"]),
-                original_sha256=str(record["original_sha256"]),
-                original_width=int(record["original_width"]),
-                original_height=int(record["original_height"]),
-                padded_width=int(record["padded_width"]),
-                padded_height=int(record["padded_height"]),
-            )
-
         delegate = ProductionRenderObserverExecutor(
             self.image_executor_factory(self.context),
             batch_id=self.plan.product_id,
-            audit_root=audit_root,
             on_output=lambda _artifact: None,
-            on_auto_padded=on_auto_padded,
         )
         single = RenderTaskPlan(
             tasks=(order.task,),
@@ -172,7 +151,7 @@ class QcRepairExecutor:
                             "repair_item_failed",
                             step="repair",
                             config_id=order.config_id,
-                            detail="已有返修图比例或格式无效，未覆盖且未自动重试",
+                            detail="已有返修图格式无效，未覆盖且未自动重试",
                         )
                     continue
                 try:

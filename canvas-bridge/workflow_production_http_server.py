@@ -248,12 +248,10 @@ class WorkflowProductionHttpApplication:
     @staticmethod
     def _accepted(path: Path) -> bool:
         try:
-            artifact = artifact_from_path("batch", path)
+            artifact_from_path("batch", path)
         except (OSError, ValueError):
             return False
-        if artifact.kind == "main":
-            return artifact.width == artifact.height
-        return artifact.width * 4 == artifact.height * 3
+        return True
 
     def quote(self, batch_id: str) -> dict[str, Any]:
         manifest, _manifest_path, workspace = self._manifest(batch_id)

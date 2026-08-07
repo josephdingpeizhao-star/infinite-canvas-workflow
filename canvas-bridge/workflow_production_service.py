@@ -241,12 +241,7 @@ def discover_source_artifacts(
                 artifact = artifact_from_path(batch_id, path, source=source)
             except (OSError, ValueError):
                 continue
-            accepted = (
-                artifact.width == artifact.height
-                if artifact.kind == "main"
-                else artifact.width * 4 == artifact.height * 3
-            )
-            if accepted and artifact.config_id not in found:
+            if artifact.config_id not in found:
                 found[artifact.config_id] = artifact
     return tuple(found[key] for key in sorted(found, key=lambda item: (not item.startswith("main_"), item)))
 
@@ -1043,7 +1038,6 @@ class WorkflowProductionService:
         manifest: Mapping[str, Any],
         manifest_path: Path,
         on_output: Callable[[WorkflowProductionArtifact], None],
-        on_auto_padded: Callable[[Mapping[str, Any]], None] | None = None,
     ) -> Executor:
         if step in UPSTREAM_STEPS or step == "qc":
             return executor_factory.build_executor("codex-dev", manifest, manifest_path)
@@ -1061,37 +1055,15 @@ class WorkflowProductionService:
             image_observer = ProductionRenderObserverExecutor(
                 OpenAIImageExecutor(context),
                 batch_id=str(manifest.get("product_id") or ""),
-                audit_root=workspace / "artifacts" / "audit",
                 on_output=on_output,
-                renders_root=render_roots[0],
                 expected_ids=expected_ids,
-                on_auto_padded=on_auto_padded,
             )
-            image_observer.prepare()
 
             def image_factory(_inner_context: ExecutorContext) -> Executor:
                 return image_observer
 
             return ImageProductionExecutor(context, image_executor_factory=image_factory)
         raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
-
-    @staticmethod
-    def _record_auto_padding(
-        journal: Path,
-        request_id: str,
-        record: Mapping[str, Any],
-    ) -> None:
-        run_controller.append_event(
-            journal,
-            "render_auto_padded",
-            request_id=request_id,
-            config_id=str(record["config_id"]),
-            original_sha256=str(record["original_sha256"]),
-            original_width=int(record["original_width"]),
-            original_height=int(record["original_height"]),
-            padded_width=int(record["padded_width"]),
-            padded_height=int(record["padded_height"]),
-        )
 
     @staticmethod
     def _record_content_correction(
@@ -1563,7 +1535,6 @@ class WorkflowProductionService:
         manifest: Mapping[str, Any],
         manifest_path: Path,
         on_output: Callable[[WorkflowProductionArtifact], None],
-        on_auto_padded: Callable[[Mapping[str, Any]], None],
         journal: Path,
         request_id: str,
         machine: Mapping[str, Any],
@@ -1579,7 +1550,6 @@ class WorkflowProductionService:
                 manifest,
                 manifest_path,
                 on_output,
-                on_auto_padded,
             )
         else:
             executor = self.executor_builder(step, manifest, manifest_path, on_output)
@@ -1871,9 +1841,6 @@ class WorkflowProductionService:
                     ]
                 )
 
-            def on_auto_padded(record: Mapping[str, Any]) -> None:
-                self._record_auto_padding(journal, request_id, record)
-
             attempt = 1
             while True:
                 try:
@@ -1882,7 +1849,6 @@ class WorkflowProductionService:
                         manifest=manifest,
                         manifest_path=manifest_path,
                         on_output=on_output,
-                        on_auto_padded=on_auto_padded,
                         journal=journal,
                         request_id=request_id,
                         machine=machine,

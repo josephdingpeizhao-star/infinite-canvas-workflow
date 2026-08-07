@@ -762,61 +762,46 @@ class ProductionServiceTest(unittest.TestCase):
         events = [json.loads(line) for line in (self.repo / "manifests" / "cup.events.jsonl").read_text(encoding="utf-8").splitlines()]
         self.assertIn("image_persisted", [event["event"] for event in events])
 
-    def test_auto_padding_event_is_safe_and_precedes_image_persisted(self) -> None:
-        image = self.workspace / "outputs" / "renders" / "detail_02.png"
-        write_placeholder_png(image, width=128, height=192, kind="detail", ordinal=2)
-        client = FakeCanvasClient(command="run: renders")
+    def test_unusual_detail_completes_and_records_actual_dimensions_without_padding_event(self) -> None:
+        image = self.workspace / "outputs" / "renders" / "detail_01.png"
+        write_placeholder_png(image, width=43, height=64, kind="detail", ordinal=1)
+        artifact = artifact_from_path("cup", image)
+        client = FakeCanvasClient()
+        executed: list[str] = []
+
+        def artifacts(_manifest):
+            return (artifact,) if "renders" in executed else ()
+
         service = production_service.WorkflowProductionService(
             self.repo,
             client=client,
+            executor_builder=lambda step, _manifest, _path, on_output: FakeExecutor(
+                step,
+                executed,
+                on_output=on_output,
+                artifact=artifact,
+            ),
+            route_reader=self._route_reader(executed),
+            integrity_reader=self._integrity_reader(executed),
+            artifact_reader=artifacts,
             clock_ms=lambda: 1_100,
             sleep=lambda _seconds: None,
             persistence_timeout_ms=50,
+            environment={"RENDER_ALLOW_REAL_EXECUTION": "1"},
         )
-        journal = self.repo / "manifests" / "cup.events.jsonl"
-        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
 
-        def on_auto_padded(record):
-            unsafe_record = {**record, "path": r"C:\private\detail_02.png"}
-            service._record_auto_padding(journal, "req-001", unsafe_record)
-
-        service._build_executor(
-            "renders",
-            manifest,
-            self.manifest,
-            lambda artifact: service._project_artifact(
-                client.state["nodes"][0],
-                artifact,
-                journal,
-                "req-001",
-            ),
-            on_auto_padded,
-        )
+        service.poll_once()
 
         events = [
             json.loads(line)
-            for line in journal.read_text(encoding="utf-8").splitlines()
+            for line in (self.repo / "manifests" / "cup.events.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
         ]
-        padded = artifact_from_path("cup", image)
-        self.assertEqual((144, 192), (padded.width, padded.height))
-        self.assertEqual(["render_auto_padded", "image_persisted"], [event["event"] for event in events])
-        auto_padded = events[0]
-        self.assertEqual("req-001", auto_padded["request_id"])
-        self.assertEqual(
-            {
-                "config_id",
-                "event",
-                "original_height",
-                "original_sha256",
-                "original_width",
-                "padded_height",
-                "padded_width",
-                "request_id",
-                "ts",
-            },
-            set(auto_padded),
-        )
-        self.assertNotIn("sha256", auto_padded)
+        persisted = next(event for event in events if event["event"] == "image_persisted")
+        self.assertEqual((43, 64), (persisted["width"], persisted["height"]))
+        self.assertNotIn("render_auto_padded", [event["event"] for event in events])
+        self.assertIn("renders", executed)
 
     def test_gate_one_pauses_before_integrity_when_image_gate_is_closed(self) -> None:
         client = FakeCanvasClient()
@@ -1467,6 +1452,19 @@ class ProductionServiceTest(unittest.TestCase):
         self.assertEqual(["renders"], [item.source for item in renders])
         self.assertEqual(["repaired"], [item.source for item in repaired])
         self.assertEqual(render_path, combined[0].path)
+
+    def test_source_discovery_accepts_unusual_ratios_but_filters_bad_and_unregistered_pngs(self) -> None:
+        renders_root = self.workspace / "outputs" / "renders"
+        write_placeholder_png(renders_root / "main_01.png", width=43, height=64, kind="main", ordinal=1)
+        write_placeholder_png(renders_root / "detail_01.png", width=43, height=64, kind="detail", ordinal=1)
+        (renders_root / "detail_02.png").write_bytes(b"not-a-png")
+        write_placeholder_png(renders_root / "main_07.png", width=43, height=64, kind="main", ordinal=7)
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+
+        artifacts = production_service.discover_source_artifacts(manifest, "renders")
+
+        self.assertEqual(["main_01", "detail_01"], [item.config_id for item in artifacts])
+        self.assertEqual([(43, 64), (43, 64)], [(item.width, item.height) for item in artifacts])
 
     def test_repaired_projection_is_pure_and_never_builds_an_executor(self) -> None:
         repaired_root = self.workspace / "outputs" / "repaired"

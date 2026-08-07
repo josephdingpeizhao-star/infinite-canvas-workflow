@@ -180,28 +180,39 @@ class QcRepairExecutorTest(unittest.TestCase):
             self.assertEqual(("main_01",), result.metadata["skipped"])
             self.assertEqual(len(plan.work_orders) - 1, len(image_executor.calls))
 
-    def test_two_by_three_detail_is_audited_and_padded_under_repaired_audit(self) -> None:
+    def test_existing_unusual_ratio_is_skipped_without_transport_or_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture, plan, image_executor, _journal, executor = self._build(Path(tmp))
+            existing = fixture.repaired_dir / "main_01.png"
+            write_png(existing, 43, 64)
+            before = existing.read_bytes()
+
+            result = executor.execute(ExecutionRequest(step="repair"))
+
+            self.assertEqual(before, existing.read_bytes())
+            self.assertNotIn("main_01", [call.payload.output_path.stem for call in image_executor.calls])
+            self.assertEqual(("main_01",), result.metadata["skipped"])
+            self.assertEqual(len(plan.work_orders) - 1, len(image_executor.calls))
+
+    def test_two_by_three_detail_is_persisted_unchanged_without_audit_event(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             recorder = RecordingImageExecutor(two_by_three_ids={"detail_05"})
             fixture, _plan, _image_executor, journal, executor = self._build(Path(tmp), recorder=recorder)
+            audit_root = (
+                Path(fixture.bundle.manifest["workspace"]["root"])
+                / "artifacts"
+                / "audit"
+                / "repaired"
+            )
 
             executor.execute(ExecutionRequest(step="repair"))
 
             from PIL import Image
 
             with Image.open(fixture.repaired_dir / "detail_05.png") as image:
-                self.assertEqual((18, 24), image.size)
-            audit = (
-                Path(fixture.bundle.manifest["workspace"]["root"])
-                / "artifacts"
-                / "audit"
-                / "repaired"
-                / "render_originals"
-                / "detail_05.png"
-            )
-            with Image.open(audit) as image:
                 self.assertEqual((16, 24), image.size)
-            self.assertIn("repair_auto_padded", [event["event"] for event in read_events(journal)])
+            self.assertFalse(audit_root.exists())
+            self.assertNotIn("repair_auto_padded", [event["event"] for event in read_events(journal)])
 
     def test_existing_lock_rejects_without_image_calls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

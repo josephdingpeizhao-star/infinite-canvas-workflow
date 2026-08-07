@@ -176,7 +176,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 - 第三批第二次真实 QC 已于 16:38:02 成功：175 项检查为 153 pass / 18 fail / 4 needs_review，18 条 repair targets 聚合为 8 张待返修图；报告明确未新增生成方向。110 行事件账本与 52,403 字节报告已独立入账。
 - CLI 形态为 `python canvas-bridge/qc_repair_cli.py --batch-manifest <manifest> --command "run: repair"`。它不接画布；现有 `RUN_VERBS`、`parse_run_content()` 和 `resolve_command()` 原样保留，repair 只使用 `run_controller` 新增的 CLI 专用门禁。
 - 每图提示词只由原 final prompt、该图全部可执行 repair goals 和原 negative prompt组成；产品身份、绑定角度与画布比例保持不变。`detail_06` 镜像 needs_review 不进入自动目标，`return_stage` 不参与机器分流。
-- 每图通过既有 image-production/openai-image 链生成到 `outputs/repaired/`，参考图与原 renders 同源；renders 不覆盖。单张失败继续但不重试，部分失败清单收尾后停机，不自动复检。2:3 原件审计在 `artifacts/audit/repaired/render_originals/`。
+- 每图通过既有 image-production/openai-image 链生成到 `outputs/repaired/`，参考图与原 renders 同源；renders 不覆盖。单张失败继续但不重试，部分失败清单收尾后停机，不自动复检。渲染结果不做比例验收，只认有效 PNG 与登记图位；比例由人工把关。
 - 离线实现完成后，第三批于 2026-07-24 真实执行 8/8 返修成功；25 行运行事件已独立入账。用户曾确认 8 张返修均可接受，本批定位为流程验证批，`detail_06` needs_review 关闭；随后更晚的正式关账事件成为交付选图的唯一依据，最终选择为 6 张 repaired 与 8 张 renders，不再用“是否存在返修图”自行推断。
 
 ### M2-c 第二段前置：completed 续行与 QC 进度心跳
@@ -247,7 +247,7 @@ M2-a 全程只做本机登记与逐字节原图保全，不访问外网、不调
 1. `image-production / integrity` 调用既有校验脚本的 `--prompts-only` 模式，只按本批确认的主图和详情图张数检查数量与顺序，并检查既有 Schema、来源文件与逐项解析指纹、手持数量、锚定“画布比例固定为”短语的 1:1/3:4 字面、manifest 已确认高度语义和 UTF-8/Unicode 完整性。比例短语与比例值之间允许零个或多个空白，裸 `1:1` / `3:4` 仍不合格。它不读取 ComfyUI 作业清单，并在 JSON/Markdown 报告中逐项记录跳过旧内容启发式扫描与旧编译器字面扫描的原因；默认 ComfyUI 模式未改变。
 2. 门禁通过后，`image-production / renders` 从索引读取本批全部项目，逐项绑定 manifest 白底图目录中唯一同名参考图，并把 `final_prompt` 原文与 `negative_prompt` 原文用固定分隔符组合；不改写正向正文。
 3. 真实传输前必须同时满足 `RENDER_ALLOW_REAL_EXECUTION=1` 与非空 `OPENAI_API_KEY`。可选 `RENDER_MAX_IMAGES` 只执行前 N 个尚缺图片；已有 `<config_id>.png` 自动跳过。第三张失败时前两张保留，下一次从缺口继续，不覆盖已有图片。连接、正常响应读取或错误响应读取超时均统一为不含密钥、提示词和原始响应的中文失败；超时永不自动重试，也不留下半成品。
-4. 主图请求固定 `1024x1024`，详情图请求继续使用既有 `1024x1536` 映射，最终统一要求精确 3:4。供应端原图已是 3:4 时保持原文件；精确 2:3 时先保留审计原件，再自动扩展不足方向的镜像虚化背景，1024×1536 固定左右各补 64px 为 1152×1536，原商品与文字区域不裁剪、不缩放、不拉伸；其他异常比例仍停机。首批历史上的 `detail_02` 与 `detail_05` 已按相同参数人工扩边并保留原件；2026-07-23 起该参数由观察器自动执行，扩边事实以 `render_auto_padded` 记录，扩边后 SHA 仍由 `image_persisted` 记录。
+4. 主图请求固定 `1024x1024`，详情图请求继续使用既有 `1024x1536` 映射。渲染结果不做比例验收，只认有效 PNG 与登记图位；比例由人工把关。
 5. `shuiping_20260712` 已完成 prompts-only 门禁、模型探测、全部真实出图和真实 QC。六张主图均为有效 `1254x1254` PNG；八张详情图均为有效且精确 3:4 的 PNG。正式 renders 恰好 14 个文件，QC 后字节数不变；事件账本 72 行，唯一 `qc_report.json` 已生成，真实路由为 `ready`。ComfyUI 作业与 repaired 均为 0；返修决策见 `docs/CANVAS_PROJECT_STATE.md` §8。
 6. `杯子_20260722` 已完成 14/14 出图、第二次真实 QC、8/8 真实返修与 NC-03 正式关账；146 行事件账本已归档。交付权威选择为 6 张 repaired 与 8 张 renders；NC-04 离线打包能力已实现，但真实交付包和 `delivery_packaged` 事件留给用户后续主动运行 CLI 生成。
 
