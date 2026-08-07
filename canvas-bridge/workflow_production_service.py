@@ -74,6 +74,7 @@ _RENDER_FAILURE_CODES = frozenset(
         "render_response_invalid",
         "render_timeout",
         "render_network_error",
+        "render_image_download_failed",
         "render_input_missing",
         "render_inputs_unavailable",
         "render_pipeline_error",
@@ -104,6 +105,7 @@ _IMAGE_SERVICE_FAILURE_CODES = frozenset(
         "render_response_invalid",
         "render_timeout",
         "render_network_error",
+        "render_image_download_failed",
     }
 )
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
@@ -1461,6 +1463,36 @@ class WorkflowProductionService:
                     else "渲染失败：图片服务等待超时"
                 )
             ]
+        elif code == "render_image_download_failed":
+            status = (
+                f"（HTTP {fields['http_status']}）"
+                if "http_status" in fields
+                else ""
+            )
+            shape_parts: list[str] = []
+            if "response_top_keys" in fields:
+                shape_parts.append(
+                    f"响应字段：{'、'.join(str(item) for item in fields['response_top_keys'])}"
+                )
+            if "response_data0_keys" in fields:
+                shape_parts.append(
+                    "data[0] 字段："
+                    + "、".join(str(item) for item in fields["response_data0_keys"])
+                )
+            shape_sentence = f"{'；'.join(shape_parts)}。" if shape_parts else ""
+            workbench = (
+                f"图片服务已返回图片链接，但图片未能取回{status}。"
+                f"{shape_sentence}{count_sentence}{stop_sentence}"
+            )
+            event_parts = [
+                (
+                    f"渲染失败：图片未能取回 HTTP {fields['http_status']}"
+                    if "http_status" in fields
+                    else "渲染失败：图片未能取回"
+                )
+            ]
+            if shape_sentence:
+                event_parts.append(shape_sentence.rstrip("。"))
         else:
             workbench = f"无法连接图片服务。{count_sentence}{stop_sentence}"
             event_parts = ["渲染失败：无法连接图片服务"]
