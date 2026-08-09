@@ -29,7 +29,7 @@ def load_batch_intake_contract(repository_root: Path) -> dict[str, Any]:
     if (
         not isinstance(value, dict)
         or set(value) != {"schema_version", "contract", "payload"}
-        or value["schema_version"] != 2
+        or value["schema_version"] != 3
         or value["contract"] != "canvas_batch_intake_payload"
         or not isinstance(value["payload"], dict)
     ):

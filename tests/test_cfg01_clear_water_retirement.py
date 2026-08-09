@@ -39,7 +39,7 @@ from codex_dev_downstream import (  # noqa: E402
 
 
 FORK_CONTRACT_SHA256 = (
-    "ac9e633c814b2032eb5d72c436a773c03a7dc3f4500d3383580ee7b3f3c18de0"
+    "266f01ac2532a334e8b4378ee369d49a9a6f97cbe256fbce8daef06b357b9a61"
 )
 NEW_FACTS = {
     "product_type": "杯子",
@@ -272,6 +272,7 @@ class Cfg01ClearWaterRetirementTest(unittest.TestCase):
                     "requestedAt": 19_000,
                     "category": "杯类",
                     "contractHash": FORK_CONTRACT_SHA256,
+                    "batch_type": "single",
                     "facts": dict(NEW_FACTS),
                 },
             },

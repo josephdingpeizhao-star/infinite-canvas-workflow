@@ -96,6 +96,7 @@ def _duplicate_hash_canvas_state() -> tuple[dict[str, object], dict[str, object]
                 "requestedAt": 1_000,
                 "category": "杯类",
                 "contractHash": batch_controller.batch_intake_contract_sha256(ROOT),
+                "batch_type": "single",
                 "facts": _facts(),
             },
         },

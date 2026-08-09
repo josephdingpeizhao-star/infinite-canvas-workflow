@@ -16,7 +16,20 @@ from pathlib import Path
 from typing import Any
 
 import batch_identity
-from batch_intake_controller import BatchIntakeRequest, ConfirmedFacts, SourceImage
+from batch_intake_controller import (
+    BATCH_TYPE_SET,
+    BATCH_TYPE_SINGLE,
+    COMPONENT_WHITE_BG_IMAGE_COUNT_MAXIMUM,
+    COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM,
+    IMAGE_CATEGORY_COMPONENT_WHITE_BG,
+    IMAGE_CATEGORY_SET_GROUP,
+    IMAGE_CATEGORY_WHITE_BG,
+    SET_GROUP_IMAGE_COUNT_MAXIMUM,
+    SET_GROUP_IMAGE_COUNT_MINIMUM,
+    BatchIntakeRequest,
+    ConfirmedFacts,
+    SourceImage,
+)
 from batch_recycle_lock import (
     BatchOperationBusy,
     BatchOperationLock,
@@ -582,6 +595,38 @@ class BatchCreator:
         request: BatchIntakeRequest,
         uploaded_files: Sequence[UploadedFile],
     ) -> tuple[tuple[SourceImage, UploadedFile, str], ...]:
+        category_counts = {
+            category: sum(source.image_category == category for source in request.source_images)
+            for category in (
+                IMAGE_CATEGORY_WHITE_BG,
+                IMAGE_CATEGORY_SET_GROUP,
+                IMAGE_CATEGORY_COMPONENT_WHITE_BG,
+            )
+        }
+        if (
+            request.batch_type not in {BATCH_TYPE_SINGLE, BATCH_TYPE_SET}
+            or category_counts[IMAGE_CATEGORY_WHITE_BG] < 1
+            or (
+                request.batch_type == BATCH_TYPE_SINGLE
+                and (
+                    category_counts[IMAGE_CATEGORY_SET_GROUP] != 0
+                    or category_counts[IMAGE_CATEGORY_COMPONENT_WHITE_BG] != 0
+                )
+            )
+            or (
+                request.batch_type == BATCH_TYPE_SET
+                and not (
+                    SET_GROUP_IMAGE_COUNT_MINIMUM
+                    <= category_counts[IMAGE_CATEGORY_SET_GROUP]
+                    <= SET_GROUP_IMAGE_COUNT_MAXIMUM
+                    and COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM
+                    <= category_counts[IMAGE_CATEGORY_COMPONENT_WHITE_BG]
+                    <= COMPONENT_WHITE_BG_IMAGE_COUNT_MAXIMUM
+                )
+            )
+            or sum(category_counts.values()) != len(request.source_images)
+        ):
+            raise BatchCreationError("invalid_uploads", "原图清单不完整，未创建批次。")
         expected = {source.node_id: source for source in request.source_images}
         if not expected or len(expected) != len(request.source_images):
             raise BatchCreationError("invalid_uploads", "原图清单不完整，未创建批次。")
@@ -640,6 +685,8 @@ class BatchCreator:
             product_id,
             "--product-type",
             facts.product_type,
+            "--batch-type",
+            request.batch_type,
             "--category",
             request.category,
             "--height-cm",
@@ -702,7 +749,12 @@ class BatchCreator:
             forbid_pouring_and_heating=parsed.forbid_pouring_and_heating,
             missing_d_no_retake=parsed.missing_d_no_retake,
         )
-        if planned_facts != request.facts or manifest.get("category") != request.category:
+        if (
+            planned_facts != request.facts
+            or manifest.get("category") != request.category
+            or manifest.get("batch_type") != request.batch_type
+            or manifest.get("user_declared_set_product") is not (request.batch_type == "set")
+        ):
             raise BatchCreationError("planning_failed", "批次商品信息预检结果不一致，未创建任何批次文件。")
         try:
             planned_root = Path(manifest["workspace"]["root"]).resolve(strict=False)
@@ -735,13 +787,40 @@ class BatchCreator:
             relative = planned.relative_to(target_resolved)
             (stage / relative).mkdir(parents=True, exist_ok=True)
         (stage / "manifests").mkdir(parents=True, exist_ok=True)
-        white_bg = stage / "inputs" / "white_bg"
-        white_bg.mkdir(parents=True, exist_ok=True)
+        image_categories = {
+            IMAGE_CATEGORY_WHITE_BG: {
+                "directory": stage / "inputs" / "white_bg",
+                "path": "inputs/white_bg",
+                "asset_role": "white_bg",
+                "is_single_product_white_bg": True,
+                "is_set_group_shot": False,
+            },
+            IMAGE_CATEGORY_SET_GROUP: {
+                "directory": stage / "inputs" / "set_group",
+                "path": "inputs/set_group",
+                "asset_role": "set_group_shot",
+                "is_single_product_white_bg": False,
+                "is_set_group_shot": True,
+            },
+            IMAGE_CATEGORY_COMPONENT_WHITE_BG: {
+                "directory": stage / "inputs" / "component_white_bg",
+                "path": "inputs/component_white_bg",
+                "asset_role": "component_white_bg",
+                "is_single_product_white_bg": False,
+                "is_set_group_shot": False,
+            },
+        }
+        for category in image_categories.values():
+            category["directory"].mkdir(parents=True, exist_ok=True)
 
         assets: list[CreatedAsset] = []
         asset_manifest_entries: list[dict[str, Any]] = []
-        for index, (source, upload, uploaded_hash) in enumerate(validated, start=1):
-            destination = white_bg / source.name
+        category_indexes = {category: 0 for category in image_categories}
+        for source, upload, uploaded_hash in validated:
+            category = image_categories[source.image_category]
+            category_indexes[source.image_category] += 1
+            index = category_indexes[source.image_category]
+            destination = category["directory"] / source.name
             shutil.copyfile(upload.path, destination)
             destination_hash = _sha256_file(destination)
             if destination.stat().st_size != source.size or destination_hash != source.expected_sha256:
@@ -749,7 +828,7 @@ class BatchCreator:
                     "integrity_mismatch",
                     "原图复制前后不一致，已立即停止且未创建批次。",
                 )
-            relative_path = f"inputs/white_bg/{source.name}"
+            relative_path = f"{category['path']}/{source.name}"
             assets.append(
                 CreatedAsset(
                     source_node_id=source.node_id,
@@ -763,11 +842,11 @@ class BatchCreator:
             )
             asset_manifest_entries.append(
                 {
-                    "asset_id": f"white_bg_{index:03d}",
+                    "asset_id": f"{source.image_category}_{index:03d}",
                     "file_path": relative_path,
-                    "asset_role": "white_bg",
-                    "is_single_product_white_bg": True,
-                    "is_set_group_shot": False,
+                    "asset_role": category["asset_role"],
+                    "is_single_product_white_bg": category["is_single_product_white_bg"],
+                    "is_set_group_shot": category["is_set_group_shot"],
                     "is_style_reference": False,
                     "bound_angle_slot": "",
                     "component_id": "",

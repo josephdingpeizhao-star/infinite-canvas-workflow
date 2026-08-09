@@ -23,6 +23,7 @@ from batch_recycle_state import (
     BatchLifecycleReadError,
     read_batch_lifecycle,
 )
+from batch_type_gate import set_batch_blocked_message
 import executor_factory
 from failure_text_safety import (
     _UNSAFE_FAILURE_DETAIL_PATTERN,
@@ -1771,6 +1772,9 @@ class WorkflowProductionService:
             step = resolve_gated_step(command_text, route, integrity)
             if step not in M2C_STEPS:
                 raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
+            blocked = set_batch_blocked_message(manifest, step)
+            if blocked:
+                raise ProductionGateError(blocked)
             turn_progress_machine = (
                 copy.deepcopy(machine)
                 if step in _TURN_PROGRESS_HEARTBEAT_STEPS

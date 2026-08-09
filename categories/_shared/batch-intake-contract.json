@@ -1,12 +1,13 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "contract": "canvas_batch_intake_payload",
   "payload": {
     "type": "object",
-    "required": ["category", "contractHash", "facts"],
+    "required": ["category", "contractHash", "batch_type", "facts"],
     "properties": {
       "category": {"type": "string", "semantics": "installed_category_key"},
       "contractHash": {"type": "string", "format": "sha256"},
+      "batch_type": {"type": "string", "enum": ["single", "set"]},
       "facts": {
         "type": "object",
         "required": [

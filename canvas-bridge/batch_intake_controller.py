@@ -22,6 +22,15 @@ BATCH_INFO_NODE_TYPE = "batch-info"
 BATCH_INTAKE_METADATA_KEY = "batchIntake"
 BATCH_BUILD_VERB = "build"
 BATCH_BUILD_TARGET = "batch"
+BATCH_TYPE_SINGLE = "single"
+BATCH_TYPE_SET = "set"
+IMAGE_CATEGORY_WHITE_BG = "white_bg"
+IMAGE_CATEGORY_SET_GROUP = "set_group"
+IMAGE_CATEGORY_COMPONENT_WHITE_BG = "component_white_bg"
+SET_GROUP_IMAGE_COUNT_MINIMUM = 1
+SET_GROUP_IMAGE_COUNT_MAXIMUM = 3
+COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM = 2
+COMPONENT_WHITE_BG_IMAGE_COUNT_MAXIMUM = 8
 DEFAULT_MAX_AGE_MS = 8_000
 DEFAULT_FUTURE_TOLERANCE_MS = 0
 DUPLICATE_PRODUCT_IMAGE_MESSAGE = (
@@ -31,6 +40,39 @@ DUPLICATE_PRODUCT_IMAGE_MESSAGE = (
 
 _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$")
 _SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
+_BATCH_INTAKE_ALLOWED_KEYS = frozenset(
+    {
+        "status",
+        "category",
+        "contractHash",
+        "batch_type",
+        "productType",
+        "productLengthCm",
+        "productWidthCm",
+        "productHeightCm",
+        "allowClearWater",
+        "prohibitPouringAndHeating",
+        "skipMissingDAngle",
+        "mainImageCount",
+        "detailImageCount",
+        "handheldMainCount",
+        "handheldDetailCount",
+        "facts",
+        "requestId",
+        "requestedAt",
+        "updatedAt",
+        "workflowNodeId",
+        "sourceImageNodeIds",
+        "setGroupImageNodeIds",
+        "componentWhiteBgImageNodeIds",
+        "batchId",
+        "uploadBaseUrl",
+        "expectedCount",
+        "receivedCount",
+        "errorMessage",
+        "receipt",
+    }
+)
 
 
 class BatchIntakeGateError(ValueError):
@@ -88,6 +130,7 @@ class SourceImage:
     mime_type: str
     last_modified: int
     expected_sha256: str
+    image_category: str = IMAGE_CATEGORY_WHITE_BG
 
     def route_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +141,7 @@ class SourceImage:
             "mimeType": self.mime_type,
             "lastModified": self.last_modified,
             "sha256": self.expected_sha256,
+            "imageCategory": self.image_category,
         }
 
 
@@ -111,6 +155,7 @@ class BatchIntakeRequest:
     source_images: tuple[SourceImage, ...]
     category: str = DEFAULT_CATEGORY_KEY
     contract_hash: str = ""
+    batch_type: str = BATCH_TYPE_SINGLE
 
     def route_dict(self) -> dict[str, Any]:
         return {
@@ -120,6 +165,7 @@ class BatchIntakeRequest:
             "workflowNodeId": self.workflow_node_id,
             "category": self.category,
             "contractHash": self.contract_hash,
+            "batch_type": self.batch_type,
             "facts": self.facts.as_dict(),
             "sourceImages": [source.route_dict() for source in self.source_images],
         }
@@ -267,6 +313,7 @@ def _safe_source_name(value: Any) -> str | None:
 def _parse_source_image(
     node: Mapping[str, Any],
     *,
+    image_category: str,
     info_node_id: str,
     request_id: str,
 ) -> SourceImage:
@@ -318,7 +365,31 @@ def _parse_source_image(
         mime_type=mime_type,
         last_modified=last_modified,
         expected_sha256=sha256.lower(),
+        image_category=image_category,
     )
+
+
+def _parse_image_node_ids(
+    raw: Any,
+    *,
+    allow_missing: bool,
+    info_node_id: str,
+    request_id: str,
+) -> tuple[str, ...]:
+    if raw is None and allow_missing:
+        return ()
+    if (
+        not isinstance(raw, list)
+        or any(not isinstance(value, str) or not value for value in raw)
+        or len(raw) != len(set(raw))
+    ):
+        raise _error(
+            "invalid_images",
+            "套装图片选择不完整，请重新选择后再登记。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+    return tuple(raw)
 
 
 def parse_queued_request(
@@ -381,6 +452,7 @@ def parse_queued_request(
     root = repository_root or Path(__file__).resolve().parent.parent
     category_value = batch.get("category")
     contract_hash_value = batch.get("contractHash")
+    batch_type_value = batch.get("batch_type")
     try:
         expected_contract_hash = batch_intake_contract_sha256(root)
     except BatchIntakeContractError:
@@ -391,11 +463,14 @@ def parse_queued_request(
             request_id=request_id,
         ) from None
     if (
-        not isinstance(category_value, str)
+        not set(batch).issubset(_BATCH_INTAKE_ALLOWED_KEYS)
+        or not isinstance(category_value, str)
         or not category_value.strip()
         or not isinstance(contract_hash_value, str)
         or not _SHA256.fullmatch(contract_hash_value)
         or contract_hash_value.lower() != expected_contract_hash
+        or type(batch_type_value) is not str
+        or batch_type_value not in {BATCH_TYPE_SINGLE, BATCH_TYPE_SET}
     ):
         raise _error(
             "contract_mismatch",
@@ -405,6 +480,7 @@ def parse_queued_request(
         )
     category = category_value.strip()
     contract_hash = contract_hash_value.lower()
+    batch_type = batch_type_value
     _parse_command(
         metadata.get("content"),
         expected_request_id=request_id,
@@ -415,6 +491,48 @@ def parse_queued_request(
         batch.get("facts"),
         category=category,
         repository_root=root,
+        info_node_id=info_node_id,
+        request_id=request_id,
+    )
+    set_group_image_ids = _parse_image_node_ids(
+        batch.get("setGroupImageNodeIds"),
+        allow_missing="setGroupImageNodeIds" not in batch,
+        info_node_id=info_node_id,
+        request_id=request_id,
+    )
+    component_white_bg_image_ids = _parse_image_node_ids(
+        batch.get("componentWhiteBgImageNodeIds"),
+        allow_missing="componentWhiteBgImageNodeIds" not in batch,
+        info_node_id=info_node_id,
+        request_id=request_id,
+    )
+    if batch_type == BATCH_TYPE_SINGLE:
+        if set_group_image_ids or component_white_bg_image_ids:
+            raise _error(
+                "invalid_images",
+                "单品批次不能登记套装图片，请清空套装图片后再登记。",
+                info_node_id=info_node_id,
+                request_id=request_id,
+            )
+    elif not (
+        SET_GROUP_IMAGE_COUNT_MINIMUM
+        <= len(set_group_image_ids)
+        <= SET_GROUP_IMAGE_COUNT_MAXIMUM
+    ) or not (
+        COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM
+        <= len(component_white_bg_image_ids)
+        <= COMPONENT_WHITE_BG_IMAGE_COUNT_MAXIMUM
+    ):
+        raise _error(
+            "invalid_images",
+            "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+    has_declared_source_image_ids = "sourceImageNodeIds" in batch
+    declared_source_image_ids = _parse_image_node_ids(
+        batch.get("sourceImageNodeIds"),
+        allow_missing=batch_type == BATCH_TYPE_SINGLE and not has_declared_source_image_ids,
         info_node_id=info_node_id,
         request_id=request_id,
     )
@@ -504,7 +622,7 @@ def parse_queued_request(
             request_id=request_id,
         )
 
-    image_ids = []
+    connected_image_ids = []
     seen_image_ids: set[str] = set()
     for connection in valid_connections:
         source_id = connection["fromNodeId"]
@@ -514,17 +632,66 @@ def parse_queued_request(
         if source_node.get("type") != "image" or source_id in seen_image_ids:
             continue
         seen_image_ids.add(source_id)
-        image_ids.append(source_id)
-    if not image_ids:
+        connected_image_ids.append(source_id)
+    if not connected_image_ids:
         raise _error(
             "missing_images",
             "请至少把一张磁盘原图连接到同一台工作流机器。",
             info_node_id=info_node_id,
             request_id=request_id,
         )
+    connected_image_id_set = set(connected_image_ids)
+    set_group_image_id_set = set(set_group_image_ids)
+    component_white_bg_image_id_set = set(component_white_bg_image_ids)
+    if (
+        connected_image_id_set & set_group_image_id_set
+        or connected_image_id_set & component_white_bg_image_id_set
+        or set_group_image_id_set & component_white_bg_image_id_set
+    ):
+        raise _error(
+            "invalid_images",
+            "同一张图片不能同时用于多个商品图片类别，请重新选择后再登记。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+    expected_source_image_ids = (
+        connected_image_id_set
+        | set_group_image_id_set
+        | component_white_bg_image_id_set
+    )
+    if has_declared_source_image_ids:
+        if set(declared_source_image_ids) != expected_source_image_ids:
+            raise _error(
+                "invalid_images",
+                "登记图片与画布选择不一致，请重新选择后再登记。",
+                info_node_id=info_node_id,
+                request_id=request_id,
+            )
+        image_ids = declared_source_image_ids
+    else:
+        image_ids = tuple(connected_image_ids)
+    if any(
+        node_id not in node_by_id or node_by_id[node_id].get("type") != "image"
+        for node_id in image_ids
+    ):
+        raise _error(
+            "invalid_images",
+            "登记图片与画布选择不一致，请重新选择后再登记。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+
+    def image_category(node_id: str) -> str:
+        if node_id in set_group_image_id_set:
+            return IMAGE_CATEGORY_SET_GROUP
+        if node_id in component_white_bg_image_id_set:
+            return IMAGE_CATEGORY_COMPONENT_WHITE_BG
+        return IMAGE_CATEGORY_WHITE_BG
+
     sources = tuple(
         _parse_source_image(
             node_by_id[node_id],
+            image_category=image_category(node_id),
             info_node_id=info_node_id,
             request_id=request_id,
         )
@@ -555,4 +722,5 @@ def parse_queued_request(
         source_images=sources,
         category=category,
         contract_hash=contract_hash,
+        batch_type=batch_type,
     )

@@ -72,6 +72,7 @@ def info_node(
                 "requestedAt": requested_at,
                 "category": category,
                 "contractHash": contract_hash,
+                "batch_type": "single",
                 "facts": copy.deepcopy(FACTS if facts is None else facts),
             },
         },

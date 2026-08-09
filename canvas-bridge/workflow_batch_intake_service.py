@@ -321,6 +321,41 @@ class WorkflowBatchIntakeService:
         sources = tuple(request.source_images)
         if not sources or len(sources) > MAX_SOURCE_FILES:
             raise ValueError("原始图片数量不在可登记范围内。")
+        category_counts = {
+            category: sum(source.image_category == category for source in sources)
+            for category in (
+                batch_intake_controller.IMAGE_CATEGORY_WHITE_BG,
+                batch_intake_controller.IMAGE_CATEGORY_SET_GROUP,
+                batch_intake_controller.IMAGE_CATEGORY_COMPONENT_WHITE_BG,
+            )
+        }
+        if (
+            request.batch_type not in {
+                batch_intake_controller.BATCH_TYPE_SINGLE,
+                batch_intake_controller.BATCH_TYPE_SET,
+            }
+            or category_counts[batch_intake_controller.IMAGE_CATEGORY_WHITE_BG] < 1
+            or (
+                request.batch_type == batch_intake_controller.BATCH_TYPE_SINGLE
+                and (
+                    category_counts[batch_intake_controller.IMAGE_CATEGORY_SET_GROUP] != 0
+                    or category_counts[batch_intake_controller.IMAGE_CATEGORY_COMPONENT_WHITE_BG] != 0
+                )
+            )
+            or (
+                request.batch_type == batch_intake_controller.BATCH_TYPE_SET
+                and not (
+                    batch_intake_controller.SET_GROUP_IMAGE_COUNT_MINIMUM
+                    <= category_counts[batch_intake_controller.IMAGE_CATEGORY_SET_GROUP]
+                    <= batch_intake_controller.SET_GROUP_IMAGE_COUNT_MAXIMUM
+                    and batch_intake_controller.COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM
+                    <= category_counts[batch_intake_controller.IMAGE_CATEGORY_COMPONENT_WHITE_BG]
+                    <= batch_intake_controller.COMPONENT_WHITE_BG_IMAGE_COUNT_MAXIMUM
+                )
+            )
+            or sum(category_counts.values()) != len(sources)
+        ):
+            raise ValueError("原始图片类别或数量不在可登记范围内。")
         if len({source.node_id for source in sources}) != len(sources):
             raise ValueError("原始图片节点有重复，已经停止登记。")
         total = 0

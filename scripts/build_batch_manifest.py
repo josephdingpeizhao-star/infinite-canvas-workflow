@@ -207,6 +207,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Create a product batch manifest and workspace folders.")
     parser.add_argument("--product-id", required=True, help="Product id used for the manifest name and batch id.")
     parser.add_argument("--product-type", required=True, help="Confirmed non-empty product category.")
+    parser.add_argument("--batch-type", choices=("single", "set"), default="single")
     parser.add_argument(
         "--category",
         help="Installed category recipe key. Existing calls default to 杯类.",
@@ -307,9 +308,9 @@ def main() -> int:
     manifest = load_template(root)
     manifest["product_id"] = product_id
     manifest["batch_id"] = product_id
-    manifest["batch_type"] = "single"
+    manifest["batch_type"] = args.batch_type
     manifest["category"] = category
-    manifest["user_declared_set_product"] = False
+    manifest["user_declared_set_product"] = args.batch_type == "set"
     manifest["current_stage"] = "not_started"
     manifest["next_skill"] = "workflow-router"
     manifest["user_confirmed_facts"] = {
