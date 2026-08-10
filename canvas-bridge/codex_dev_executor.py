@@ -41,12 +41,14 @@ from codex_dev_downstream import (
     build_final_prompt_batch_prompt,
     build_final_prompt_repair_prompt,
     build_final_prompt_bundle,
+    build_set_variable_config_prompt,
     build_variable_config_correction_prompt,
     build_variable_config_prompt,
     final_prompt_bundle_targets,
     load_typed_artifact,
     parse_final_prompt_batch_response,
     parse_detail_variable_config_chunk,
+    parse_set_variable_config_response,
     parse_user_confirmed_requirements,
     parse_variable_config_response,
     style_master_material_reference_text,
@@ -1195,7 +1197,9 @@ class CodexDevExecutor:
         )
 
     def _execute_main_variable_config(self, product_id: str) -> ExecutionResult:
-        self._validate_single_product_batch()
+        is_set = self.context.manifest.get("batch_type", "single") == "set"
+        if not is_set:
+            self._validate_single_product_batch()
         output_path = artifact_file_under_root(
             self.context.manifest,
             "main_variable_configs",
@@ -1208,13 +1212,6 @@ class CodexDevExecutor:
             self.context.manifest,
             self.repository_root,
         )
-        identity, identity_path = load_typed_artifact(
-            self.context.manifest,
-            "product_identity_archive",
-            "product_identity_archive.json",
-            "product_identity_archive",
-            "产品身份档案",
-        )
         style_master, style_path = load_typed_artifact(
             self.context.manifest,
             "style_master",
@@ -1222,38 +1219,104 @@ class CodexDevExecutor:
             "style_master",
             "风格母版",
         )
-        angle_inventory, angle_path = load_typed_artifact(
-            self.context.manifest,
-            "angle_inventory",
-            "angle_inventory.json",
-            "angle_inventory",
-            "角度槽位入库表",
-        )
-        prompt = build_variable_config_prompt(
-            mode="main",
-            product_id=product_id,
-            repository_root=self.repository_root,
-            identity=identity,
-            style_master=style_master,
-            angle_inventory=angle_inventory,
-            requirements=requirements,
-        )
-        turn = self._run_transport(prompt, ())
-        self._emit_turn_progress()
-        upstream_paths = {
-            "product_identity_archive": identity_path,
-            "style_master": style_path,
-            "angle_inventory": angle_path,
-        }
-        try:
-            artifact = parse_variable_config_response(
-                turn.text,
+        if is_set:
+            set_identity = self._load_set_product_identity()
+            set_identity_path = artifact_file_under_root(
+                self.context.manifest,
+                "set_product_identity",
+                "set_product_identity.json",
+            )
+            component_identities, component_paths = (
+                self._load_set_component_identity_archives(set_identity)
+            )
+            set_layout_inventory, set_layout_path = load_typed_artifact(
+                self.context.manifest,
+                "set_angle_layout_inventory",
+                "set_angle_layout_inventory.json",
+                "set_angle_layout_inventory",
+                "套装角度与编排入库表",
+            )
+            set_rules = self._load_set_variable_config_rules()
+            prompt = build_set_variable_config_prompt(
                 mode="main",
                 product_id=product_id,
+                repository_root=self.repository_root,
+                set_identity=set_identity,
+                component_identities=component_identities,
+                style_master=style_master,
+                set_angle_layout_inventory=set_layout_inventory,
                 requirements=requirements,
-                angle_inventory=angle_inventory,
-                upstream_paths=upstream_paths,
+                set_skill_text=set_rules[0],
+                set_variable_config_supplement=set_rules[1],
+                set_workflow_supplement=set_rules[2],
+                set_layout_rules=set_rules[3],
             )
+            upstream_paths = {
+                "set_product_identity": set_identity_path,
+                **{
+                    f"component_identity_archive_{index:02d}": path
+                    for index, path in enumerate(component_paths, start=1)
+                },
+                "style_master": style_path,
+                "set_angle_layout_inventory": set_layout_path,
+            }
+
+            def parse_response(response_text: str) -> dict[str, Any]:
+                return parse_set_variable_config_response(
+                    response_text,
+                    mode="main",
+                    product_id=product_id,
+                    requirements=requirements,
+                    set_identity=set_identity,
+                    component_identities=component_identities,
+                    set_angle_layout_inventory=set_layout_inventory,
+                    upstream_paths=upstream_paths,
+                )
+
+        else:
+            identity, identity_path = load_typed_artifact(
+                self.context.manifest,
+                "product_identity_archive",
+                "product_identity_archive.json",
+                "product_identity_archive",
+                "产品身份档案",
+            )
+            angle_inventory, angle_path = load_typed_artifact(
+                self.context.manifest,
+                "angle_inventory",
+                "angle_inventory.json",
+                "angle_inventory",
+                "角度槽位入库表",
+            )
+            prompt = build_variable_config_prompt(
+                mode="main",
+                product_id=product_id,
+                repository_root=self.repository_root,
+                identity=identity,
+                style_master=style_master,
+                angle_inventory=angle_inventory,
+                requirements=requirements,
+            )
+            upstream_paths = {
+                "product_identity_archive": identity_path,
+                "style_master": style_path,
+                "angle_inventory": angle_path,
+            }
+
+            def parse_response(response_text: str) -> dict[str, Any]:
+                return parse_variable_config_response(
+                    response_text,
+                    mode="main",
+                    product_id=product_id,
+                    requirements=requirements,
+                    angle_inventory=angle_inventory,
+                    upstream_paths=upstream_paths,
+                )
+
+        turn = self._run_transport(prompt, ())
+        self._emit_turn_progress()
+        try:
+            artifact = parse_response(turn.text)
         except ContentPredicateViolation as error:
             if self._content_correction_callback is None:
                 raise
@@ -1271,16 +1334,9 @@ class CodexDevExecutor:
             if corrected_turn.thread_id != turn.thread_id:
                 raise ExecutorExecutionError(
                     "codex-dev 收到无效的主图变量配置线程返回"
-                )
-            turn = corrected_turn
-            artifact = parse_variable_config_response(
-                turn.text,
-                mode="main",
-                product_id=product_id,
-                requirements=requirements,
-                angle_inventory=angle_inventory,
-                upstream_paths=upstream_paths,
             )
+            turn = corrected_turn
+            artifact = parse_response(turn.text)
         write_json_exclusive(output_path, artifact, "主图变量配置")
         return ExecutionResult(
             detail="主图变量配置已生成",
@@ -1290,7 +1346,9 @@ class CodexDevExecutor:
         )
 
     def _execute_detail_variable_config(self, product_id: str) -> ExecutionResult:
-        self._validate_single_product_batch()
+        is_set = self.context.manifest.get("batch_type", "single") == "set"
+        if not is_set:
+            self._validate_single_product_batch()
         output_path = artifact_file_under_root(
             self.context.manifest,
             "detail_variable_configs",
@@ -1303,26 +1361,12 @@ class CodexDevExecutor:
             self.context.manifest,
             self.repository_root,
         )
-        identity, identity_path = load_typed_artifact(
-            self.context.manifest,
-            "product_identity_archive",
-            "product_identity_archive.json",
-            "product_identity_archive",
-            "产品身份档案",
-        )
         style_master, style_path = load_typed_artifact(
             self.context.manifest,
             "style_master",
             "style_master.json",
             "style_master",
             "风格母版",
-        )
-        angle_inventory, angle_path = load_typed_artifact(
-            self.context.manifest,
-            "angle_inventory",
-            "angle_inventory.json",
-            "angle_inventory",
-            "角度槽位入库表",
         )
         main_variable_config, main_path = load_typed_artifact(
             self.context.manifest,
@@ -1331,16 +1375,88 @@ class CodexDevExecutor:
             "main_variable_config",
             "正式主图变量配置",
         )
-        base_prompt = build_variable_config_prompt(
-            mode="detail",
-            product_id=product_id,
-            repository_root=self.repository_root,
-            identity=identity,
-            style_master=style_master,
-            angle_inventory=angle_inventory,
-            requirements=requirements,
-            main_variable_config=main_variable_config,
-        )
+        if is_set:
+            set_identity = self._load_set_product_identity()
+            set_identity_path = artifact_file_under_root(
+                self.context.manifest,
+                "set_product_identity",
+                "set_product_identity.json",
+            )
+            component_identities, component_paths = (
+                self._load_set_component_identity_archives(set_identity)
+            )
+            set_layout_inventory, set_layout_path = load_typed_artifact(
+                self.context.manifest,
+                "set_angle_layout_inventory",
+                "set_angle_layout_inventory.json",
+                "set_angle_layout_inventory",
+                "套装角度与编排入库表",
+            )
+            set_rules = self._load_set_variable_config_rules()
+            base_prompt = build_set_variable_config_prompt(
+                mode="detail",
+                product_id=product_id,
+                repository_root=self.repository_root,
+                set_identity=set_identity,
+                component_identities=component_identities,
+                style_master=style_master,
+                set_angle_layout_inventory=set_layout_inventory,
+                requirements=requirements,
+                set_skill_text=set_rules[0],
+                set_variable_config_supplement=set_rules[1],
+                set_workflow_supplement=set_rules[2],
+                set_layout_rules=set_rules[3],
+                main_variable_config=main_variable_config,
+            )
+            chunk_angle_inventory = set_layout_inventory
+            chunk_set_kwargs: dict[str, Any] = {
+                "set_identity": set_identity,
+                "component_identities": component_identities,
+                "set_angle_layout_inventory": set_layout_inventory,
+            }
+            upstream_paths = {
+                "set_product_identity": set_identity_path,
+                **{
+                    f"component_identity_archive_{index:02d}": path
+                    for index, path in enumerate(component_paths, start=1)
+                },
+                "style_master": style_path,
+                "set_angle_layout_inventory": set_layout_path,
+                "main_variable_configs": main_path,
+            }
+        else:
+            identity, identity_path = load_typed_artifact(
+                self.context.manifest,
+                "product_identity_archive",
+                "product_identity_archive.json",
+                "product_identity_archive",
+                "产品身份档案",
+            )
+            angle_inventory, angle_path = load_typed_artifact(
+                self.context.manifest,
+                "angle_inventory",
+                "angle_inventory.json",
+                "angle_inventory",
+                "角度槽位入库表",
+            )
+            base_prompt = build_variable_config_prompt(
+                mode="detail",
+                product_id=product_id,
+                repository_root=self.repository_root,
+                identity=identity,
+                style_master=style_master,
+                angle_inventory=angle_inventory,
+                requirements=requirements,
+                main_variable_config=main_variable_config,
+            )
+            chunk_angle_inventory = angle_inventory
+            chunk_set_kwargs = {}
+            upstream_paths = {
+                "product_identity_archive": identity_path,
+                "style_master": style_path,
+                "angle_inventory": angle_path,
+                "main_variable_configs": main_path,
+            }
         chunks: list[Mapping[str, Any]] = []
         recovery_attempts = 0
         structure_correction_attempts = 0
@@ -1371,8 +1487,9 @@ class CodexDevExecutor:
                         turn.text,
                         chunk_index,
                         requirements=requirements,
-                        angle_inventory=angle_inventory,
+                        angle_inventory=chunk_angle_inventory,
                         prior_chunks=chunks,
+                        **chunk_set_kwargs,
                     )
                     if (
                         expected_business_fingerprint
@@ -1450,19 +1567,26 @@ class CodexDevExecutor:
             chunks,
             requirements=requirements,
         )
-        artifact = parse_variable_config_response(
-            json.dumps(assembled_response, ensure_ascii=False),
-            mode="detail",
-            product_id=product_id,
-            requirements=requirements,
-            angle_inventory=angle_inventory,
-            upstream_paths={
-                "product_identity_archive": identity_path,
-                "style_master": style_path,
-                "angle_inventory": angle_path,
-                "main_variable_configs": main_path,
-            },
-        )
+        if is_set:
+            artifact = parse_set_variable_config_response(
+                json.dumps(assembled_response, ensure_ascii=False),
+                mode="detail",
+                product_id=product_id,
+                requirements=requirements,
+                set_identity=set_identity,
+                component_identities=component_identities,
+                set_angle_layout_inventory=set_layout_inventory,
+                upstream_paths=upstream_paths,
+            )
+        else:
+            artifact = parse_variable_config_response(
+                json.dumps(assembled_response, ensure_ascii=False),
+                mode="detail",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=angle_inventory,
+                upstream_paths=upstream_paths,
+            )
         write_json_exclusive(output_path, artifact, "详情图变量配置")
         detail = "详情图变量配置已生成"
         recovery_notes: list[str] = []
@@ -1888,6 +2012,31 @@ class CodexDevExecutor:
             raise ExecutorExecutionError("codex-dev 无法加载套装角度与编排入库规则") from None
         return skill_text, inventory_reference, layout_reference
 
+    def _load_set_variable_config_rules(self) -> tuple[str, str, str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "set-variable-config-extension"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            variable_reference = load_shared_prompt(
+                self.repository_root,
+                "set_variable_config_supplement",
+            )
+            workflow_reference = load_shared_prompt(
+                self.repository_root,
+                "set_workflow_supplement",
+            )
+            layout_reference = load_shared_prompt(
+                self.repository_root,
+                "set_layout_rules",
+            )
+        except (OSError, CategoryRecipeError):
+            raise ExecutorExecutionError("codex-dev 无法加载套装变量配置规则") from None
+        return (
+            skill_text,
+            variable_reference,
+            workflow_reference,
+            layout_reference,
+        )
+
     def _load_style_master_rules(self) -> tuple[str, str]:
         skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"
         try:
@@ -2057,6 +2206,55 @@ class CodexDevExecutor:
         if not isinstance(archive, dict) or archive.get("artifact_type") != "set_product_identity":
             raise ExecutorExecutionError("codex-dev 无法读取有效的套装产品身份档案")
         return archive
+
+    def _load_set_component_identity_archives(
+        self,
+        set_identity: Mapping[str, Any],
+    ) -> tuple[tuple[dict[str, Any], ...], tuple[Path, ...]]:
+        components = set_identity.get("components")
+        if not isinstance(components, list) or not components:
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装组成单件档案清单")
+        archives: list[dict[str, Any]] = []
+        paths: list[Path] = []
+        seen_files: set[str] = set()
+        product_id = str(self.context.manifest.get("product_id") or "")
+        for index, component in enumerate(components, start=1):
+            archive_file = (
+                component.get("identity_archive_file")
+                if isinstance(component, Mapping)
+                else None
+            )
+            if (
+                not isinstance(archive_file, str)
+                or not archive_file.strip()
+                or Path(archive_file).name != archive_file
+                or Path(archive_file).suffix.lower() != ".json"
+                or archive_file in seen_files
+            ):
+                raise ExecutorExecutionError("codex-dev 无法读取有效的套装组成单件档案清单")
+            seen_files.add(archive_file)
+            try:
+                path = artifact_file_under_root(
+                    self.context.manifest,
+                    "product_identity_archive",
+                    archive_file,
+                )
+                archive = json.loads(path.read_text(encoding="utf-8"))
+            except (ExecutorExecutionError, OSError, UnicodeError, json.JSONDecodeError):
+                raise ExecutorExecutionError(
+                    f"codex-dev 无法读取有效的第 {index} 件产品身份档案"
+                ) from None
+            if (
+                not isinstance(archive, dict)
+                or archive.get("artifact_type") != "product_identity_archive"
+                or archive.get("product_id") != product_id
+            ):
+                raise ExecutorExecutionError(
+                    f"codex-dev 无法读取有效的第 {index} 件产品身份档案"
+                )
+            archives.append(archive)
+            paths.append(path)
+        return tuple(archives), tuple(paths)
 
     def _identity_output_path(self) -> Path:
         artifacts = self.context.manifest.get("artifacts")

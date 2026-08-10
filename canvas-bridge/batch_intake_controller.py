@@ -96,7 +96,7 @@ class BatchIntakeGateError(ValueError):
 @dataclass(frozen=True)
 class ConfirmedFacts:
     product_type: str
-    height_cm: int
+    height_cm: int | None
     main_image_count: int
     detail_image_count: int
     handheld_main: int
@@ -216,6 +216,7 @@ def _parse_facts(
     raw: Any,
     *,
     category: str,
+    batch_type: str = BATCH_TYPE_SINGLE,
     repository_root: Path,
     info_node_id: str,
     request_id: str,
@@ -244,15 +245,24 @@ def _parse_facts(
         ):
             raise ExecutorExecutionError("image counts missing")
         parsed = parse_user_confirmed_requirements(
-            {"category": category, "user_confirmed_facts": raw},
+            {
+                "category": category,
+                "batch_type": batch_type,
+                "user_confirmed_facts": raw,
+            },
             repository_root,
         )
         if parsed.recipe is None or parsed.product_type != parsed.recipe.product_noun:
             raise ExecutorExecutionError("category product noun mismatch")
     except ExecutorExecutionError:
+        message = (
+            "商品信息没有填写完整，请检查品类、图片张数、手持数量和高级选项。"
+            if batch_type == BATCH_TYPE_SET
+            else "商品信息没有填写完整，请检查品类、必填尺寸、图片张数、手持数量和高级选项。"
+        )
         raise _error(
             "invalid_facts",
-            "商品信息没有填写完整，请检查品类、必填尺寸、图片张数、手持数量和高级选项。",
+            message,
             info_node_id=info_node_id,
             request_id=request_id,
         ) from None
@@ -490,6 +500,7 @@ def parse_queued_request(
     facts = _parse_facts(
         batch.get("facts"),
         category=category,
+        batch_type=batch_type,
         repository_root=root,
         info_node_id=info_node_id,
         request_id=request_id,

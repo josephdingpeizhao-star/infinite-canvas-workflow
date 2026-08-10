@@ -39,7 +39,7 @@ from workflow_production_http_server import (  # noqa: E402
 
 
 EXPECTED_CONTRACT_HASH = (
-    "266f01ac2532a334e8b4378ee369d49a9a6f97cbe256fbce8daef06b357b9a61"
+    "a030df8d0aa9c96d9275d7c6f463fbc9d8f10af57e8c4539c2cb9d0d903456d3"
 )
 EXPECTED_BOWL_FILES = (
     "form.json",

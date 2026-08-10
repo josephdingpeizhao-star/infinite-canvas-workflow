@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "contract": "canvas_batch_intake_payload",
   "payload": {
     "type": "object",
@@ -26,7 +26,7 @@
           "product_type": {"type": "string"},
           "length_cm": {"type": ["integer", "null"]},
           "width_cm": {"type": ["integer", "null"]},
-          "height_cm": {"type": "integer"},
+          "height_cm": {"type": ["integer", "null"]},
           "main_image_count": {"type": "integer"},
           "detail_image_count": {"type": "integer"},
           "handheld_main": {"type": "integer"},

@@ -443,6 +443,7 @@ SHARED_PROMPT_FILES = {
     "set_workflow_supplement": "prompts/set_workflow_supplement.md",
     "set_angle_layout_prompt": "prompts/set_angle_layout_inventory.md",
     "set_layout_rules": "prompts/set_layout_rules.md",
+    "set_variable_config_supplement": "prompts/set_variable_config_supplement.md",
 }
 
 

@@ -106,11 +106,93 @@ DETAIL_REQUIRED_OVERRIDE_FIELDS = (
     "禁止事项",
 )
 
+SET_VARIABLE_CONFIG_ADDED_FIELDS = (
+    "套装组成调用",
+    "套装编排槽位",
+    "套装编排依据",
+    "套装产品颜色依据",
+    "套装尺寸比例锁定",
+)
+SET_MAIN_REQUIRED_OVERRIDE_FIELDS = (
+    *MAIN_REQUIRED_OVERRIDE_FIELDS,
+    *SET_VARIABLE_CONFIG_ADDED_FIELDS,
+)
+SET_DETAIL_REQUIRED_OVERRIDE_FIELDS = (
+    *DETAIL_REQUIRED_OVERRIDE_FIELDS,
+    *SET_VARIABLE_CONFIG_ADDED_FIELDS,
+    "套装尺寸标注信息",
+)
+SET_HANDHELD_SUMMARY_EXPLANATION_FIELD = "手持启用数量说明"
+SET_VARIABLE_CONFIG_ALLOWED_SET_KEYS = frozenset(
+    {
+        *SET_VARIABLE_CONFIG_ADDED_FIELDS,
+        "套装尺寸标注信息",
+        SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+    }
+)
+SET_ANGLE_CAMERA_NAMES = {
+    "A": "正面微俯视机位",
+    "B": "45°斜侧机位",
+    "C": "顶部俯视机位",
+    "D": "侧面低角度机位",
+}
+SET_ANGLE_CAMERA_VALUES = frozenset(
+    {*SET_ANGLE_CAMERA_NAMES, "不适合归入现有机位"}
+)
+SET_LAYOUT_SLOT_NAMES = {
+    "编排槽位一": "并列陈列",
+    "编排槽位二": "主从层叠",
+    "编排槽位三": "阶梯纵深",
+    "编排槽位四": "散开俯视",
+}
+SET_ANGLE_LAYOUT_VALUES = frozenset(
+    {*SET_LAYOUT_SLOT_NAMES, "不适合归入现有编排"}
+)
+SET_ANGLE_ADMISSION_VALUES = frozenset(
+    {
+        "合格，可进入对应机位与编排槽位",
+        "勉强可用，但建议重拍",
+        "不适合入库，需重拍",
+    }
+)
+SET_QUALIFIED_ADMISSION_VALUES = frozenset(
+    {"合格，可进入对应机位与编排槽位"}
+)
+SET_ARRANGEMENT_BASIS_LITERAL = (
+    "本张套装编排关系以【套装编排槽位】对应的套装合影白底图为唯一依据；"
+    "各组成单件的角度以对应单件白底图为唯一依据。各单件相对位置、件距、层叠或并列关系、"
+    "主次关系，均不得为页面任务、风格、道具或美感改变。套装组成清单中的全部单件均为商品本体，"
+    "必须完整出现、件数正确。"
+)
+SET_PRODUCT_COLOR_BASIS_LITERAL = (
+    "本张套装中各组成单件的商品本体颜色，分别以当次输入的对应单件白底图作为唯一颜色参照。"
+    "套装合影白底图只用于确认套装件数、相对比例、编排关系和整体机位，不替代各单件白底图的颜色参照。"
+    "若套装合影白底图、套装产品身份档案、各单件产品身份档案、辅助参考图、风格母版、风格参考图、"
+    "场景光线、道具或背景色调与某一单件白底图的颜色观感不一致，以该单件白底图为准。"
+    "允许真实光照造成局部高光、阴影、反射和轻微明暗变化，但不得改变任一组成单件的基础色相、"
+    "明暗深浅、饱和度倾向、图案颜色、材质本色和部位间颜色关系。"
+)
+SET_SIZE_ANNOTATION_SUBFIELDS = (
+    "套装整体尺寸来源",
+    "套装整体尺寸置信度",
+    "允许标注的套装整体尺寸字段",
+    "允许标注的各单件尺寸字段",
+    "禁止标注的未确认尺寸字段",
+    "画面中允许出现的尺寸文字",
+    "单位规则",
+)
+
 _SEMANTIC_CONTEXT_POSITIVE = "positive_description"
 _SEMANTIC_CONTEXT_NEGATIVE_LIST = "negative_list"
 _SEMANTIC_CONTEXT_NON_SEMANTIC = "non_semantic"
 _NON_SEMANTIC_OVERRIDE_FIELDS = frozenset(
-    {"输出画布比例", "动态手持样式参考图调用"}
+    {
+        "输出画布比例",
+        "动态手持样式参考图调用",
+        "套装编排槽位",
+        "套装编排依据",
+        "套装产品颜色依据",
+    }
 )
 FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS = {
     "config_id": _SEMANTIC_CONTEXT_NON_SEMANTIC,
@@ -135,6 +217,24 @@ DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS = {
     )
     for field in DETAIL_REQUIRED_OVERRIDE_FIELDS
 }
+SET_MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS = {
+    field: (
+        _SEMANTIC_CONTEXT_NON_SEMANTIC
+        if field in _NON_SEMANTIC_OVERRIDE_FIELDS
+        else _SEMANTIC_CONTEXT_POSITIVE
+    )
+    for field in SET_MAIN_REQUIRED_OVERRIDE_FIELDS
+}
+SET_DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS = {
+    field: (
+        _SEMANTIC_CONTEXT_NEGATIVE_LIST
+        if field == "禁止事项"
+        else _SEMANTIC_CONTEXT_NON_SEMANTIC
+        if field in _NON_SEMANTIC_OVERRIDE_FIELDS
+        else _SEMANTIC_CONTEXT_POSITIVE
+    )
+    for field in SET_DETAIL_REQUIRED_OVERRIDE_FIELDS
+}
 _CONTROL_VALUE_FIELDS = frozenset(
     {
         "artifact_type",
@@ -155,6 +255,8 @@ _CONTROL_VALUE_FIELDS = frozenset(
 _SEMANTIC_FIELD_CONTEXTS = {
     **MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
     **DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+    **SET_MAIN_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
+    **SET_DETAIL_VARIABLE_FIELD_SEMANTIC_CONTEXTS,
     **FINAL_PROMPT_FIELD_SEMANTIC_CONTEXTS,
 }
 
@@ -188,7 +290,7 @@ _FORBIDDEN_DOWNSTREAM_KEYS = {
 @dataclass(frozen=True)
 class UserConfirmedRequirements:
     product_type: str
-    height_cm: int
+    height_cm: int | None
     handheld_main: int
     handheld_detail: int
     allow_clear_water: bool
@@ -300,6 +402,8 @@ def _yes_value(notes: str, label: str) -> bool:
 
 def _validated_user_requirements(
     requirements: UserConfirmedRequirements,
+    *,
+    batch_type: str = "single",
 ) -> UserConfirmedRequirements:
     recipe = requirements.recipe
     if recipe is None:
@@ -336,9 +440,12 @@ def _validated_user_requirements(
         "width_cm": requirements.width_cm,
         "height_cm": requirements.height_cm,
     }
+    required_dimensions = (
+        () if batch_type == "set" else recipe.form["dimensions"]["required"]
+    )
     for key, value in dimensions.items():
         if value is None:
-            if key in recipe.form["dimensions"]["required"]:
+            if key in required_dimensions:
                 raise ValueError("missing required dimension")
             continue
         metadata = field_metadata[key]
@@ -373,6 +480,7 @@ def _parse_structured_user_requirements(
     recipe: CategoryRecipe,
     *,
     explicit_category: bool,
+    batch_type: str = "single",
 ) -> UserConfirmedRequirements:
     if not isinstance(raw, Mapping):
         raise ValueError("invalid structured requirements")
@@ -413,7 +521,7 @@ def _parse_structured_user_requirements(
     )
     if (
         not isinstance(product_type, str)
-        or type(height_cm) is not int
+        or (height_cm is not None and type(height_cm) is not int)
         or (length_cm is not None and type(length_cm) is not int)
         or (width_cm is not None and type(width_cm) is not int)
         or type(handheld_main) is not int
@@ -439,7 +547,8 @@ def _parse_structured_user_requirements(
             width_cm=width_cm,
             category=recipe.key,
             recipe=recipe,
-        )
+        ),
+        batch_type=batch_type,
     )
 
 
@@ -453,11 +562,15 @@ def parse_user_confirmed_requirements(
         root = repository_root or Path(__file__).resolve().parent.parent
         recipe = load_manifest_category(root, manifest)
         explicit_category = "category" in manifest
+        batch_type = manifest.get("batch_type", "single")
+        if type(batch_type) is not str or batch_type not in {"single", "set"}:
+            raise ValueError("invalid batch type")
         if "user_confirmed_facts" in manifest:
             return _parse_structured_user_requirements(
                 manifest["user_confirmed_facts"],
                 recipe,
                 explicit_category=explicit_category,
+                batch_type=batch_type,
             )
         notes = str(manifest.get("notes") or "")
         return _validated_user_requirements(
@@ -471,7 +584,8 @@ def parse_user_confirmed_requirements(
                 missing_d_no_retake=_yes_value(notes, "D槽位不补拍"),
                 category=recipe.key,
                 recipe=recipe,
-            )
+            ),
+            batch_type=batch_type,
         )
     except (CategoryRecipeError, KeyError, TypeError, ValueError):
         raise ExecutorExecutionError("codex-dev 缺少有效的用户确认商品信息") from None
@@ -911,6 +1025,9 @@ _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
         "是否完全满足用户数量",
         *MAIN_REQUIRED_OVERRIDE_FIELDS,
         *DETAIL_REQUIRED_OVERRIDE_FIELDS,
+        *SET_MAIN_REQUIRED_OVERRIDE_FIELDS,
+        *SET_DETAIL_REQUIRED_OVERRIDE_FIELDS,
+        SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
     }
 )
 _INDEXED_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset({"configs", "prompts"})
@@ -1043,7 +1160,7 @@ def _is_confirmed_dimension_measurement(
     path: tuple[str, ...],
     match: re.Match[str],
     number: float,
-    confirmed_dimensions: Mapping[str, int],
+    confirmed_dimensions: Mapping[str, object],
     dimension_label_terms: Mapping[str, Sequence[str]],
     competing_dimension_terms: Sequence[str],
 ) -> bool:
@@ -1080,10 +1197,23 @@ def _is_confirmed_dimension_measurement(
         key: tuple(dimension_label_terms[key])
         for key in DIMENSION_KEYS
     }
+    def matches_confirmed(value: object) -> bool:
+        candidates = (
+            value
+            if isinstance(value, Sequence) and not isinstance(value, (str, bytes))
+            else (value,)
+        )
+        return any(
+            isinstance(candidate, (int, float))
+            and not isinstance(candidate, bool)
+            and float(candidate) == number
+            for candidate in candidates
+        )
+
     matching_keys = [
         key
         for key, value in confirmed_dimensions.items()
-        if float(value) == number and key in labels_by_key
+        if matches_confirmed(value) and key in labels_by_key
     ]
     for key in matching_keys:
         labels = "|".join(map(re.escape, labels_by_key[key]))
@@ -1152,14 +1282,21 @@ def _format_unsupported_claims_error(
     return message
 
 
-def _reject_unicode_damage_or_forbidden_keys(value: Mapping[str, Any], label: str) -> None:
+def _reject_unicode_damage_or_forbidden_keys(
+    value: Mapping[str, Any],
+    label: str,
+    *,
+    allowed_set_keys: frozenset[str] = frozenset(),
+) -> None:
     if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
         raise ExecutorExecutionError(f"codex-dev 收到的{label}包含损坏字符")
 
     def inspect(mapping: Mapping[str, Any]) -> None:
         for key, item in mapping.items():
             normalized = str(key).strip().lower()
-            if normalized in _FORBIDDEN_DOWNSTREAM_KEYS or "套装" in normalized:
+            if normalized in _FORBIDDEN_DOWNSTREAM_KEYS or (
+                "套装" in normalized and str(key) not in allowed_set_keys
+            ):
                 raise ExecutorExecutionError(f"codex-dev 收到的{label}包含越界字段")
             if isinstance(item, Mapping):
                 inspect(item)
@@ -1187,15 +1324,16 @@ def _config_id_for_path(
 
 def _reject_unsupported_claims(
     value: Mapping[str, Any],
-    height_cm: int,
+    height_cm: int | None,
     label: str,
     *,
     product_type: str | None = None,
     lexicons: Mapping[str, Any] | None = None,
-    confirmed_dimensions: Mapping[str, int] | None = None,
+    confirmed_dimensions: Mapping[str, object] | None = None,
     style_master_text: str | None = None,
     defer_style_master_prop_materials: bool = False,
     content_correction: bool = False,
+    allow_confirmed_dimension_groups: bool = False,
 ) -> None:
     if lexicons is None:
         try:
@@ -1258,7 +1396,11 @@ def _reject_unsupported_claims(
     unsupported_fact_pattern = re.compile(
         rf"(?:{'|'.join(fact_alternatives)}){suffix}"
     )
-    confirmed = dict(confirmed_dimensions or {"height_cm": height_cm})
+    confirmed = dict(
+        {"height_cm": height_cm}
+        if confirmed_dimensions is None
+        else confirmed_dimensions
+    )
     safe_negated_fact_token = (
         rf"(?:{'|'.join(safe_fact_alternatives)}){suffix}"
     )
@@ -1311,8 +1453,29 @@ def _reject_unsupported_claims(
     for path, item in _walk_string_contexts(value):
         if _semantic_context_for_path(path) != _SEMANTIC_CONTEXT_POSITIVE:
             continue
-        if _DIMENSION_GROUP_PATTERN.search(item):
-            collect("未确认参数", path)
+        dimension_group = _DIMENSION_GROUP_PATTERN.search(item)
+        if dimension_group:
+            if not allow_confirmed_dimension_groups:
+                collect("未确认参数", path)
+            else:
+                confirmed_numbers = {
+                    float(candidate)
+                    for raw in confirmed.values()
+                    for candidate in (
+                        raw
+                        if isinstance(raw, Sequence)
+                        and not isinstance(raw, (str, bytes))
+                        else (raw,)
+                    )
+                    if isinstance(candidate, (int, float))
+                    and not isinstance(candidate, bool)
+                }
+                group_numbers = {
+                    float(number)
+                    for number in re.findall(_NUMBER_PATTERN, dimension_group.group(0))
+                }
+                if not group_numbers or not group_numbers.issubset(confirmed_numbers):
+                    collect("未确认参数", path)
         for match in measurement_pattern.finditer(item):
             if _measurement_number_is_ratio(
                 item,
@@ -1623,6 +1786,286 @@ def _category_prompt_values(
         "optional_dimensions_detail": optional_prompts["detail"],
         "optional_dimensions_final": optional_prompts["final"],
     }
+
+
+_SET_DIMENSION_SOURCE_TEXT = (
+    "以《套装产品身份档案》及各单件《产品身份档案》的真实尺寸字段为准"
+)
+_SET_DIMENSION_TEMPLATE_TOKEN = "__SET_ARCHIVE_DIMENSION_SOURCE__"
+
+
+def _render_set_category_prompt(
+    requirements: UserConfirmedRequirements,
+    *,
+    mode: str,
+) -> str:
+    recipe = _requirements_recipe(requirements)
+    values = _category_prompt_values(
+        requirements,
+        handheld_count=(
+            requirements.handheld_main
+            if mode == "main"
+            else requirements.handheld_detail
+        ),
+    )
+    for key in DIMENSION_KEYS:
+        values[key] = _SET_DIMENSION_TEMPLATE_TOKEN
+    values["optional_dimensions_main"] = ""
+    values["optional_dimensions_detail"] = ""
+    rendered = recipe.render_prompt(f"{mode}_prompt", **values)
+    rendered = re.sub(
+        rf"(?:长|宽|高度|高|口径)?\s*约\s*{re.escape(_SET_DIMENSION_TEMPLATE_TOKEN)}\s*厘米",
+        _SET_DIMENSION_SOURCE_TEXT,
+        rendered,
+    )
+    return rendered.replace(
+        _SET_DIMENSION_TEMPLATE_TOKEN,
+        _SET_DIMENSION_SOURCE_TEXT,
+    ).rstrip("\r\n")
+
+
+def qualified_set_layout_entries(
+    set_angle_layout_inventory: Mapping[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    layouts = set_angle_layout_inventory.get("layouts")
+    if not isinstance(layouts, list) or not layouts:
+        raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+    qualified: list[dict[str, Any]] = []
+    seen_indexes: set[int] = set()
+    for raw in layouts:
+        if not isinstance(raw, Mapping):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+        image_index = raw.get("image_index")
+        file_name = raw.get("file_name")
+        is_set_group = raw.get("is_set_group")
+        overall_camera = raw.get("overall_camera")
+        layout_slot = raw.get("layout_slot")
+        admission = raw.get("admission_result")
+        if (
+            type(image_index) is not int
+            or image_index <= 0
+            or image_index in seen_indexes
+            or not isinstance(file_name, str)
+            or not file_name.strip()
+            or type(is_set_group) is not bool
+            or overall_camera not in SET_ANGLE_CAMERA_VALUES
+            or admission not in SET_ANGLE_ADMISSION_VALUES
+            or (
+                is_set_group
+                and layout_slot not in SET_ANGLE_LAYOUT_VALUES
+            )
+        ):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+        seen_indexes.add(image_index)
+        if admission in SET_QUALIFIED_ADMISSION_VALUES:
+            if overall_camera not in SET_ANGLE_CAMERA_NAMES:
+                raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+            if is_set_group and layout_slot not in SET_LAYOUT_SLOT_NAMES:
+                raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+            qualified.append(dict(raw))
+    if not qualified or not any(item["is_set_group"] for item in qualified):
+        raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排合格条目")
+    return tuple(qualified)
+
+
+def _set_dimension_values(
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    requirements: UserConfirmedRequirements,
+) -> dict[str, tuple[float, ...]]:
+    labels = _requirements_recipe(requirements).lexicons["dimension_label_terms"]
+    collected: dict[str, list[float]] = {key: [] for key in DIMENSION_KEYS}
+    measurement = re.compile(
+        r"(?<![A-Za-z0-9_])(\d+(?:\.\d+)?)\s*(?:厘米|cm)",
+        flags=re.IGNORECASE,
+    )
+
+    def inspect(value: object, path: tuple[str, ...] = ()) -> None:
+        if isinstance(value, Mapping):
+            for key, item in value.items():
+                inspect(item, (*path, str(key)))
+            return
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                inspect(item, (*path, str(index)))
+            return
+        if not isinstance(value, str):
+            return
+        path_text = " ".join(path)
+        if not any(
+            marker in path_text
+            for marker in (
+                "产品真实尺寸",
+                "套装真实尺寸",
+                "整体尺寸",
+                "整体高度",
+                "占地尺寸",
+                "real_dimensions",
+                "real_dimension",
+            )
+        ):
+            return
+        context = f"{path_text}：{value}"
+        for match in measurement.finditer(context):
+            prefix = context[max(0, match.start() - 28) : match.start()]
+            label_positions = {
+                key: max(
+                    (prefix.rfind(str(label)) for label in labels[key]),
+                    default=-1,
+                )
+                for key in DIMENSION_KEYS
+            }
+            nearest_position = max(label_positions.values(), default=-1)
+            matching_keys = [
+                key
+                for key, position in label_positions.items()
+                if position == nearest_position and position >= 0
+            ]
+            if not matching_keys and any(term in prefix for term in ("高度", "高")):
+                matching_keys = ["height_cm"]
+            number = float(match.group(1))
+            for key in matching_keys:
+                if number not in collected[key]:
+                    collected[key].append(number)
+
+    inspect(set_identity)
+    for identity in component_identities:
+        inspect(identity)
+    return {
+        key: tuple(values)
+        for key, values in collected.items()
+        if values
+    }
+
+
+def build_set_variable_config_prompt(
+    *,
+    mode: str,
+    product_id: str,
+    repository_root: Path,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    style_master: Mapping[str, Any],
+    set_angle_layout_inventory: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
+    set_skill_text: str,
+    set_variable_config_supplement: str,
+    set_workflow_supplement: str,
+    set_layout_rules: str,
+    main_variable_config: Mapping[str, Any] | None = None,
+) -> str:
+    """Build the set-only main/detail variable-config turn."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的套装变量配置模式")
+    if not component_identities:
+        raise ExecutorExecutionError("codex-dev 缺少套装组成单件产品身份档案")
+    skill_name = "main-variable-config" if mode == "main" else "detail-variable-config"
+    label = "套装主图变量配置" if mode == "main" else "套装详情图变量配置"
+    recipe = _requirements_recipe(requirements)
+    base_skill_text = _load_skill_text(repository_root, skill_name, label)
+    runtime = load_skill_runtime_package(
+        repository_root,
+        skill_name,
+        f"runtime_rule_slices/{skill_name}.runtime_rule_slices.json",
+        label,
+        recipe,
+        requirements=requirements,
+        mode=mode,
+    )
+    qualified_layouts = qualified_set_layout_entries(set_angle_layout_inventory)
+    image_count = _mode_image_count(requirements, mode)
+    identifiers = config_ids(mode, image_count)
+    required_fields = (
+        SET_MAIN_REQUIRED_OVERRIDE_FIELDS
+        if mode == "main"
+        else SET_DETAIL_REQUIRED_OVERRIDE_FIELDS
+    )
+    target_handheld = (
+        requirements.handheld_main
+        if mode == "main"
+        else requirements.handheld_detail
+    )
+    module_clause = ""
+    if mode == "detail":
+        module_clause = (
+            "标准模块归属必须逐项遵守【详情页模块覆盖计划】："
+            + "；".join(detail_module_assignment_lines(image_count))
+            + "。"
+        )
+        if not isinstance(main_variable_config, Mapping):
+            raise ExecutorExecutionError("codex-dev 缺少有效的正式主图变量配置")
+    category_prompt = _render_set_category_prompt(requirements, mode=mode)
+    facts = {
+        "product_type": requirements.product_type,
+        "main_image_count": requirements.main_image_count,
+        "detail_image_count": requirements.detail_image_count,
+        "handheld_target": target_handheld,
+        "forbid_pouring_and_heating": requirements.forbid_pouring_and_heating,
+        "missing_d_no_retake": requirements.missing_d_no_retake,
+        "dimension_source": _SET_DIMENSION_SOURCE_TEXT,
+    }
+    all_appear_rule = (
+        f"主图 configs 中至少 {min(2, image_count)} 项的【套装组成调用】必须逐字包含“全员出镜”。"
+        if mode == "main"
+        else ""
+    )
+    main_context = (
+        "\n【正式主图变量配置】\n"
+        + json.dumps(main_variable_config, ensure_ascii=False, sort_keys=True)
+        if mode == "detail"
+        else ""
+    )
+    return f"""你正在为已声明套装批次 {product_id} 生成{label}，且只处理 {mode}_vc。
+这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC。
+必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {chinese_image_count(image_count)}项，输出画布比例全部为 {"1:1" if mode == "main" else "3:4"}。{module_clause}
+每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(required_fields, ensure_ascii=False)}
+【绑定角度槽位】固定格式：整体机位 X：<机位名>。对应白底图：图N，<文件名>。文件名不可见时才允许写“按上传顺序识别”。
+【套装编排槽位】固定格式：编排槽位<X>：<编排名>。对应套装合影白底图：图N，<文件名>。文件名不可见时才允许写“按上传顺序识别”。
+【套装编排依据】与【套装产品颜色依据】必须逐字使用套装教学中的固定文案。
+【套装尺寸比例锁定】必须非空并逐字包含“置信度”，尺寸只来自套装档案及各单件档案。
+{all_appear_rule}
+手持目标为 {target_handheld} 项，实际启用允许少于或等于目标；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。
+handheld_count_summary 必须恒含【{SET_HANDHELD_SUMMARY_EXPLANATION_FIELD}】：完全满足时写明“已按目标启用”，少于目标时写明实际启用数量与原因，不得静默全部不启用。
+标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。
+顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
+{category_prompt}
+只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片或 QC。
+
+【基础 {skill_name} Skill 原文】
+{base_skill_text}
+
+【基础品类运行规则包】
+{json.dumps(runtime, ensure_ascii=False, sort_keys=True)}
+
+【套装变量配置扩展 Skill 原文】
+{set_skill_text}
+
+【套装变量配置补充模块】
+{set_variable_config_supplement}
+
+【套装产品工作流补充规则】
+{set_workflow_supplement}
+
+【套装编排规则】
+{set_layout_rules}
+
+【用户确认事实】
+{json.dumps(facts, ensure_ascii=False, sort_keys=True)}
+
+【套装产品身份档案】
+{json.dumps(set_identity, ensure_ascii=False, sort_keys=True)}
+
+【各单件产品身份档案】
+{json.dumps(list(component_identities), ensure_ascii=False, sort_keys=True)}
+
+【风格母版】
+{json.dumps(style_master, ensure_ascii=False, sort_keys=True)}
+{main_context}
+
+【套装角度与编排入库表合格条目】
+{json.dumps(qualified_layouts, ensure_ascii=False, sort_keys=True)}
+"""
 
 
 def build_variable_config_prompt(
@@ -1974,6 +2417,9 @@ def parse_detail_variable_config_chunk(
     requirements: UserConfirmedRequirements,
     angle_inventory: Mapping[str, Any],
     prior_chunks: Sequence[Mapping[str, Any]],
+    set_identity: Mapping[str, Any] | None = None,
+    component_identities: Sequence[Mapping[str, Any]] = (),
+    set_angle_layout_inventory: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate one chunk before any bounded transport or envelope recovery."""
 
@@ -2003,7 +2449,15 @@ def parse_detail_variable_config_chunk(
     if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
         raise DetailChunkTransportCorruption("detail chunk contains replacement character")
 
-    _reject_unicode_damage_or_forbidden_keys(value, "详情图变量配置分段")
+    _reject_unicode_damage_or_forbidden_keys(
+        value,
+        "详情图变量配置分段",
+        allowed_set_keys=(
+            SET_VARIABLE_CONFIG_ALLOWED_SET_KEYS
+            if set_identity is not None
+            else frozenset()
+        ),
+    )
 
     if value.get("chunk_index") != chunk_index or value.get("chunk_count") != chunk_count:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段编号异常")
@@ -2022,13 +2476,26 @@ def parse_detail_variable_config_chunk(
     if actual_ids != expected_ids:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段覆盖异常")
 
-    _validate_detail_chunk_business_content(
-        value,
-        chunk_index=chunk_index,
-        requirements=requirements,
-        angle_inventory=angle_inventory,
-        prior_chunks=prior_chunks,
-    )
+    if set_identity is None:
+        _validate_detail_chunk_business_content(
+            value,
+            chunk_index=chunk_index,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            prior_chunks=prior_chunks,
+        )
+    else:
+        if not component_identities or set_angle_layout_inventory is None:
+            raise ExecutorExecutionError("codex-dev 缺少套装详情图变量配置校验上下文")
+        _validate_set_detail_chunk_business_content(
+            value,
+            chunk_index=chunk_index,
+            requirements=requirements,
+            set_identity=set_identity,
+            component_identities=component_identities,
+            set_angle_layout_inventory=set_angle_layout_inventory,
+            prior_chunks=prior_chunks,
+        )
 
     expected_keys = {"chunk_index", "chunk_count", "configs"}
     if chunk_index == 1:
@@ -2438,6 +2905,580 @@ def _validate_handheld_summary(
                 expected="必须与要求数量、实际启用数量、未启用数量及启用配置 ID 完全一致",
             )
         raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量说明异常")
+
+
+def _set_layout_by_image_index(
+    set_angle_layout_inventory: Mapping[str, Any],
+) -> dict[int, dict[str, Any]]:
+    return {
+        int(item["image_index"]): item
+        for item in qualified_set_layout_entries(set_angle_layout_inventory)
+    }
+
+
+def _validate_set_angle_binding(
+    binding: str,
+    layouts_by_index: Mapping[int, Mapping[str, Any]],
+    *,
+    label: str,
+    config_id: str,
+) -> None:
+    match = re.fullmatch(
+        r"整体机位 ([ABCD])：(.+?)。对应白底图：图([1-9]\d*)，(.+?)。",
+        binding.strip(),
+    )
+    if match is None:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}套装整体机位绑定异常",
+            code="angle_binding",
+            config_id=config_id,
+            field="绑定角度槽位",
+            expected="必须使用套装固定格式并绑定合格编排条目",
+        )
+    camera, camera_name, index_text, file_name = match.groups()
+    record = layouts_by_index.get(int(index_text))
+    if (
+        record is None
+        or record.get("overall_camera") != camera
+        or SET_ANGLE_CAMERA_NAMES.get(camera) != camera_name
+        or record.get("admission_result") not in SET_QUALIFIED_ADMISSION_VALUES
+        or file_name not in {str(record.get("file_name") or ""), "按上传顺序识别"}
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}套装整体机位绑定异常",
+            code="angle_binding",
+            config_id=config_id,
+            field="绑定角度槽位",
+            expected="机位、图序号与文件名必须对应同一合格编排条目",
+        )
+
+
+def _validate_set_layout_binding(
+    binding: str,
+    layouts_by_index: Mapping[int, Mapping[str, Any]],
+    *,
+    label: str,
+    config_id: str,
+) -> None:
+    match = re.fullmatch(
+        r"(编排槽位[一二三四])：(.+?)。对应套装合影白底图：图([1-9]\d*)，(.+?)。",
+        binding.strip(),
+    )
+    if match is None:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}套装编排绑定异常",
+            code="angle_binding",
+            config_id=config_id,
+            field="套装编排槽位",
+            expected="必须使用套装固定格式并绑定合格套装合影条目",
+        )
+    slot, layout_name, index_text, file_name = match.groups()
+    record = layouts_by_index.get(int(index_text))
+    if (
+        record is None
+        or record.get("is_set_group") is not True
+        or record.get("layout_slot") != slot
+        or SET_LAYOUT_SLOT_NAMES.get(slot) != layout_name
+        or record.get("admission_result") not in SET_QUALIFIED_ADMISSION_VALUES
+        or file_name not in {str(record.get("file_name") or ""), "按上传顺序识别"}
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}套装编排绑定异常",
+            code="angle_binding",
+            config_id=config_id,
+            field="套装编排槽位",
+            expected="编排、图序号与文件名必须对应同一合格套装合影条目",
+        )
+
+
+def _validate_set_handheld_summary(
+    summary: Mapping[str, Any],
+    *,
+    mode: str,
+    target: int,
+    expected_count: int,
+    enabled_ids: list[str],
+    label: str,
+    config_id: str,
+) -> None:
+    scope = "主图" if mode == "main" else "详情图"
+    required_keys = {
+        f"用户要求{scope}手持数量",
+        "实际启用手持数量",
+        "未启用手持数量",
+        "启用手持配置",
+        "是否完全满足用户数量",
+        SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+    }
+    enabled = len(enabled_ids)
+    explanation = summary.get(SET_HANDHELD_SUMMARY_EXPLANATION_FIELD)
+    satisfied = enabled == target
+    if (
+        set(summary) != required_keys
+        or summary.get(f"用户要求{scope}手持数量") != target
+        or summary.get("实际启用手持数量") != enabled
+        or summary.get("未启用手持数量") != expected_count - enabled
+        or summary.get("启用手持配置") != enabled_ids
+        or summary.get("是否完全满足用户数量") != ("是" if satisfied else "否")
+        or not isinstance(explanation, str)
+        or not explanation.strip()
+        or str(enabled) not in explanation
+        or (satisfied and "已按目标启用" not in explanation)
+        or (not satisfied and "原因" not in explanation)
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量说明异常",
+            code="handheld_summary",
+            config_id=config_id,
+            field="handheld_count_summary",
+            expected="必须逐项对应目标、实际启用结果并填写手持启用数量说明",
+        )
+
+
+def _validate_set_config_items(
+    configs: Sequence[Mapping[str, Any]],
+    *,
+    mode: str,
+    start_index: int,
+    requirements: UserConfirmedRequirements,
+    set_angle_layout_inventory: Mapping[str, Any],
+) -> tuple[list[str], int]:
+    is_main = mode == "main"
+    label = "套装主图变量配置" if is_main else "套装详情图变量配置"
+    expected_count = _mode_image_count(requirements, mode)
+    expected_ids = config_ids(mode, expected_count)
+    required_fields = (
+        SET_MAIN_REQUIRED_OVERRIDE_FIELDS
+        if is_main
+        else SET_DETAIL_REQUIRED_OVERRIDE_FIELDS
+    )
+    layouts_by_index = _set_layout_by_image_index(set_angle_layout_inventory)
+    enabled_ids: list[str] = []
+    all_appear_count = 0
+    groups = detail_module_groups(expected_count) if not is_main else ()
+    for offset, raw in enumerate(configs):
+        config_index = start_index + offset
+        config_id = expected_ids[config_index]
+        if not isinstance(raw, Mapping) or set(raw) - _VARIABLE_ALLOWED_CONFIG_FIELDS:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}单项结构异常")
+        if raw.get("config_id") != config_id:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}编号异常")
+        overrides = raw.get("per_image_overrides")
+        if not isinstance(overrides, Mapping) or set(overrides) != set(required_fields):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少规范字段",
+                code="required_fields",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected=f"必须恰好包含套装 {mode}_vc 全部规范字段",
+            )
+        if any(
+            not isinstance(overrides[field], str) or not overrides[field].strip()
+            for field in required_fields
+        ):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}字段内容异常",
+                code="field_content",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="每个规范字段必须是非空字符串",
+            )
+        _validate_set_angle_binding(
+            overrides["绑定角度槽位"],
+            layouts_by_index,
+            label=label,
+            config_id=config_id,
+        )
+        _validate_set_layout_binding(
+            overrides["套装编排槽位"],
+            layouts_by_index,
+            label=label,
+            config_id=config_id,
+        )
+        if overrides["套装编排依据"].strip() != SET_ARRANGEMENT_BASIS_LITERAL:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}套装编排依据异常",
+                code="field_content",
+                config_id=config_id,
+                field="套装编排依据",
+                expected="必须逐字使用教学固定文案",
+            )
+        if overrides["套装产品颜色依据"].strip() != SET_PRODUCT_COLOR_BASIS_LITERAL:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}套装产品颜色依据异常",
+                code="field_content",
+                config_id=config_id,
+                field="套装产品颜色依据",
+                expected="必须逐字使用教学固定文案",
+            )
+        if "置信度" not in overrides["套装尺寸比例锁定"]:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}套装尺寸比例锁定异常",
+                code="field_content",
+                config_id=config_id,
+                field="套装尺寸比例锁定",
+                expected="必须包含置信度并只引用档案尺寸",
+            )
+        if overrides["输出画布比例"].strip() != ("1:1" if is_main else "3:4"):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}画布比例异常",
+                code="canvas_ratio",
+                config_id=config_id,
+                field="输出画布比例",
+                expected=f"必须逐字写 {'1:1' if is_main else '3:4'}",
+            )
+        all_appear_count += int("全员出镜" in overrides["套装组成调用"])
+        handheld_declaration = overrides["手持交互声明"]
+        handheld = "本张图不启用手持场景" not in handheld_declaration
+        dynamic_reference = overrides["动态手持样式参考图调用"].strip()
+        if not handheld and dynamic_reference != "无":
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="不启用手持时必须逐字写无",
+            )
+        if handheld:
+            if "持握套装中某一主体单件" not in handheld_declaration:
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}手持对象异常",
+                    code="handheld_reference",
+                    config_id=config_id,
+                    field="手持交互声明",
+                    expected="只允许持握套装中某一主体单件",
+                )
+            if "静态握持" in handheld_declaration and dynamic_reference != "无，仅动态拿起场景可调用":
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}手持规则调用异常",
+                    code="handheld_reference",
+                    config_id=config_id,
+                    field="动态手持样式参考图调用",
+                    expected="静态握持时必须逐字写无，仅动态拿起场景可调用",
+                )
+            if "动态拿起" in handheld_declaration and dynamic_reference != "未提供，不调用":
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}手持规则调用异常",
+                    code="handheld_reference",
+                    config_id=config_id,
+                    field="动态手持样式参考图调用",
+                    expected="动态拿起且未提供参考图时必须逐字写未提供，不调用",
+                )
+            if not any(kind in handheld_declaration for kind in ("静态握持", "动态拿起")):
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}手持规则调用异常",
+                    code="handheld_reference",
+                    config_id=config_id,
+                    field="手持交互声明",
+                    expected="启用手持必须逐字包含静态握持或动态拿起",
+                )
+            enabled_ids.append(config_id)
+        if not is_main:
+            expected_modules = groups[config_index]
+            observed_modules = tuple(
+                int(module)
+                for module in re.findall(
+                    r"模块(0[1-8])",
+                    overrides["标准模块归属"].strip(),
+                )
+            )
+            if observed_modules != expected_modules:
+                expected_module_literal = " + ".join(
+                    f"模块{module:02d}" for module in expected_modules
+                )
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}模块覆盖异常",
+                    code="module_coverage",
+                    config_id=config_id,
+                    field="标准模块归属",
+                    expected=f"必须只包含 {expected_module_literal}",
+                )
+            set_size_info = overrides["套装尺寸标注信息"].strip()
+            if 5 in expected_modules:
+                if handheld:
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}模块05规则异常",
+                        code="module05_handheld",
+                        config_id=config_id,
+                        field="手持交互声明、动态手持样式参考图调用",
+                        expected="模块05不得启用手持且动态参考图必须逐字写无",
+                    )
+                if any(field not in set_size_info for field in SET_SIZE_ANNOTATION_SUBFIELDS):
+                    raise ContentPredicateViolation(
+                        f"codex-dev 收到的{label}套装尺寸标注结构异常",
+                        code="module05_height_literal",
+                        config_id=config_id,
+                        field="套装尺寸标注信息",
+                        expected="模块05必须包含套装教学列出的全部结构化子栏",
+                    )
+            elif set_size_info != "非尺寸标注图，不启用":
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}套装尺寸标注范围异常",
+                    code="size_annotation_scope",
+                    config_id=config_id,
+                    field="套装尺寸标注信息",
+                    expected="非模块05必须逐字写非尺寸标注图，不启用",
+                )
+            if 5 not in expected_modules and (
+                "非尺寸标注图" not in overrides["尺寸标注信息"]
+                or "非尺寸标注图" not in overrides["尺寸标注图规则"]
+            ):
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}尺寸标注范围异常",
+                    code="size_annotation_scope",
+                    config_id=config_id,
+                    field="尺寸标注信息、尺寸标注图规则",
+                    expected="非模块05两栏必须逐字写非尺寸标注图",
+                )
+    return enabled_ids, all_appear_count
+
+
+def _validate_set_detail_chunk_business_content(
+    value: Mapping[str, Any],
+    *,
+    chunk_index: int,
+    requirements: UserConfirmedRequirements,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    set_angle_layout_inventory: Mapping[str, Any],
+    prior_chunks: Sequence[Mapping[str, Any]],
+) -> None:
+    label = "套装详情图变量配置"
+    confirmed_dimensions = _set_dimension_values(
+        set_identity,
+        component_identities,
+        requirements,
+    )
+    _reject_unsupported_claims(
+        value,
+        None,
+        label,
+        product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=confirmed_dimensions,
+        defer_style_master_prop_materials=True,
+        content_correction=True,
+        allow_confirmed_dimension_groups=True,
+    )
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
+    first_config_id = str(value["configs"][0].get("config_id") or "")
+    if chunk_index == 1 and (
+        not isinstance(value.get("common_constraints"), dict)
+        or not value["common_constraints"]
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}数量或结构异常",
+            code="common_constraints",
+            config_id=first_config_id,
+            field="common_constraints",
+            expected="必须是非空 JSON 对象",
+        )
+    start_index = sum(len(chunk["configs"]) for chunk in prior_chunks)
+    current_enabled, _all_appear = _validate_set_config_items(
+        value["configs"],
+        mode="detail",
+        start_index=start_index,
+        requirements=requirements,
+        set_angle_layout_inventory=set_angle_layout_inventory,
+    )
+    target = requirements.handheld_detail
+    prior_enabled = [
+        str(raw.get("config_id") or "")
+        for chunk in prior_chunks
+        for raw in chunk["configs"]
+        if "本张图不启用手持场景"
+        not in raw["per_image_overrides"]["手持交互声明"]
+    ]
+    if len(prior_enabled) + len(current_enabled) > target:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=first_config_id,
+            field="手持交互声明",
+            expected=f"实际启用数量不得超过目标 {target}",
+        )
+    chunk_count = detail_variable_config_chunk_count(requirements)
+    if chunk_index == chunk_count:
+        all_configs = [
+            raw
+            for chunk in (*prior_chunks, value)
+            for raw in chunk["configs"]
+        ]
+        expected_count = _mode_image_count(requirements, "detail")
+        if len(all_configs) != expected_count:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}分段覆盖异常",
+                code="chunk_coverage",
+                config_id=first_config_id,
+                field="configs",
+                expected=f"全部分段必须完整覆盖 detail_01 至 detail_{expected_count:02d}",
+            )
+        enabled_ids = [
+            str(raw.get("config_id") or "")
+            for raw in all_configs
+            if "本张图不启用手持场景"
+            not in raw["per_image_overrides"]["手持交互声明"]
+        ]
+        summary = value.get("handheld_count_summary")
+        if not isinstance(summary, Mapping):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持数量说明异常",
+                code="handheld_summary",
+                config_id=first_config_id,
+                field="handheld_count_summary",
+                expected="末段必须返回套装手持数量说明对象",
+            )
+        _validate_set_handheld_summary(
+            summary,
+            mode="detail",
+            target=target,
+            expected_count=expected_count,
+            enabled_ids=enabled_ids,
+            label=label,
+            config_id=first_config_id,
+        )
+
+
+def parse_set_variable_config_response(
+    text: str,
+    *,
+    mode: str,
+    product_id: str,
+    requirements: UserConfirmedRequirements,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    set_angle_layout_inventory: Mapping[str, Any],
+    upstream_paths: Mapping[str, Path],
+) -> dict[str, Any]:
+    """Validate a set-only variable plan and inject the unchanged envelope type."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的套装变量配置模式")
+    is_main = mode == "main"
+    label = "套装主图变量配置" if is_main else "套装详情图变量配置"
+    component_keys = tuple(
+        f"component_identity_archive_{index:02d}"
+        for index in range(1, len(component_identities) + 1)
+    )
+    required_upstreams = (
+        "set_product_identity",
+        *component_keys,
+        "style_master",
+        "set_angle_layout_inventory",
+        *(("main_variable_configs",) if not is_main else ()),
+    )
+    if set(upstream_paths) != set(required_upstreams):
+        raise ExecutorExecutionError(f"codex-dev 无法固定{label}上游引用")
+    style_master_text = _load_style_master_material_reference_text(
+        upstream_paths["style_master"],
+        product_id=product_id,
+    )
+    value = _extract_json_object(text, label)
+    if set(value) != _VARIABLE_ALLOWED_TOP_LEVEL:
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}顶层字段异常")
+    _reject_unicode_damage_or_forbidden_keys(
+        value,
+        label,
+        allowed_set_keys=SET_VARIABLE_CONFIG_ALLOWED_SET_KEYS,
+    )
+    confirmed_dimensions = _set_dimension_values(
+        set_identity,
+        component_identities,
+        requirements,
+    )
+    _reject_unsupported_claims(
+        value,
+        None,
+        label,
+        product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=confirmed_dimensions,
+        style_master_text=style_master_text,
+        content_correction=True,
+        allow_confirmed_dimension_groups=True,
+    )
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
+    common = value.get("common_constraints")
+    configs = value.get("configs")
+    summary = value.get("handheld_count_summary")
+    expected_count = _mode_image_count(requirements, mode)
+    if (
+        not isinstance(common, dict)
+        or not common
+        or not isinstance(configs, list)
+        or len(configs) != expected_count
+    ):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}数量或结构异常")
+    if not isinstance(summary, dict):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}手持数量说明异常")
+    enabled_ids, all_appear_count = _validate_set_config_items(
+        configs,
+        mode=mode,
+        start_index=0,
+        requirements=requirements,
+        set_angle_layout_inventory=set_angle_layout_inventory,
+    )
+    target = requirements.handheld_main if is_main else requirements.handheld_detail
+    if len(enabled_ids) > target:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=str(configs[0].get("config_id") or ""),
+            field="手持交互声明",
+            expected=f"实际启用数量不得超过目标 {target}",
+        )
+    if is_main and all_appear_count < min(2, expected_count):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}全员出镜数量异常",
+            code="field_content",
+            config_id=str(configs[0].get("config_id") or ""),
+            field="套装组成调用",
+            expected=f"至少 {min(2, expected_count)} 项必须逐字包含全员出镜",
+        )
+    _validate_set_handheld_summary(
+        summary,
+        mode=mode,
+        target=target,
+        expected_count=expected_count,
+        enabled_ids=enabled_ids,
+        label=label,
+        config_id=str(configs[0].get("config_id") or ""),
+    )
+    normalized_configs: list[dict[str, Any]] = []
+    for raw in configs:
+        overrides = dict(raw["per_image_overrides"])
+        resolved = dict(common)
+        resolved.update(overrides)
+        normalized_configs.append(
+            {
+                "config_id": raw["config_id"],
+                "output_type": mode,
+                "per_image_overrides": overrides,
+                "resolved_variable_config_sha256": stable_json_sha256(resolved),
+                "notes": str(raw.get("notes") or ""),
+            }
+        )
+    return {
+        "product_id": product_id,
+        "artifact_type": f"{mode}_variable_config",
+        "config_count": expected_count,
+        "upstream_artifacts": {
+            key: str(upstream_paths[key]) for key in required_upstreams
+        },
+        "common_constraints": dict(common),
+        "configs": normalized_configs,
+        "notes": str(value.get("notes") or ""),
+    }
 
 
 def parse_variable_config_response(

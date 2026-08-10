@@ -38,7 +38,7 @@ OLD_CONTRACT_HASH = (
     "ac9e633c814b2032eb5d72c436a773"
     "c03a7dc3f4500d3383580ee7b3f3c18de0"
 )
-NEW_CONTRACT_HASH = "266f01ac2532a334e8b4378ee369d49a9a6f97cbe256fbce8daef06b357b9a61"
+NEW_CONTRACT_HASH = "a030df8d0aa9c96d9275d7c6f463fbc9d8f10af57e8c4539c2cb9d0d903456d3"
 NOW_MS = 20_000
 STEPS = (
     "identity",
@@ -161,7 +161,7 @@ class St01ContractAndControllerTests(unittest.TestCase):
     def test_contract_v3_loads_and_canonical_hash_is_stable_and_new(self) -> None:
         contract = load_batch_intake_contract(ROOT)
 
-        self.assertEqual(3, contract["schema_version"])
+        self.assertEqual(4, contract["schema_version"])
         self.assertEqual(
             ["category", "contractHash", "batch_type", "facts"],
             contract["payload"]["required"],
@@ -669,10 +669,10 @@ class St01StepGateTests(unittest.TestCase):
         ]
 
     def test_set_eight_step_matrix_stops_before_executor_with_exact_copy(self) -> None:
-        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory"}), batch_type_gate.SET_READY_STEPS)
+        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}), batch_type_gate.SET_READY_STEPS)
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
-            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "main_vc"),
+            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "final_prompts"),
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
@@ -681,7 +681,7 @@ class St01StepGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self._prepare_repository(root)
-            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory"})
+            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"})
             for index, step in enumerate(blocked_steps, start=1):
                 with self.subTest(step=step):
                     batch_id = f"set-{index}"

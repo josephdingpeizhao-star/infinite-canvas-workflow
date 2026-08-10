@@ -311,8 +311,8 @@ class ExecutorFixture(unittest.TestCase):
 
 
 class St03aGateRoutingAndCommandTests(unittest.TestCase):
-    def test_gate_matrix_opens_three_steps_and_keeps_six_blocked(self) -> None:
-        ready = {"identity", "style_master", "angle_inventory"}
+    def test_gate_matrix_opens_five_steps_and_keeps_four_blocked(self) -> None:
+        ready = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}
         self.assertEqual(frozenset(ready), batch_type_gate.SET_READY_STEPS)
         for step in STEPS:
             with self.subTest(batch_type="set", step=step):

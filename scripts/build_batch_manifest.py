@@ -214,7 +214,7 @@ def main() -> int:
     )
     parser.add_argument("--length-cm", type=positive_integer)
     parser.add_argument("--width-cm", type=positive_integer)
-    parser.add_argument("--height-cm", required=True, type=positive_integer)
+    parser.add_argument("--height-cm", type=positive_integer)
     parser.add_argument(
         "--main-count",
         type=int,
@@ -278,7 +278,7 @@ def main() -> int:
         "width_cm": args.width_cm,
         "height_cm": args.height_cm,
     }
-    if any(
+    if args.batch_type != "set" and any(
         dimensions[key] is None
         for key in recipe.form["dimensions"]["required"]
     ):

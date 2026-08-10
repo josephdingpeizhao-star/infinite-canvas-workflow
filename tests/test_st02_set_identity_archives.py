@@ -194,14 +194,14 @@ class ExecutorFixture(unittest.TestCase):
 
 class St02GateTests(unittest.TestCase):
     def test_gate_matrix_has_exact_three_branch_behavior(self) -> None:
-        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory"}), batch_type_gate.SET_READY_STEPS)
+        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}), batch_type_gate.SET_READY_STEPS)
         self.assertIsNone(
             batch_type_gate.set_batch_blocked_message(
                 {"batch_type": "set"},
                 "identity",
             )
         )
-        blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory"})
+        blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"})
         for step in blocked_steps:
             with self.subTest(batch_type="set", step=step):
                 self.assertEqual(
@@ -968,7 +968,7 @@ class St02ServiceTests(unittest.TestCase):
             journal = self.write_manifest(repository, root, batch_id, "set")
             client = _ServiceCanvasClient(batch_id, "identity")
             identity_route, identity_integrity = self.route_and_integrity("identity")
-            style_route, _style_integrity = self.route_and_integrity("main_vc")
+            style_route, _style_integrity = self.route_and_integrity("final_prompts")
             advanced = {"value": False}
             built: list[str] = []
             executed: list[str] = []
@@ -1020,7 +1020,7 @@ class St02ServiceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self.prepare_repository(root)
-            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory"})
+            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"})
             for index, step in enumerate(blocked_steps, start=1):
                 with self.subTest(step=step):
                     batch_id = f"blocked-{index}"

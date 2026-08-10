@@ -689,8 +689,6 @@ class BatchCreator:
             request.batch_type,
             "--category",
             request.category,
-            "--height-cm",
-            str(facts.height_cm),
             "--main-count",
             str(facts.main_image_count),
             "--detail-count",
@@ -711,6 +709,8 @@ class BatchCreator:
             command.extend(("--length-cm", str(facts.length_cm)))
         if facts.width_cm is not None:
             command.extend(("--width-cm", str(facts.width_cm)))
+        if facts.height_cm is not None:
+            command.extend(("--height-cm", str(facts.height_cm)))
         environment = os.environ.copy()
         environment["PYTHONUTF8"] = "1"
         environment["PYTHONIOENCODING"] = "utf-8"
