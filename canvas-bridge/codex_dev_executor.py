@@ -21,7 +21,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
-from category_recipes import CategoryRecipe, CategoryRecipeError, load_manifest_category
+from category_recipes import (
+    CategoryRecipe,
+    CategoryRecipeError,
+    load_manifest_category,
+    load_shared_prompt,
+)
 from content_correction import ContentPredicateViolation
 from codex_dev_downstream import (
     DetailChunkEnvelopeCorrection,
@@ -166,6 +171,23 @@ FORBIDDEN_OUTPUT_FIELDS = {
     "images",
     "qc_results",
 }
+SET_IDENTITY_EMBEDDED_ARCHIVE_FIELDS = {
+    "identity",
+    "identity_archive",
+    "product_identity_archive",
+    "component_archives",
+    "component_identity_archives",
+}
+SET_IDENTITY_FORBIDDEN_OUTPUT_FIELDS = (
+    FORBIDDEN_OUTPUT_FIELDS
+    | {
+        "qc_reports",
+        "set_angle_layout_inventory",
+        "set_layouts",
+    }
+    | SET_IDENTITY_EMBEDDED_ARCHIVE_FIELDS
+)
+SET_IDENTITY_COMPONENT_FORBIDDEN_FIELDS = SET_IDENTITY_FORBIDDEN_OUTPUT_FIELDS
 STYLE_MASTER_FORBIDDEN_OUTPUT_FIELDS = {
     "product_identity_archive",
     "identity",
@@ -860,6 +882,8 @@ class CodexDevExecutor:
         return self._execute_identity(product_id)
 
     def _execute_identity(self, product_id: str) -> ExecutionResult:
+        if self.context.manifest.get("batch_type", "single") != "single":
+            return self._execute_set_identity_archives(product_id)
         skill_text, reference_text = self._load_required_rules()
         output_path = self._identity_output_path()
         if output_path.exists():
@@ -875,6 +899,112 @@ class CodexDevExecutor:
             outputs=(output_path,),
             provider=self.name,
             metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_set_identity_archives(self, product_id: str) -> ExecutionResult:
+        identity_directory = self._identity_output_path().parent
+        self._validate_empty_set_identity_directory(identity_directory)
+
+        component_paths = self._manifest_image_paths(
+            "component_white_bg_images",
+            sort_by_filename=True,
+        )
+        if not 2 <= len(component_paths) <= 8:
+            raise ExecutorExecutionError("套装身份建档要求 2–8 张组成单件白底图")
+        group_paths = self._manifest_image_paths(
+            "set_group_images",
+            sort_by_filename=True,
+        )
+        if not 1 <= len(group_paths) <= 3:
+            raise ExecutorExecutionError("套装身份建档要求 1–3 张套装合影图")
+
+        component_total = len(component_paths)
+        component_names = tuple(path.name for path in component_paths)
+        group_names = tuple(path.name for path in group_paths)
+        component_output_names = tuple(
+            f"component_{index:02d}_product_identity_archive.json"
+            for index in range(1, component_total + 1)
+        )
+        component_skill, component_reference = self._load_required_rules()
+        set_skill, set_identity_reference, set_workflow_reference = (
+            self._load_set_identity_rules()
+        )
+        component_turns = tuple(
+            (
+                component_path,
+                self._image_attachments(
+                    (component_path,),
+                    "套装组成单件白底图",
+                ),
+                self._build_component_identity_prompt(
+                    product_id,
+                    component_index,
+                    component_total,
+                    component_path.name,
+                    component_skill,
+                    component_reference,
+                ),
+            )
+            for component_index, component_path in enumerate(
+                component_paths,
+                start=1,
+            )
+        )
+        group_attachments = self._image_attachments(group_paths, "套装合影图")
+
+        component_archives: list[dict[str, Any]] = []
+        component_thread_ids: list[str] = []
+        for component_index, (component_path, attachments, prompt) in enumerate(
+            component_turns,
+            start=1,
+        ):
+            turn = self._run_transport(prompt, attachments)
+            archive = self._parse_archive(
+                turn.text,
+                product_id,
+                (component_path.name,),
+            )
+            archive["component_index"] = component_index
+            archive["component_source_image"] = component_path.name
+            self._emit_turn_progress()
+            component_archives.append(archive)
+            component_thread_ids.append(turn.thread_id)
+
+        set_prompt = self._build_set_identity_prompt(
+            product_id,
+            group_names,
+            component_names,
+            component_archives,
+            set_skill,
+            set_identity_reference,
+            set_workflow_reference,
+        )
+        set_turn = self._run_transport(set_prompt, group_attachments)
+        set_archive = self._parse_set_identity_archive(
+            set_turn.text,
+            product_id,
+            group_names,
+            component_names,
+            component_output_names,
+        )
+        self._emit_turn_progress()
+
+        self._validate_empty_set_identity_directory(identity_directory)
+        output_paths = tuple(
+            identity_directory / filename for filename in component_output_names
+        )
+        for output_path, archive in zip(output_paths, component_archives):
+            self._write_archive(output_path, archive)
+        set_output_path = identity_directory / "set_product_identity.json"
+        self._write_archive(set_output_path, set_archive)
+        return ExecutionResult(
+            detail="套装两级身份档案已生成",
+            outputs=(*output_paths, set_output_path),
+            provider=self.name,
+            metadata={
+                "thread_id": set_turn.thread_id,
+                "component_thread_ids": component_thread_ids,
+            },
         )
 
     def _execute_style_master(self, product_id: str) -> ExecutionResult:
@@ -1591,6 +1721,22 @@ class CodexDevExecutor:
             raise ExecutorExecutionError("codex-dev 无法加载产品身份建档规则") from None
         return skill_text, reference_text
 
+    def _load_set_identity_rules(self) -> tuple[str, str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "set-product-identity"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            identity_reference = load_shared_prompt(
+                self.repository_root,
+                "set_identity_prompt",
+            )
+            workflow_reference = load_shared_prompt(
+                self.repository_root,
+                "set_workflow_supplement",
+            )
+        except (OSError, CategoryRecipeError):
+            raise ExecutorExecutionError("codex-dev 无法加载套装产品身份建档规则") from None
+        return skill_text, identity_reference, workflow_reference
+
     def _load_style_master_rules(self) -> tuple[str, str]:
         skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"
         try:
@@ -1626,7 +1772,43 @@ class CodexDevExecutor:
         purpose: str = "identity",
     ) -> tuple[tuple[CodexAttachment, ...], tuple[str, ...]]:
         image_paths = self._white_background_image_paths(purpose)
+        attachments = self._image_attachments(image_paths, f"{purpose} 输入图片")
+        return attachments, tuple(path.name for path in image_paths)
 
+    def _white_background_image_paths(self, purpose: str) -> tuple[Path, ...]:
+        image_paths = self._manifest_image_paths("white_bg_images")
+        if not image_paths:
+            raise ExecutorExecutionError(f"codex-dev 未找到 {purpose} 可用的白底图")
+        return image_paths
+
+    def _manifest_image_paths(
+        self,
+        input_key: str,
+        *,
+        sort_by_filename: bool = False,
+    ) -> tuple[Path, ...]:
+        inputs = self.context.manifest.get("inputs")
+        raw_paths = inputs.get(input_key) if isinstance(inputs, Mapping) else None
+        values = raw_paths if isinstance(raw_paths, list) else []
+        image_paths: list[Path] = []
+        for value in values:
+            path = Path(str(value))
+            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
+                image_paths.append(path)
+            elif path.is_dir():
+                image_paths.extend(
+                    item for item in sorted(path.iterdir(), key=lambda item: item.name.lower())
+                    if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+                )
+        if sort_by_filename:
+            image_paths.sort(key=lambda item: item.name.lower())
+        return tuple(image_paths)
+
+    @staticmethod
+    def _image_attachments(
+        image_paths: tuple[Path, ...],
+        purpose: str,
+    ) -> tuple[CodexAttachment, ...]:
         attachments: list[CodexAttachment] = []
         try:
             for path in image_paths:
@@ -1640,26 +1822,23 @@ class CodexDevExecutor:
                     )
                 )
         except OSError:
-            raise ExecutorExecutionError(f"codex-dev 无法读取 {purpose} 输入图片") from None
-        return tuple(attachments), tuple(path.name for path in image_paths)
+            raise ExecutorExecutionError(f"codex-dev 无法读取 {purpose}") from None
+        return tuple(attachments)
 
-    def _white_background_image_paths(self, purpose: str) -> tuple[Path, ...]:
-        inputs = self.context.manifest.get("inputs")
-        raw_paths = inputs.get("white_bg_images") if isinstance(inputs, Mapping) else None
-        values = raw_paths if isinstance(raw_paths, list) else []
-        image_paths: list[Path] = []
-        for value in values:
-            path = Path(str(value))
-            if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES:
-                image_paths.append(path)
-            elif path.is_dir():
-                image_paths.extend(
-                    item for item in sorted(path.iterdir(), key=lambda item: item.name.lower())
-                    if item.is_file() and item.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
-                )
-        if not image_paths:
-            raise ExecutorExecutionError(f"codex-dev 未找到 {purpose} 可用的白底图")
-        return tuple(image_paths)
+    @staticmethod
+    def _validate_empty_set_identity_directory(identity_directory: Path) -> None:
+        try:
+            has_json = identity_directory.is_dir() and any(
+                item.is_file() and item.suffix.lower() == ".json"
+                for item in identity_directory.rglob("*")
+            )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法检查套装身份档案目录") from None
+        if has_json:
+            raise ExecutorExecutionError(
+                "套装身份档案目录已存在历史文件，codex-dev 不会覆盖，"
+                "请先清空该批次身份档案目录或回收批次后重试。"
+            )
 
     def _load_style_reference_images(self) -> tuple[tuple[CodexAttachment, ...], tuple[str, ...]]:
         inputs = self.context.manifest.get("inputs")
@@ -1899,6 +2078,105 @@ identity 同时应按 required reference 提供可复用字段，包括 product_
 不得返回 style_master、angle_inventory、angle_slots、variable_configs、final_prompt、final_prompts、images 或 qc_results。
 """
 
+    def _build_component_identity_prompt(
+        self,
+        product_id: str,
+        component_index: int,
+        component_total: int,
+        source_filename: str,
+        skill_text: str,
+        reference_text: str,
+    ) -> str:
+        notes = str(self.context.manifest.get("notes") or "")
+        return f"""你正在执行受限的开发适配器任务。只处理 identity（套装批次的组成单件建档），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+本单件为套装第 {component_index}/{component_total} 件，文件名 {source_filename}
+用户备注：{json.dumps(notes, ensure_ascii=False)}
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+{reference_text}
+--- REFERENCE END ---
+
+仅返回一个 JSON 对象，不要 Markdown 说明。顶层必须包含 artifact_type、identity、missing_information、blocked_reasons、notes。
+artifact_type 必须为 product_identity_archive。identity 必须明确包含四个数组：
+- confirmed_facts：已确认事实
+- visible_inferences：可见推断
+- unknowns：无法确认
+- prohibited_inventions：禁止虚构内容
+
+identity 同时应按 required reference 提供可复用字段，包括 product_name、product_category、components、core_shape、visual_proportions、true_dimensions、color_and_material、texture_and_surface、pattern_and_decoration、structural_details、angle_usage_rules、must_keep、allowed_changes、negative_prompt_constraints、product_lock_description。无法确认的内容必须明确写无法确认，不得虚构尺寸、容量、材质、认证、配件或不可见结构。
+
+不得返回 style_master、angle_inventory、angle_slots、variable_configs、final_prompt、final_prompts、images 或 qc_results。
+"""
+
+    def _build_set_identity_prompt(
+        self,
+        product_id: str,
+        group_source_inputs: tuple[str, ...],
+        component_source_inputs: tuple[str, ...],
+        component_archives: list[dict[str, Any]],
+        skill_text: str,
+        identity_reference_text: str,
+        workflow_reference_text: str,
+    ) -> str:
+        component_records = [
+            {
+                "component_index": index,
+                "component_source_image": source_filename,
+                "identity_archive": archive,
+            }
+            for index, (source_filename, archive) in enumerate(
+                zip(component_source_inputs, component_archives),
+                start=1,
+            )
+        ]
+        component_records_json = json.dumps(
+            component_records,
+            ensure_ascii=False,
+            indent=2,
+        )
+        return f"""你正在执行受限的开发适配器任务。只处理 identity，只产出《套装产品身份档案》，不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+套装合影文件名：{json.dumps(group_source_inputs, ensure_ascii=False)}
+组成单件数量：{len(component_archives)}
+
+以下是按顺序完成建档的全部组成单件。每项包含机器序号、原图文件名和该单件《产品身份档案》JSON 全文：
+--- COMPONENT ARCHIVES START ---
+{component_records_json}
+--- COMPONENT ARCHIVES END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+{identity_reference_text}
+--- REFERENCE END ---
+
+必须完整遵守以下 required reference：
+--- REFERENCE START ---
+{workflow_reference_text}
+--- REFERENCE END ---
+
+仅返回一个 JSON 对象，不要 Markdown 说明。顶层必须包含 artifact_type、set_identity、components、missing_information、notes；artifact_type 必须为 set_product_identity。
+
+set_identity 必须是非空对象，并按教学要求承载组合层信息，包括套装名称、套装类别、件数、可分性、固定搭配、主次关系、相对比例、尺寸汇总、排列组合、组成与道具边界、必须保持不变、允许变化、禁止错误和套装锁定描述。
+
+components 必须是数组，严格按上述单件顺序逐项给出组合层描述，包括单件名称、数量、主次地位等；数组项数必须恰好为 {len(component_archives)}。不要把单件身份档案全文复制到 components 中。
+
+不得返回 angle_slots、variable_configs、final_prompt、final_prompts、qc_results、style_master、angle_inventory、images、qc_reports、set_angle_layout_inventory 或 set_layouts。
+"""
+
     def _build_style_master_prompt(
         self,
         product_id: str,
@@ -2106,6 +2384,69 @@ admission_result 只允许“合格，可进入对应槽位”“勉强可用，
         archive["identity"] = identity
         archive["missing_information"] = self._string_list(value.get("missing_information"))
         archive["blocked_reasons"] = self._string_list(value.get("blocked_reasons"))
+        archive["notes"] = str(value.get("notes") or "")
+        return archive
+
+    def _parse_set_identity_archive(
+        self,
+        text: str,
+        product_id: str,
+        source_inputs: tuple[str, ...],
+        component_source_inputs: tuple[str, ...],
+        identity_archive_files: tuple[str, ...],
+    ) -> dict[str, Any]:
+        candidate = text.strip()
+        fenced = re.fullmatch(
+            r"```(?:json)?\s*(.*?)\s*```",
+            candidate,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if fenced:
+            candidate = fenced.group(1)
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：不是有效 JSON") from None
+        if not isinstance(value, dict):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：根对象无效")
+        if value.get("artifact_type") != "set_product_identity":
+            raise ExecutorExecutionError("codex-dev 返回格式异常：产物类型无效")
+        if SET_IDENTITY_FORBIDDEN_OUTPUT_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+
+        set_identity = value.get("set_identity")
+        if not isinstance(set_identity, dict) or not set_identity:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：set_identity 无效")
+        if SET_IDENTITY_FORBIDDEN_OUTPUT_FIELDS.intersection(set_identity):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+
+        expected_component_count = len(component_source_inputs)
+        components = value.get("components")
+        if not isinstance(components, list) or len(components) != expected_component_count:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：套装组成条目数量无效")
+        normalized_components: list[dict[str, Any]] = []
+        for index, component in enumerate(components):
+            if (
+                not isinstance(component, dict)
+                or SET_IDENTITY_COMPONENT_FORBIDDEN_FIELDS.intersection(component)
+            ):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：套装组成条目无效")
+            normalized_component = dict(component)
+            normalized_component["component_index"] = index + 1
+            normalized_component["component_source_image"] = component_source_inputs[index]
+            normalized_component["identity_archive_file"] = identity_archive_files[index]
+            normalized_components.append(normalized_component)
+
+        archive = dict(value)
+        archive["product_id"] = product_id
+        archive["artifact_type"] = "set_product_identity"
+        archive["user_declared_set_product"] = True
+        archive["source_inputs"] = list(source_inputs)
+        archive["set_identity"] = dict(set_identity)
+        archive["components"] = normalized_components
+        archive["missing_information"] = self._string_list(
+            value.get("missing_information")
+        )
         archive["notes"] = str(value.get("notes") or "")
         return archive
 

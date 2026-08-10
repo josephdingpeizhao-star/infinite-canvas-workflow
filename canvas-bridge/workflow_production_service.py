@@ -1778,6 +1778,10 @@ class WorkflowProductionService:
             turn_progress_machine = (
                 copy.deepcopy(machine)
                 if step in _TURN_PROGRESS_HEARTBEAT_STEPS
+                or (
+                    step == "identity"
+                    and manifest.get("batch_type", "single") != "single"
+                )
                 else None
             )
             # This is a deny-only phase boundary, not an execution route.  The

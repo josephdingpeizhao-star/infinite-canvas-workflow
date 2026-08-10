@@ -28,6 +28,7 @@ def category_recipe_directories(categories_root: Path) -> list[Path]:
         candidate
         for candidate in sorted(categories_root.iterdir(), key=lambda path: path.name)
         if candidate.is_dir()
+        and not candidate.name.startswith("_")
         and (
             (candidate / "prompts").is_dir()
             or (candidate / "runtime").is_dir()

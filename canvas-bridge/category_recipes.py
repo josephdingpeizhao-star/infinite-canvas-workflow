@@ -436,3 +436,26 @@ def installed_category_metadata(repository_root: Path) -> tuple[dict[str, Any], 
             }
         )
     return tuple(result)
+
+
+SHARED_PROMPT_FILES = {
+    "set_identity_prompt": "prompts/set_identity.md",
+    "set_workflow_supplement": "prompts/set_workflow_supplement.md",
+}
+
+
+def load_shared_prompt(repository_root: Path, key: str) -> str:
+    if not isinstance(key, str) or key not in SHARED_PROMPT_FILES:
+        raise CategoryRecipeError("共享提示词键无效")
+    prompt_path = _recipe_root(repository_root) / "_shared" / SHARED_PROMPT_FILES[key]
+    try:
+        text = prompt_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise CategoryRecipeError("共享提示词文件不存在") from None
+    except (OSError, UnicodeError):
+        raise CategoryRecipeError("共享提示词文件无法读取") from None
+    if text == "":
+        raise CategoryRecipeError("共享提示词文件为空")
+    if not text.strip():
+        raise CategoryRecipeError("共享提示词文件仅含空白")
+    return text

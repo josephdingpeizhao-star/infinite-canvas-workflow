@@ -64,8 +64,8 @@ FACTS = {
     "missing_d_no_retake": True,
 }
 SET_BATCH_BLOCKED_MESSAGE = (
-    "套装批次的生产链路尚未开通，本批次已停在开始之前，"
-    "未执行任何步骤，也未产生任何费用。"
+    "套装批次的后续生产工序尚未开通，本批次已停在未开通工序开始之前，"
+    "未执行该工序，也未产生任何费用。"
 )
 
 
@@ -668,11 +668,11 @@ class St01StepGateTests(unittest.TestCase):
             for line in journal.read_text(encoding="utf-8").splitlines()
         ]
 
-    def test_set_nine_step_matrix_stops_before_executor_with_exact_copy(self) -> None:
-        self.assertEqual(frozenset(), batch_type_gate.SET_READY_STEPS)
+    def test_set_eight_step_matrix_stops_before_executor_with_exact_copy(self) -> None:
+        self.assertEqual(frozenset({"identity"}), batch_type_gate.SET_READY_STEPS)
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
-            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "identity"),
+            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "style_master"),
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
@@ -681,7 +681,8 @@ class St01StepGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self._prepare_repository(root)
-            for index, step in enumerate(STEPS, start=1):
+            blocked_steps = tuple(step for step in STEPS if step != "identity")
+            for index, step in enumerate(blocked_steps, start=1):
                 with self.subTest(step=step):
                     batch_id = f"set-{index}"
                     journal = self._write_manifest(repository, root, batch_id, "set")

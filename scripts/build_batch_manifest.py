@@ -136,8 +136,8 @@ def apply_external_workspace(manifest: dict, root: Path, product_id: str, worksp
     manifest["artifacts"]["angle_inventory"] = absolute_text(paths["artifacts_root"] / "angle_inventory")
     manifest["artifacts"]["main_variable_configs"] = [absolute_text(paths["artifacts_root"] / "variable_configs")]
     manifest["artifacts"]["detail_variable_configs"] = [absolute_text(paths["artifacts_root"] / "variable_configs")]
-    manifest["artifacts"]["set_product_identity"] = ""
-    manifest["artifacts"]["set_angle_layout_inventory"] = ""
+    manifest["artifacts"]["set_product_identity"] = absolute_text(paths["artifacts_root"] / "identity")
+    manifest["artifacts"]["set_angle_layout_inventory"] = absolute_text(paths["artifacts_root"] / "angle_inventory")
     manifest["artifacts"]["final_prompts"] = [absolute_text(paths["artifacts_root"] / "final_prompts")]
     manifest["artifacts"]["comfyui_jobs"] = [absolute_text(paths["artifacts_root"] / "comfyui_jobs")]
     manifest["artifacts"]["qc_reports"] = [absolute_text(paths["artifacts_root"] / "qc_reports")]
@@ -186,8 +186,8 @@ def apply_repository_workspace(manifest: dict, root: Path, product_id: str) -> t
     manifest["artifacts"]["angle_inventory"] = f"artifacts/{product_id}/angle_inventory/"
     manifest["artifacts"]["main_variable_configs"] = [f"artifacts/{product_id}/variable_configs/"]
     manifest["artifacts"]["detail_variable_configs"] = [f"artifacts/{product_id}/variable_configs/"]
-    manifest["artifacts"]["set_product_identity"] = ""
-    manifest["artifacts"]["set_angle_layout_inventory"] = ""
+    manifest["artifacts"]["set_product_identity"] = f"artifacts/{product_id}/identity/"
+    manifest["artifacts"]["set_angle_layout_inventory"] = f"artifacts/{product_id}/angle_inventory/"
     manifest["artifacts"]["final_prompts"] = [f"artifacts/{product_id}/final_prompts/"]
     manifest["artifacts"]["comfyui_jobs"] = [f"artifacts/{product_id}/comfyui_jobs/"]
     manifest["artifacts"]["qc_reports"] = [f"artifacts/{product_id}/qc_reports/"]
