@@ -80,6 +80,8 @@ def condition_active(condition: dict[str, Any] | None, *, set_enabled: bool, req
         return set_enabled
     if condition["when"] == "requested_output":
         return condition["requested_output"] in requested
+    if condition["when"] == "single_only":
+        return not set_enabled
     raise ValueError(f"unknown condition: {condition}")
 
 

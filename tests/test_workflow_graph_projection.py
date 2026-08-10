@@ -66,6 +66,8 @@ def condition_active(condition: dict | None, *, set_enabled: bool, requested) ->
         return set_enabled
     if condition["when"] == "requested_output":
         return condition["requested_output"] in requested
+    if condition["when"] == "single_only":
+        return not set_enabled
     raise AssertionError(f"unknown condition: {condition}")
 
 
@@ -260,7 +262,6 @@ class WorkflowGraphRouteBatchConsistencyTest(unittest.TestCase):
         expected = [
             "product-identity-archive",
             "style-master-extractor",
-            "angle-inventory",
             "set-product-identity",
             "set-angle-layout-inventory",
             "main-variable-config",

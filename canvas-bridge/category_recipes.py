@@ -441,6 +441,8 @@ def installed_category_metadata(repository_root: Path) -> tuple[dict[str, Any], 
 SHARED_PROMPT_FILES = {
     "set_identity_prompt": "prompts/set_identity.md",
     "set_workflow_supplement": "prompts/set_workflow_supplement.md",
+    "set_angle_layout_prompt": "prompts/set_angle_layout_inventory.md",
+    "set_layout_rules": "prompts/set_layout_rules.md",
 }
 
 

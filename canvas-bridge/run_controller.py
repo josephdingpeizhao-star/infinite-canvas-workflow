@@ -54,6 +54,7 @@ SKILL_TO_STEP = {
     "product-identity-archive": "identity",
     "style-master-extractor": "style_master",
     "angle-inventory": "angle_inventory",
+    "set-angle-layout-inventory": "angle_inventory",
     "main-variable-config": "main_vc",
     "detail-variable-config": "detail_vc",
     "final-prompt-compiler": "final_prompts",
@@ -145,7 +146,16 @@ def runnable_steps(route: dict[str, Any], integrity: dict[str, Any]) -> list[str
 def retryable_steps(route: dict[str, Any], integrity: dict[str, Any]) -> list[str]:
     """Steps already completed once (their done-marker exists)."""
     available = set(route.get("available_artifacts") or [])
-    done = [step for step, key in STEP_DONE_ARTIFACTS.items() if key in available]
+    done = [
+        step
+        for step, key in STEP_DONE_ARTIFACTS.items()
+        if (
+            "set_angle_layout_inventory"
+            if step == "angle_inventory" and route.get("batch_type") == "set"
+            else key
+        )
+        in available
+    ]
     if integrity.get("found"):
         done.append("integrity")
     if _renders_present(route):

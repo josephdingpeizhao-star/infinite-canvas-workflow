@@ -1169,7 +1169,7 @@ def route_batch(
         missing_required_artifacts.append("style_master")
         if inputs["style_reference_images"]["file_count"] == 0 and drafts["style_master_draft"]["file_count"] == 0:
             blocked_reasons.append("No style reference images found for style master extraction.")
-    elif "angle_inventory" not in available_artifacts:
+    elif not set_enabled and "angle_inventory" not in available_artifacts:
         current_stage = "needs_angle_inventory"
         next_skill = "angle-inventory"
         missing_required_artifacts.append("angle_inventory")

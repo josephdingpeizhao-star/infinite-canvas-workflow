@@ -6,7 +6,9 @@ from collections.abc import Mapping
 from typing import Any
 
 
-SET_READY_STEPS: frozenset[str] = frozenset({"identity"})  # ST-03 起继续纳入
+SET_READY_STEPS: frozenset[str] = frozenset(
+    {"identity", "style_master", "angle_inventory"}
+)  # ST-03b 起继续纳入
 _SET_BATCH_BLOCKED_MESSAGE = (
     "套装批次的后续生产工序尚未开通，本批次已停在未开通工序开始之前，"
     "未执行该工序，也未产生任何费用。"

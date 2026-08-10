@@ -276,6 +276,81 @@ ANGLE_ALLOWED_OUTPUT_FIELDS = {
     "retake_recommendations",
     "notes",
 }
+SET_ANGLE_CAMERA_VALUES = frozenset({"A", "B", "C", "D", "不适合归入现有机位"})
+SET_ANGLE_LAYOUT_VALUES = frozenset(
+    {
+        "编排槽位一",
+        "编排槽位二",
+        "编排槽位三",
+        "编排槽位四",
+        "不适合归入现有编排",
+    }
+)
+SET_ANGLE_COMPONENT_LAYOUT_TEXT = "单件白底图，不涉及编排"
+SET_ANGLE_ADMISSION_VALUES = frozenset(
+    {
+        "合格，可进入对应机位与编排槽位",
+        "勉强可用，但建议重拍",
+        "不适合入库，需重拍",
+    }
+)
+SET_ANGLE_LAYOUT_REQUIRED_FIELDS = (
+    "layout_id",
+    "image_index",
+    "file_name",
+    "is_set_group",
+    "overall_camera",
+    "camera_decision_basis",
+    "layout_slot",
+    "layout_decision_basis",
+    "piece_count_check",
+    "component_visibility",
+    "naturally_visible_content",
+    "must_not_force_content",
+    "suitable_page_tasks",
+    "unsuitable_page_tasks",
+    "main_image_suitability",
+    "detail_image_suitability",
+    "risk_notes",
+    "recommended_task_binding",
+    "admission_result",
+    "merged_reference_note",
+)
+SET_ANGLE_LAYOUT_TEXT_FIELDS = (
+    "camera_decision_basis",
+    "layout_decision_basis",
+    "piece_count_check",
+    "component_visibility",
+    "naturally_visible_content",
+    "must_not_force_content",
+    "suitable_page_tasks",
+    "unsuitable_page_tasks",
+    "main_image_suitability",
+    "detail_image_suitability",
+    "risk_notes",
+    "recommended_task_binding",
+    "admission_result",
+    "merged_reference_note",
+)
+SET_ANGLE_LAYOUT_INJECTED_FIELDS = {
+    "product_id",
+    "user_declared_set_product",
+    "set_group_assets",
+    "explicit_set_request",
+    "set_product_identity",
+}
+SET_ANGLE_LAYOUT_FORBIDDEN_FIELDS = {
+    "angle_inventory",
+    "angle_slots",
+    "variable_configs",
+    "main_variable_configs",
+    "detail_variable_configs",
+    "final_prompt",
+    "final_prompts",
+    "qc_results",
+    "images",
+}
+SET_ANGLE_LAYOUT_ALLOWED_OUTPUT_FIELDS = {"artifact_type", "layouts", "notes"}
 
 
 @dataclass(frozen=True)
@@ -1013,7 +1088,11 @@ class CodexDevExecutor:
         if output_path.exists():
             raise ExecutorExecutionError("风格母版已存在，codex-dev 不会覆盖")
         attachments, source_references = self._load_style_reference_images()
-        identity_archive = self._load_product_identity_archive()
+        identity_archive = (
+            self._load_product_identity_archive()
+            if self.context.manifest.get("batch_type", "single") == "single"
+            else self._load_set_product_identity()
+        )
         prompt = self._build_style_master_prompt(
             product_id,
             source_references,
@@ -1032,6 +1111,8 @@ class CodexDevExecutor:
         )
 
     def _execute_angle_inventory(self, product_id: str) -> ExecutionResult:
+        if self.context.manifest.get("batch_type", "single") != "single":
+            return self._execute_set_angle_layout_inventory(product_id)
         self._validate_single_product_batch()
         skill_text, reference_text = self._load_angle_inventory_rules()
         output_path = self._angle_inventory_output_path()
@@ -1054,6 +1135,60 @@ class CodexDevExecutor:
         self._write_angle_inventory(output_path, artifact)
         return ExecutionResult(
             detail="角度槽位入库表已生成",
+            outputs=(output_path,),
+            provider=self.name,
+            metadata={"thread_id": turn.thread_id},
+        )
+
+    def _execute_set_angle_layout_inventory(self, product_id: str) -> ExecutionResult:
+        if self.context.manifest.get("user_declared_set_product") is not True:
+            self._validate_single_product_batch()
+        output_path = self._set_angle_layout_output_path()
+        if output_path.exists():
+            raise ExecutorExecutionError("套装角度与编排入库表已存在，codex-dev 不会覆盖")
+
+        component_paths = self._manifest_image_paths(
+            "component_white_bg_images",
+            sort_by_filename=True,
+        )
+        if not 2 <= len(component_paths) <= 8:
+            raise ExecutorExecutionError("套装角度与编排入库要求 2–8 张组成单件白底图")
+        group_paths = self._manifest_image_paths(
+            "set_group_images",
+            sort_by_filename=True,
+        )
+        if not 1 <= len(group_paths) <= 3:
+            raise ExecutorExecutionError("套装角度与编排入库要求 1–3 张套装合影图")
+
+        set_identity = self._load_set_product_identity()
+        group_names = tuple(path.name for path in group_paths)
+        component_names = tuple(path.name for path in component_paths)
+        attachments = (
+            *self._image_attachments(group_paths, "套装合影图"),
+            *self._image_attachments(component_paths, "套装组成单件白底图"),
+        )
+        skill_text, inventory_reference, layout_reference = (
+            self._load_set_angle_layout_rules()
+        )
+        prompt = self._build_set_angle_layout_prompt(
+            product_id,
+            group_names,
+            component_names,
+            set_identity,
+            skill_text,
+            inventory_reference,
+            layout_reference,
+        )
+        turn = self._run_transport(prompt, attachments)
+        artifact = self._parse_set_angle_layout_inventory(
+            turn.text,
+            product_id,
+            group_names,
+            component_names,
+        )
+        self._write_set_angle_layout_inventory(output_path, artifact)
+        return ExecutionResult(
+            detail="套装角度与编排入库表已生成",
             outputs=(output_path,),
             provider=self.name,
             metadata={"thread_id": turn.thread_id},
@@ -1737,6 +1872,22 @@ class CodexDevExecutor:
             raise ExecutorExecutionError("codex-dev 无法加载套装产品身份建档规则") from None
         return skill_text, identity_reference, workflow_reference
 
+    def _load_set_angle_layout_rules(self) -> tuple[str, str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "set-angle-layout-inventory"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            inventory_reference = load_shared_prompt(
+                self.repository_root,
+                "set_angle_layout_prompt",
+            )
+            layout_reference = load_shared_prompt(
+                self.repository_root,
+                "set_layout_rules",
+            )
+        except (OSError, CategoryRecipeError):
+            raise ExecutorExecutionError("codex-dev 无法加载套装角度与编排入库规则") from None
+        return skill_text, inventory_reference, layout_reference
+
     def _load_style_master_rules(self) -> tuple[str, str]:
         skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"
         try:
@@ -1888,6 +2039,25 @@ class CodexDevExecutor:
             raise ExecutorExecutionError("codex-dev 无法读取有效的产品身份档案")
         return archive
 
+    def _load_set_product_identity(self) -> dict[str, Any]:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("set_product_identity") if isinstance(artifacts, Mapping) else None
+        target = Path(str(value)) if value else None
+        identity_path = (
+            target
+            if target is not None and target.suffix.lower() == ".json"
+            else target / "set_product_identity.json"
+            if target is not None
+            else None
+        )
+        try:
+            archive = json.loads(identity_path.read_text(encoding="utf-8")) if identity_path else None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装产品身份档案") from None
+        if not isinstance(archive, dict) or archive.get("artifact_type") != "set_product_identity":
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装产品身份档案")
+        return archive
+
     def _identity_output_path(self) -> Path:
         artifacts = self.context.manifest.get("artifacts")
         value = artifacts.get("product_identity_archive") if isinstance(artifacts, Mapping) else None
@@ -1946,6 +2116,32 @@ class CodexDevExecutor:
                 raise ExecutorExecutionError("角度槽位入库表输出位置不在 manifest.workspace.artifacts_root 内")
         except OSError:
             raise ExecutorExecutionError("codex-dev 无法验证角度槽位入库表输出位置") from None
+        return resolved_output
+
+    def _set_angle_layout_output_path(self) -> Path:
+        artifacts = self.context.manifest.get("artifacts")
+        value = artifacts.get("set_angle_layout_inventory") if isinstance(artifacts, Mapping) else None
+        if not value:
+            raise ExecutorExecutionError("codex-dev 无法定位套装角度与编排入库表输出位置")
+        target = Path(str(value))
+        output_path = (
+            target
+            if target.suffix.lower() == ".json"
+            else target / "set_angle_layout_inventory.json"
+        )
+        workspace = self.context.manifest.get("workspace")
+        artifacts_root_value = workspace.get("artifacts_root") if isinstance(workspace, Mapping) else None
+        if not artifacts_root_value:
+            raise ExecutorExecutionError("codex-dev 无法验证 manifest.workspace.artifacts_root")
+        try:
+            artifacts_root = Path(str(artifacts_root_value)).resolve()
+            resolved_output = output_path.resolve()
+            if not resolved_output.is_relative_to(artifacts_root):
+                raise ExecutorExecutionError(
+                    "套装角度与编排入库表输出位置不在 manifest.workspace.artifacts_root 内"
+                )
+        except OSError:
+            raise ExecutorExecutionError("codex-dev 无法验证套装角度与编排入库表输出位置") from None
         return resolved_output
 
     @staticmethod
@@ -2354,6 +2550,114 @@ admission_result 只允许“合格，可进入对应槽位”“勉强可用，
 不得返回 product_identity_archive、identity、style_master、set_layouts、set_arrangements、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、images 或 qc_results。不得虚构尺寸、容量、材质、认证、配件或不可见结构；不得让风格、页面任务或身份档案反向改变白底图实际角度。
 """
 
+    def _build_set_angle_layout_prompt(
+        self,
+        product_id: str,
+        group_names: tuple[str, ...],
+        component_names: tuple[str, ...],
+        set_identity: Mapping[str, Any],
+        skill_text: str,
+        inventory_reference: str,
+        layout_reference: str,
+    ) -> str:
+        group_listing = tuple(
+            {"image_index": index, "file_name": filename}
+            for index, filename in enumerate(group_names, start=1)
+        )
+        component_listing = tuple(
+            {"image_index": len(group_names) + index, "file_name": filename}
+            for index, filename in enumerate(component_names, start=1)
+        )
+        identity_json = json.dumps(set_identity, ensure_ascii=False, indent=2)
+        group_json = json.dumps(group_listing, ensure_ascii=False, indent=2)
+        component_json = json.dumps(component_listing, ensure_ascii=False, indent=2)
+        required_fields = json.dumps(SET_ANGLE_LAYOUT_REQUIRED_FIELDS, ensure_ascii=False)
+        structure_example = json.dumps(
+            {
+                "artifact_type": "set_angle_layout_inventory",
+                "layouts": [
+                    {
+                        "layout_id": "layout_001",
+                        "image_index": 1,
+                        "file_name": "严格使用对应附件的真实文件名",
+                        "is_set_group": True,
+                        "overall_camera": "A、B、C、D 或 不适合归入现有机位",
+                        "camera_decision_basis": "整体机位判断依据",
+                        "layout_slot": "编排槽位一至四或不适合归入现有编排",
+                        "layout_decision_basis": "编排槽位判断依据",
+                        "piece_count_check": "与套装产品身份档案锁定件数的核对结论",
+                        "component_visibility": "各单件可见性",
+                        "naturally_visible_content": "该组合下自然可展示的内容",
+                        "must_not_force_content": "该组合下不应强行展示的内容",
+                        "suitable_page_tasks": "适合承担的页面任务",
+                        "unsuitable_page_tasks": "不适合承担的页面任务",
+                        "main_image_suitability": "适合、勉强适合或不适合，并说明原因",
+                        "detail_image_suitability": "适合、勉强适合或不适合，并说明原因",
+                        "risk_notes": "风险说明",
+                        "recommended_task_binding": "建议绑定任务",
+                        "admission_result": "三种固定入库结论之一",
+                        "merged_reference_note": "未提供多角度单件合并参考图时写无",
+                    }
+                ],
+                "notes": "",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        return f"""你正在执行受限的开发适配器任务。只处理 set_angle_layout_inventory（套装《套装角度与编排入库表》），不得操作画布，不得调用其他工作流步骤，不得生成图片。
+
+批次产品 ID：{json.dumps(product_id, ensure_ascii=False)}
+批次类型：set
+用户已明确声明这是套装产品。
+
+附件严格按以下顺序提供：先是套装合影图，再是套装组成单件白底图。layouts 必须按同一附件顺序逐项输出，不得遗漏、重复、调换或新增。
+
+套装合影图文件名清单：
+--- SET GROUP FILES START ---
+{group_json}
+--- SET GROUP FILES END ---
+
+套装组成单件白底图文件名清单：
+--- COMPONENT FILES START ---
+{component_json}
+--- COMPONENT FILES END ---
+
+以下既有《套装产品身份档案》只用于核对锁定件数、组成、主次、相对比例和组合关系，不得用它改变附件中的实际机位或编排，也不得在返回中输出该档案：
+--- SET PRODUCT IDENTITY START ---
+{identity_json}
+--- SET PRODUCT IDENTITY END ---
+
+必须完整遵守以下 Skill：
+--- SKILL START ---
+{skill_text}
+--- SKILL END ---
+
+必须完整遵守以下《套装角度与编排入库表提示词》：
+--- SET ANGLE LAYOUT PROMPT START ---
+{inventory_reference}
+--- SET ANGLE LAYOUT PROMPT END ---
+
+必须完整遵守以下《套装编排规则》：
+--- SET LAYOUT RULES START ---
+{layout_reference}
+--- SET LAYOUT RULES END ---
+
+仅返回一个 JSON 对象；允许把 JSON 放在单个 ```json 围栏中，但不要返回围栏外说明。顶层只允许 artifact_type、layouts、notes，其中 notes 可省略。artifact_type 必须为 set_angle_layout_inventory。
+
+layouts 条目数必须恰好为 {len(group_names) + len(component_names)}，并按附件顺序对齐。每条只允许以下字段且必须全部存在：{required_fields}。
+layout_id 必须按附件顺序从 layout_001 连续编号；image_index 必须是从 1 开始的整数；file_name 必须与对应附件真实文件名全等；is_set_group 必须是 JSON 布尔值。
+overall_camera 只允许 A、B、C、D 或“不适合归入现有机位”。套装合影条目的 layout_slot 只允许“编排槽位一”“编排槽位二”“编排槽位三”“编排槽位四”“不适合归入现有编排”；单件条目的 layout_slot 与 piece_count_check 都固定写“{SET_ANGLE_COMPONENT_LAYOUT_TEXT}”。
+camera_decision_basis、layout_decision_basis、piece_count_check、component_visibility、naturally_visible_content、must_not_force_content、suitable_page_tasks、unsuitable_page_tasks、main_image_suitability、detail_image_suitability、risk_notes、recommended_task_binding、admission_result、merged_reference_note 都必须是非空字符串。
+admission_result 只允许“合格，可进入对应机位与编排槽位”“勉强可用，但建议重拍”“不适合入库，需重拍”。main_image_suitability 和 detail_image_suitability 必须以“适合”“勉强适合”或“不适合”开头并说明原因。
+
+返回结构示例：
+--- JSON SHAPE START ---
+{structure_example}
+--- JSON SHAPE END ---
+
+product_id、user_declared_set_product、set_group_assets 由代码依据 manifest 和真实附件注入，模型不得返回；也不得返回 explicit_set_request、set_product_identity、angle_inventory、angle_slots、variable_configs、main_variable_configs、detail_variable_configs、final_prompt、final_prompts、qc_results 或 images。不得虚构套装件数、尺寸、容量、材质、认证、配件或不可见结构，不得输出 Unicode 替换字符。
+"""
+
     def _parse_archive(self, text: str, product_id: str, source_inputs: tuple[str, ...]) -> dict[str, Any]:
         candidate = text.strip()
         fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.IGNORECASE | re.DOTALL)
@@ -2597,6 +2901,140 @@ admission_result 只允许“合格，可进入对应槽位”“勉强可用，
         artifact["notes"] = str(value.get("notes") or "")
         return artifact
 
+    def _parse_set_angle_layout_inventory(
+        self,
+        text: str,
+        product_id: str,
+        group_names: tuple[str, ...],
+        component_names: tuple[str, ...],
+    ) -> dict[str, Any]:
+        candidate = text.strip()
+        fenced = re.fullmatch(
+            r"```(?:json)?\s*(.*?)\s*```",
+            candidate,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if fenced:
+            candidate = fenced.group(1)
+        if "\ufffd" in candidate:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：文本包含损坏字符")
+        try:
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            raise ExecutorExecutionError("codex-dev 返回格式异常：不是有效 JSON") from None
+        if not isinstance(value, dict):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：根对象无效")
+        if value.get("artifact_type") != "set_angle_layout_inventory":
+            raise ExecutorExecutionError("codex-dev 返回格式异常：产物类型无效")
+        if SET_ANGLE_LAYOUT_INJECTED_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含代码注入域字段")
+        if SET_ANGLE_LAYOUT_FORBIDDEN_FIELDS.intersection(value):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含越界工作流产物")
+        if not set(value).issubset(SET_ANGLE_LAYOUT_ALLOWED_OUTPUT_FIELDS):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：包含未声明顶层字段")
+
+        expected_names = (*group_names, *component_names)
+        layouts = value.get("layouts")
+        if not isinstance(layouts, list) or len(layouts) != len(expected_names):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：套装角度与编排条目数量无效")
+
+        normalized_layouts: list[dict[str, Any]] = []
+        required_fields = set(SET_ANGLE_LAYOUT_REQUIRED_FIELDS)
+        group_count = len(group_names)
+        for index, (layout, expected_name) in enumerate(
+            zip(layouts, expected_names),
+            start=1,
+        ):
+            if not isinstance(layout, dict):
+                raise ExecutorExecutionError("codex-dev 返回格式异常：套装角度与编排条目无效")
+            if set(layout) != required_fields:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：套装角度与编排条目字段无效")
+            if layout.get("layout_id") != f"layout_{index:03d}":
+                raise ExecutorExecutionError("codex-dev 返回格式异常：图序号无效")
+            if type(layout.get("image_index")) is not int or layout["image_index"] != index:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：图序号无效")
+            if layout.get("file_name") != expected_name:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：文件名对应关系无效")
+
+            expected_group = index <= group_count
+            if type(layout.get("is_set_group")) is not bool or layout["is_set_group"] is not expected_group:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：套装合影标记无效")
+            if layout.get("overall_camera") not in SET_ANGLE_CAMERA_VALUES:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：整体机位无效")
+
+            layout_slot = layout.get("layout_slot")
+            if expected_group:
+                if layout_slot not in SET_ANGLE_LAYOUT_VALUES:
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：套装编排槽位无效")
+            elif layout_slot != SET_ANGLE_COMPONENT_LAYOUT_TEXT:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：单件编排声明无效")
+            if not expected_group and layout.get("piece_count_check") != SET_ANGLE_COMPONENT_LAYOUT_TEXT:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：单件件数核对声明无效")
+
+            for field in SET_ANGLE_LAYOUT_TEXT_FIELDS:
+                item = layout.get(field)
+                if not isinstance(item, str) or not item.strip():
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：套装角度与编排文本无效")
+            if layout["admission_result"] not in SET_ANGLE_ADMISSION_VALUES:
+                raise ExecutorExecutionError("codex-dev 返回格式异常：入库结论无效")
+            for field in ("main_image_suitability", "detail_image_suitability"):
+                if not layout[field].startswith(ANGLE_SUITABILITY_PREFIXES):
+                    raise ExecutorExecutionError("codex-dev 返回格式异常：页面适用性无效")
+            normalized_layouts.append(dict(layout))
+
+        notes = value.get("notes", "")
+        if not isinstance(notes, str):
+            raise ExecutorExecutionError("codex-dev 返回格式异常：套装角度与编排备注无效")
+        artifact = {
+            "product_id": product_id,
+            "artifact_type": "set_angle_layout_inventory",
+            "user_declared_set_product": True,
+            "set_group_assets": [
+                {
+                    "asset_id": f"set_group_{index:03d}",
+                    "file_path": filename,
+                }
+                for index, filename in enumerate(group_names, start=1)
+            ],
+            "layouts": normalized_layouts,
+            "notes": notes,
+        }
+        self._validate_set_angle_layout_schema_contract(artifact)
+        return artifact
+
+    @staticmethod
+    def _validate_set_angle_layout_schema_contract(artifact: Mapping[str, Any]) -> None:
+        required = {"product_id", "artifact_type", "set_group_assets", "layouts"}
+        forbidden = {"angle_slots", "variable_configs", "final_prompt", "qc_results"}
+        valid = (
+            required.issubset(artifact)
+            and isinstance(artifact.get("product_id"), str)
+            and bool(str(artifact.get("product_id") or "").strip())
+            and artifact.get("artifact_type") == "set_angle_layout_inventory"
+            and (
+                artifact.get("user_declared_set_product") is True
+                or "explicit_set_request" in artifact
+            )
+            and not forbidden.intersection(artifact)
+        )
+        set_group_assets = artifact.get("set_group_assets")
+        valid = valid and isinstance(set_group_assets, list) and all(
+            isinstance(item, Mapping)
+            and {"asset_id", "file_path"}.issubset(item)
+            and isinstance(item.get("asset_id"), str)
+            and isinstance(item.get("file_path"), str)
+            for item in set_group_assets or []
+        )
+        layouts = artifact.get("layouts")
+        valid = valid and isinstance(layouts, list) and all(
+            isinstance(item, Mapping) and isinstance(item.get("layout_id"), str)
+            for item in layouts or []
+        )
+        if not valid:
+            raise ExecutorExecutionError(
+                "codex-dev 返回格式异常：套装角度与编排产物不符合 schema"
+            )
+
     @staticmethod
     def _string_list(value: Any) -> list[str]:
         return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
@@ -2696,3 +3134,40 @@ admission_result 只允许“合格，可进入对应槽位”“勉强可用，
                 except OSError:
                     pass
             raise ExecutorExecutionError("codex-dev 无法写入角度槽位入库表") from None
+
+    @staticmethod
+    def _write_set_angle_layout_inventory(
+        output_path: Path,
+        artifact: Mapping[str, Any],
+    ) -> None:
+        temporary: Path | None = None
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            if output_path.exists():
+                raise FileExistsError
+            content = json.dumps(artifact, ensure_ascii=False, indent=2) + "\n"
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=output_path.parent,
+                prefix=f".{output_path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                handle.write(content)
+                temporary = Path(handle.name)
+            os.link(temporary, output_path)
+            temporary.unlink()
+        except FileExistsError:
+            if temporary is not None:
+                temporary.unlink(missing_ok=True)
+            raise ExecutorExecutionError(
+                "套装角度与编排入库表已存在，codex-dev 不会覆盖"
+            ) from None
+        except OSError:
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            raise ExecutorExecutionError("codex-dev 无法写入套装角度与编排入库表") from None

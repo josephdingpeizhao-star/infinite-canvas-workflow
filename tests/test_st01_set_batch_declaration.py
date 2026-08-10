@@ -669,10 +669,10 @@ class St01StepGateTests(unittest.TestCase):
         ]
 
     def test_set_eight_step_matrix_stops_before_executor_with_exact_copy(self) -> None:
-        self.assertEqual(frozenset({"identity"}), batch_type_gate.SET_READY_STEPS)
+        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory"}), batch_type_gate.SET_READY_STEPS)
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
-            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "style_master"),
+            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "main_vc"),
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
@@ -681,7 +681,7 @@ class St01StepGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self._prepare_repository(root)
-            blocked_steps = tuple(step for step in STEPS if step != "identity")
+            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory"})
             for index, step in enumerate(blocked_steps, start=1):
                 with self.subTest(step=step):
                     batch_id = f"set-{index}"
