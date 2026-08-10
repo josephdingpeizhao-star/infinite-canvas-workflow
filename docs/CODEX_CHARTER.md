@@ -15,7 +15,7 @@
 
 - 产品：画布创作工作台，批量生产电商产品图。管线：identity → style_master → angle_inventory → main_vc → detail_vc → final_prompts → integrity 闸门 → renders（qc 休眠）。**只有 renders 花真钱（$0.06/张）**；上游步骤走本地 codex，钉死 gpt-5.5 + xhigh（thread+turn 双层显式），零美元。
 - 主仓（Git 根＝双层同名嵌套的内层）：`D:\onedrive\OneDrive\Desktop\无限画布工作流\无限画布工作流`（2026-08-07 DP-04 起用新名，旧名「杯类6.22版本代码仓库（水壶类）备份」已全面废弃）。后端逻辑在 `canvas-bridge/`（纯标准库），启动器在 `launcher/`，品类配方在 `categories/`（纯数据、运行时实时生效），测试在 `tests/`。
-- 前端 fork：`<伞形根>\infinite-canvas`（迁移前为 `D:\dev\infinite-canvas`），**分支必须始终停在 `workflow-editor`**。低侵入规则：只允许新增文件 + 在 `FORK_NOTES.md` 登记锚点，逻辑优先放 canvas-bridge；fork 任务白名单必须含 `CHANGELOG.md` 与 `docs/content/docs/progress/pending-test.mdx`（fork 文档不写日期）；`dist` 为本机产物不入提交；canvas-agent 走 tsx 直读源码。
+- 前端 fork：`<伞形根>\infinite-canvas`（迁移前为 `D:\dev\infinite-canvas`），**分支必须始终停在 `workflow-editor`**。低侵入规则：只允许新增文件 + 在 `FORK_NOTES.md` 登记锚点，逻辑优先放 canvas-bridge；fork 任务白名单必须含 `CHANGELOG.md` 与 `docs/content/docs/progress/pending-test.mdx`（fork 文档不写日期）；`web/dist` 成品随仓分发，前端源码改动必须同窗重建 dist 并随同提交（决策㉙，fork 锚点 #174 起「dist 不入提交」旧约作废）；canvas-agent 走 tsx 直读源码。
 - 权威文档（先读再动手）：`docs/CANVAS_PROJECT_STATE.md`（唯一权威）、`docs/PRODUCT_BLUEPRINT.md`、`canvas-bridge/README.md`、fork `FORK_NOTES.md`。
 - 排障资产：批次账本 `manifests/<批次>.events.jsonl` 在仓库内可直接读；工作台日志（`~/.infinite-canvas/logs/`）与 codex rollout（`~/.codex/sessions/`）在 Codex 沙箱外——需要时开列清单由顾问或用户取片段。
 
@@ -47,7 +47,7 @@
 
 1. **顾问只读勘察**：两仓 `git log` / `git status` 基线核实（与文档记载不符时以现场为准并报告）；必要时分组跑全量确认基线绿。
 2. **勘察 + 方案一次汇报**：顾问把"勘察结果 + 方案 + 白名单 + 测试计划 + 风险 + 回滚"合并为一次汇报，**待用户批准**；不拆多轮反复打扰用户。
-3. **顾问起草自包含 Codex 简报**（简报走文本代码块，不含任何密钥）。
+3. **顾问起草自包含 Codex 简报**（简报走文本代码块，不含任何密钥）。新窗口简报**开头固定写明"实施全程须遵守本章程 §3 工程原则"**（引用而非复述，权威留在 §3 单一来源）；续会话补遗不重复该引用。出手前必做教训㊼ 的三项机械自查：**自身未提交改动须在基线口径中申报**（推论：任务在途期间顾问不写 `docs/`，落账统一放在收官后）、**守卫测试前置检索**（新增运行时读取源或新增目录，先查本仓有无测试规定"只许从哪读""什么算品类"，并预扫全部目录扫描式门禁）、**变异坐标先 `grep` 实物取证**（禁止从正则或记忆倒推）。
 4. **Codex 新窗口实施**：原子提交、英文祈使句、提交信息含行为变化与真实测试证据；命中硬停线立即停下取证汇报；不推送远端。
 5. **顾问独立终验**（见 §5）。
 6. **用户批准后落账**：更新 `docs/CANVAS_PROJECT_STATE.md`（决策日志、终验记录、待办增减）；**Git 暂存、提交、推送均须用户逐次明确批准**。
