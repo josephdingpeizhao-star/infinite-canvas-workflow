@@ -94,7 +94,7 @@ def _canvas_state(
     set_group_count: int = 0,
     component_count: int = 0,
 ) -> tuple[dict[str, object], dict[str, object]]:
-    white = _image_node("white-1", "产品原图.png", 1)
+    white = [_image_node("white-1", "产品原图.png", 1)] if batch_type == "single" else []
     set_group = [
         _image_node(f"set-group-{index}", f"套装合影{index}.png", 10 + index)
         for index in range(1, set_group_count + 1)
@@ -105,7 +105,8 @@ def _canvas_state(
     ]
     set_group_ids = [str(node["id"]) for node in set_group]
     component_ids = [str(node["id"]) for node in components]
-    source_ids = ["white-1", *set_group_ids, *component_ids]
+    source_nodes = [*white, *set_group, *components]
+    source_ids = [str(node["id"]) for node in source_nodes]
     facts = copy.deepcopy(FACTS)
     if batch_type == "set":
         facts.update({"handheld_main": 0, "handheld_detail": 0})
@@ -142,10 +143,17 @@ def _canvas_state(
         "metadata": {},
     }
     state = {
-        "nodes": [info, workflow, white, *set_group, *components],
+        "nodes": [info, workflow, *source_nodes],
         "connections": [
             {"id": "info-workflow", "fromNodeId": "info-1", "toNodeId": "workflow-1"},
-            {"id": "white-workflow", "fromNodeId": "white-1", "toNodeId": "workflow-1"},
+            *[
+                {
+                    "id": f"{node['id']}-workflow",
+                    "fromNodeId": node["id"],
+                    "toNodeId": "workflow-1",
+                }
+                for node in source_nodes
+            ],
         ],
     }
     return state, info
@@ -188,11 +196,11 @@ class St01ContractAndControllerTests(unittest.TestCase):
 
         self.assertEqual("set", request.batch_type)
         self.assertEqual(
-            ["white_bg", "set_group", "component_white_bg", "component_white_bg"],
+            ["set_group", "component_white_bg", "component_white_bg"],
             [source.image_category for source in request.source_images],
         )
         self.assertEqual(
-            ["white_bg", "set_group", "component_white_bg", "component_white_bg"],
+            ["set_group", "component_white_bg", "component_white_bg"],
             [source["imageCategory"] for source in request.route_dict()["sourceImages"]],
         )
         self.assertEqual("set", request.route_dict()["batch_type"])
@@ -223,19 +231,41 @@ class St01ContractAndControllerTests(unittest.TestCase):
 
     def test_single_rejects_set_images_and_set_quantity_gates_fail_closed(self) -> None:
         invalid_states = [
-            _canvas_state(batch_type="single", set_group_count=1, component_count=0),
-            _canvas_state(batch_type="single", set_group_count=0, component_count=2),
-            _canvas_state(batch_type="set", set_group_count=0, component_count=2),
-            _canvas_state(batch_type="set", set_group_count=1, component_count=0),
-            _canvas_state(batch_type="set", set_group_count=1, component_count=1),
-            _canvas_state(batch_type="set", set_group_count=4, component_count=2),
-            _canvas_state(batch_type="set", set_group_count=1, component_count=9),
+            (
+                _canvas_state(batch_type="single", set_group_count=1, component_count=0),
+                "单品批次不能登记套装图片，请清空套装图片后再登记。",
+            ),
+            (
+                _canvas_state(batch_type="single", set_group_count=0, component_count=2),
+                "单品批次不能登记套装图片，请清空套装图片后再登记。",
+            ),
+            (
+                _canvas_state(batch_type="set", set_group_count=0, component_count=2),
+                "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            ),
+            (
+                _canvas_state(batch_type="set", set_group_count=1, component_count=0),
+                "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            ),
+            (
+                _canvas_state(batch_type="set", set_group_count=1, component_count=1),
+                "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            ),
+            (
+                _canvas_state(batch_type="set", set_group_count=4, component_count=2),
+                "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            ),
+            (
+                _canvas_state(batch_type="set", set_group_count=3, component_count=9),
+                "套装合影白底图须为 1–3 张，各单件白底图须为 2–8 张。",
+            ),
         ]
-        for index, (state, info) in enumerate(invalid_states):
+        for index, ((state, info), expected_message) in enumerate(invalid_states):
             with self.subTest(index=index):
                 with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
                     _parse(state, info)
                 self.assertEqual("invalid_images", caught.exception.code)
+                self.assertEqual(expected_message, caught.exception.user_message)
 
         for field in (
             "sourceImageNodeIds",
@@ -248,57 +278,127 @@ class St01ContractAndControllerTests(unittest.TestCase):
                 with self.assertRaises(intake_controller.BatchIntakeGateError):
                     _parse(state, info)
 
-    def test_set_quantity_upper_boundaries_are_accepted(self) -> None:
-        state, info = _canvas_state(
-            batch_type="set",
-            set_group_count=3,
-            component_count=8,
-        )
+    def test_set_minimum_and_upper_boundaries_are_accepted(self) -> None:
+        for set_group_count, component_count in ((1, 2), (3, 8)):
+            with self.subTest(
+                set_group_count=set_group_count,
+                component_count=component_count,
+            ):
+                state, info = _canvas_state(
+                    batch_type="set",
+                    set_group_count=set_group_count,
+                    component_count=component_count,
+                )
 
-        request = _parse(state, info)
+                request = _parse(state, info)
 
-        self.assertEqual(3, sum(source.image_category == "set_group" for source in request.source_images))
-        self.assertEqual(
-            8,
-            sum(source.image_category == "component_white_bg" for source in request.source_images),
-        )
+                self.assertEqual(
+                    set_group_count,
+                    sum(source.image_category == "set_group" for source in request.source_images),
+                )
+                self.assertEqual(
+                    component_count,
+                    sum(source.image_category == "component_white_bg" for source in request.source_images),
+                )
+                self.assertNotIn(
+                    "white_bg",
+                    [source.image_category for source in request.source_images],
+                )
 
     def test_cross_category_duplicate_filename_is_rejected(self) -> None:
         state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
         set_group = next(node for node in state["nodes"] if node["id"] == "set-group-1")
-        set_group["title"] = "产品原图.png"
-        set_group["metadata"]["sourceFile"]["name"] = "产品原图.png"
+        set_group["title"] = "单件1.png"
+        set_group["metadata"]["sourceFile"]["name"] = "单件1.png"
 
         with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
             _parse(state, info)
 
         self.assertEqual("duplicate_image", caught.exception.code)
 
-    def test_set_image_ids_must_be_unique_selected_images_and_disjoint(self) -> None:
-        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
+    def test_set_partition_must_cover_connected_images_exactly(self) -> None:
+        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=3)
         batch = info["metadata"]["batchIntake"]
-        batch["setGroupImageNodeIds"] = ["white-1"]
-        batch["sourceImageNodeIds"] = ["white-1", "component-1", "component-2"]
-        with self.assertRaises(intake_controller.BatchIntakeGateError):
+        batch["componentWhiteBgImageNodeIds"] = ["component-1", "component-2"]
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
             _parse(state, info)
+        self.assertEqual("invalid_images", caught.exception.code)
+        self.assertEqual(
+            "套装的合影与单件白底图必须恰好覆盖全部已连接原图，请重新勾选后再登记。",
+            caught.exception.user_message,
+        )
 
         state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
         batch = info["metadata"]["batchIntake"]
-        batch["componentWhiteBgImageNodeIds"] = ["component-1", "component-1"]
-        with self.assertRaises(intake_controller.BatchIntakeGateError):
+        batch["componentWhiteBgImageNodeIds"] = [
+            "set-group-1",
+            "component-1",
+            "component-2",
+        ]
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
             _parse(state, info)
+        self.assertEqual(
+            "同一张图片不能同时用于多个商品图片类别，请重新选择后再登记。",
+            caught.exception.user_message,
+        )
 
         state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
         batch = info["metadata"]["batchIntake"]
         batch["setGroupImageNodeIds"] = ["not-on-canvas"]
-        batch["sourceImageNodeIds"] = [
-            "white-1",
-            "not-on-canvas",
-            "component-1",
-            "component-2",
-        ]
-        with self.assertRaises(intake_controller.BatchIntakeGateError):
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
             _parse(state, info)
+        self.assertEqual(
+            "套装的合影与单件白底图必须恰好覆盖全部已连接原图，请重新勾选后再登记。",
+            caught.exception.user_message,
+        )
+
+        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
+        batch = info["metadata"]["batchIntake"]
+        batch["setGroupImageNodeIds"] = ["set-group-1", "not-on-canvas"]
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
+            _parse(state, info)
+        self.assertEqual("invalid_images", caught.exception.code)
+        self.assertEqual(
+            "套装的合影与单件白底图必须恰好覆盖全部已连接原图，请重新勾选后再登记。",
+            caught.exception.user_message,
+        )
+
+    def test_set_white_bg_mix_is_rejected_by_partition_gate(self) -> None:
+        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
+        white = _image_node("white-mixed", "混入白底.png", 90)
+        state["nodes"].append(white)
+        state["connections"].append(
+            {
+                "id": "white-mixed-workflow",
+                "fromNodeId": "white-mixed",
+                "toNodeId": "workflow-1",
+            }
+        )
+        info["metadata"]["batchIntake"]["sourceImageNodeIds"].append("white-mixed")
+
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
+            _parse(state, info)
+
+        self.assertEqual("invalid_images", caught.exception.code)
+        self.assertEqual(
+            "套装的合影与单件白底图必须恰好覆盖全部已连接原图，请重新勾选后再登记。",
+            caught.exception.user_message,
+        )
+
+    def test_set_duplicate_hash_is_rejected_with_approved_copy(self) -> None:
+        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
+        group = next(node for node in state["nodes"] if node["id"] == "set-group-1")
+        component = next(node for node in state["nodes"] if node["id"] == "component-1")
+        component["metadata"]["sourceFile"]["sha256"] = group["metadata"]["sourceFile"]["sha256"]
+
+        with self.assertRaises(intake_controller.BatchIntakeGateError) as caught:
+            _parse(state, info)
+
+        self.assertEqual("duplicate_image", caught.exception.code)
+        self.assertEqual(
+            intake_controller.DUPLICATE_PRODUCT_IMAGE_MESSAGE,
+            caught.exception.user_message,
+        )
 
 
 class St01CreatorTests(unittest.TestCase):
@@ -327,104 +427,147 @@ class St01CreatorTests(unittest.TestCase):
             missing_d_no_retake=True,
         )
 
-    def test_set_build_writes_manifest_directories_hashes_and_asset_roles(self) -> None:
-        with tempfile.TemporaryDirectory() as temporary:
-            base = Path(temporary)
-            repo = base / "repo"
-            test_root = base / "test-root"
-            state_root = base / "state"
-            upload_root = base / "uploads"
-            test_root.mkdir()
-            upload_root.mkdir()
-            (test_root / ".canvas_intake_test_root").write_text(
-                "canvas-intake-test-root-v1\n",
-                encoding="utf-8",
-            )
-            self._make_repo_fixture(repo)
-            batch_creator.prepare_state_root(state_root)
-            creator = batch_creator.BatchCreator(
-                repo_root=repo,
-                state_root=state_root,
-                test_root=test_root,
-                now=lambda: datetime(2026, 8, 9, 12, 0, 0),
-            )
-
-            specifications = (
-                ("white", "产品原图.png", "white_bg", b"\x89PNG\r\n\x1a\nwhite"),
-                ("group", "套装合影.png", "set_group", b"\x89PNG\r\n\x1a\ngroup"),
-                ("component-1", "单件一.png", "component_white_bg", b"\x89PNG\r\n\x1a\none"),
-                ("component-2", "单件二.png", "component_white_bg", b"\x89PNG\r\n\x1a\ntwo"),
-            )
-            sources: list[intake_controller.SourceImage] = []
-            uploads: list[batch_creator.UploadedFile] = []
-            expected_bytes: dict[str, bytes] = {}
-            for index, (node_id, name, category, content) in enumerate(specifications, start=1):
-                digest = hashlib.sha256(content).hexdigest()
-                source = intake_controller.SourceImage(
-                    node_id=node_id,
-                    storage_key=f"image:{node_id}",
-                    name=name,
-                    size=len(content),
-                    mime_type="image/png",
-                    last_modified=index,
-                    expected_sha256=digest,
-                    image_category=category,
-                )
-                upload_path = upload_root / f"{index}.upload"
-                upload_path.write_bytes(content)
-                sources.append(source)
-                uploads.append(
-                    batch_creator.UploadedFile(
-                        source_node_id=node_id,
-                        path=upload_path,
-                        name=name,
-                        size=len(content),
-                        mime_type="image/png",
-                        sha256=digest,
+    def test_set_build_writes_minimum_and_maximum_role_directories(self) -> None:
+        for group_count, component_count in ((1, 2), (3, 8)):
+            with self.subTest(group_count=group_count, component_count=component_count):
+                with tempfile.TemporaryDirectory() as temporary:
+                    base = Path(temporary)
+                    repo = base / "repo"
+                    test_root = base / "test-root"
+                    state_root = base / "state"
+                    upload_root = base / "uploads"
+                    test_root.mkdir()
+                    upload_root.mkdir()
+                    (test_root / ".canvas_intake_test_root").write_text(
+                        "canvas-intake-test-root-v1\n",
+                        encoding="utf-8",
                     )
-                )
-                expected_bytes[node_id] = content
-            request = intake_controller.BatchIntakeRequest(
-                request_id="st01-creator-request",
-                requested_at=19_000,
-                info_node_id="info-1",
-                workflow_node_id="workflow-1",
-                facts=self._facts(),
-                source_images=tuple(sources),
-                category="杯类",
-                contract_hash=NEW_CONTRACT_HASH,
-                batch_type="set",
-            )
+                    self._make_repo_fixture(repo)
+                    batch_creator.prepare_state_root(state_root)
+                    creator = batch_creator.BatchCreator(
+                        repo_root=repo,
+                        state_root=state_root,
+                        test_root=test_root,
+                        now=lambda: datetime(2026, 8, 9, 12, 0, 0),
+                    )
 
-            result = creator.create(request, uploads)
-            manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
-            asset_manifest = json.loads(
-                (result.workspace_root / "manifests" / "asset_manifest.json").read_text(encoding="utf-8")
-            )
-            receipt = json.loads(result.receipt_path.read_text(encoding="utf-8"))
+                    specifications = [
+                        *[
+                            (
+                                f"group-{index}",
+                                f"套装合影{index}.png",
+                                "set_group",
+                                b"\x89PNG\r\n\x1a\ngroup-" + str(index).encode("ascii"),
+                            )
+                            for index in range(1, group_count + 1)
+                        ],
+                        *[
+                            (
+                                f"component-{index}",
+                                f"单件{index}.png",
+                                "component_white_bg",
+                                b"\x89PNG\r\n\x1a\ncomponent-" + str(index).encode("ascii"),
+                            )
+                            for index in range(1, component_count + 1)
+                        ],
+                    ]
+                    sources: list[intake_controller.SourceImage] = []
+                    uploads: list[batch_creator.UploadedFile] = []
+                    expected_bytes: dict[str, bytes] = {}
+                    for index, (node_id, name, category, content) in enumerate(
+                        specifications,
+                        start=1,
+                    ):
+                        digest = hashlib.sha256(content).hexdigest()
+                        source = intake_controller.SourceImage(
+                            node_id=node_id,
+                            storage_key=f"image:{node_id}",
+                            name=name,
+                            size=len(content),
+                            mime_type="image/png",
+                            last_modified=index,
+                            expected_sha256=digest,
+                            image_category=category,
+                        )
+                        upload_path = upload_root / f"{index}.upload"
+                        upload_path.write_bytes(content)
+                        sources.append(source)
+                        uploads.append(
+                            batch_creator.UploadedFile(
+                                source_node_id=node_id,
+                                path=upload_path,
+                                name=name,
+                                size=len(content),
+                                mime_type="image/png",
+                                sha256=digest,
+                            )
+                        )
+                        expected_bytes[node_id] = content
+                    request = intake_controller.BatchIntakeRequest(
+                        request_id=f"st01-creator-{group_count}-{component_count}",
+                        requested_at=19_000,
+                        info_node_id="info-1",
+                        workflow_node_id="workflow-1",
+                        facts=self._facts(),
+                        source_images=tuple(sources),
+                        category="杯类",
+                        contract_hash=NEW_CONTRACT_HASH,
+                        batch_type="set",
+                    )
 
-            self.assertEqual("set", manifest["batch_type"])
-            self.assertIs(True, manifest["user_declared_set_product"])
-            self.assertTrue((result.workspace_root / "inputs" / "set_group").is_dir())
-            self.assertTrue((result.workspace_root / "inputs" / "component_white_bg").is_dir())
-            expected_roles = {
-                "inputs/white_bg/产品原图.png": ("white_bg", True, False),
-                "inputs/set_group/套装合影.png": ("set_group_shot", False, True),
-                "inputs/component_white_bg/单件一.png": ("component_white_bg", False, False),
-                "inputs/component_white_bg/单件二.png": ("component_white_bg", False, False),
-            }
-            self.assertEqual(set(expected_roles), {item["file_path"] for item in asset_manifest["assets"]})
-            for item in asset_manifest["assets"]:
-                role, single_white, set_group = expected_roles[item["file_path"]]
-                self.assertEqual(role, item["asset_role"])
-                self.assertIs(single_white, item["is_single_product_white_bg"])
-                self.assertIs(set_group, item["is_set_group_shot"])
-            receipt_assets = {item["source_node_id"]: item for item in receipt["assets"]}
-            for source in sources:
-                copied = result.workspace_root / receipt_assets[source.node_id]["relative_path"]
-                self.assertEqual(expected_bytes[source.node_id], copied.read_bytes())
-                self.assertEqual(source.expected_sha256, hashlib.sha256(copied.read_bytes()).hexdigest())
-                self.assertEqual(source.expected_sha256, receipt_assets[source.node_id]["destination_sha256"])
+                    result = creator.create(request, uploads)
+                    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+                    asset_manifest = json.loads(
+                        (result.workspace_root / "manifests" / "asset_manifest.json").read_text(encoding="utf-8")
+                    )
+                    receipt = json.loads(result.receipt_path.read_text(encoding="utf-8"))
+
+                    self.assertEqual("set", manifest["batch_type"])
+                    self.assertIs(True, manifest["user_declared_set_product"])
+                    white_bg_directory = result.workspace_root / "inputs" / "white_bg"
+                    self.assertTrue(white_bg_directory.is_dir())
+                    self.assertEqual([], list(white_bg_directory.iterdir()))
+                    self.assertEqual(
+                        group_count,
+                        len(list((result.workspace_root / "inputs" / "set_group").iterdir())),
+                    )
+                    self.assertEqual(
+                        component_count,
+                        len(list((result.workspace_root / "inputs" / "component_white_bg").iterdir())),
+                    )
+                    expected_roles = {
+                        **{
+                            f"inputs/set_group/套装合影{index}.png": (
+                                "set_group_shot",
+                                False,
+                                True,
+                            )
+                            for index in range(1, group_count + 1)
+                        },
+                        **{
+                            f"inputs/component_white_bg/单件{index}.png": (
+                                "component_white_bg",
+                                False,
+                                False,
+                            )
+                            for index in range(1, component_count + 1)
+                        },
+                    }
+                    self.assertEqual(
+                        set(expected_roles),
+                        {item["file_path"] for item in asset_manifest["assets"]},
+                    )
+                    for item in asset_manifest["assets"]:
+                        role, single_white, set_group = expected_roles[item["file_path"]]
+                        self.assertEqual(role, item["asset_role"])
+                        self.assertIs(single_white, item["is_single_product_white_bg"])
+                        self.assertIs(set_group, item["is_set_group_shot"])
+                    receipt_assets = {item["source_node_id"]: item for item in receipt["assets"]}
+                    for source in sources:
+                        copied = result.workspace_root / receipt_assets[source.node_id]["relative_path"]
+                        self.assertEqual(expected_bytes[source.node_id], copied.read_bytes())
+                        self.assertEqual(source.expected_sha256, hashlib.sha256(copied.read_bytes()).hexdigest())
+                        self.assertEqual(source.expected_sha256, receipt_assets[source.node_id]["destination_sha256"])
 
     def test_upload_service_accepts_valid_set_categories_and_rejects_a_loosened_category(self) -> None:
         state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
@@ -438,11 +581,46 @@ class St01CreatorTests(unittest.TestCase):
                 replace(request, source_images=(*request.source_images[:-1], invalid_source))
             )
 
+    def test_creator_and_upload_service_reject_set_white_bg_sources(self) -> None:
+        state, info = _canvas_state(batch_type="set", set_group_count=1, component_count=2)
+        request = _parse(state, info)
+        template = request.source_images[-1]
+        white_source = replace(
+            template,
+            node_id="white-mixed",
+            storage_key="image:white-mixed",
+            name="混入白底.png",
+            expected_sha256="f" * 64,
+            image_category="white_bg",
+        )
+        mixed_request = replace(
+            request,
+            source_images=(*request.source_images, white_source),
+        )
+
+        with self.assertRaises(batch_creator.BatchCreationError) as creator_error:
+            object.__new__(batch_creator.BatchCreator)._validate_uploads(
+                mixed_request,
+                (),
+            )
+        self.assertEqual("invalid_uploads", creator_error.exception.code)
+        self.assertEqual(
+            "原图清单不完整，未创建批次。",
+            creator_error.exception.user_message,
+        )
+
+        intake_service = object.__new__(intake_service_module.WorkflowBatchIntakeService)
+        with self.assertRaises(ValueError) as service_error:
+            intake_service._validate_request_sources(mixed_request)
+        self.assertEqual(
+            "原始图片类别或数量不在可登记范围内。",
+            str(service_error.exception),
+        )
+
     def test_creator_rejects_cross_category_duplicate_filename(self) -> None:
         categories = (
-            ("white", "a.jpg", "white_bg"),
             ("group", "a.jpg", "set_group"),
-            ("component-1", "one.jpg", "component_white_bg"),
+            ("component-1", "a.jpg", "component_white_bg"),
             ("component-2", "two.jpg", "component_white_bg"),
         )
         sources = tuple(

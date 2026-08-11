@@ -667,22 +667,25 @@ def parse_queued_request(
     connected_image_id_set = set(connected_image_ids)
     set_group_image_id_set = set(set_group_image_ids)
     component_white_bg_image_id_set = set(component_white_bg_image_ids)
-    if (
-        connected_image_id_set & set_group_image_id_set
-        or connected_image_id_set & component_white_bg_image_id_set
-        or set_group_image_id_set & component_white_bg_image_id_set
-    ):
+    if set_group_image_id_set & component_white_bg_image_id_set:
         raise _error(
             "invalid_images",
             "同一张图片不能同时用于多个商品图片类别，请重新选择后再登记。",
             info_node_id=info_node_id,
             request_id=request_id,
         )
-    expected_source_image_ids = (
-        connected_image_id_set
-        | set_group_image_id_set
-        | component_white_bg_image_id_set
-    )
+    if (
+        batch_type == BATCH_TYPE_SET
+        and (set_group_image_id_set | component_white_bg_image_id_set)
+        != connected_image_id_set
+    ):
+        raise _error(
+            "invalid_images",
+            "套装的合影与单件白底图必须恰好覆盖全部已连接原图，请重新勾选后再登记。",
+            info_node_id=info_node_id,
+            request_id=request_id,
+        )
+    expected_source_image_ids = connected_image_id_set
     if has_declared_source_image_ids:
         if set(declared_source_image_ids) != expected_source_image_ids:
             raise _error(

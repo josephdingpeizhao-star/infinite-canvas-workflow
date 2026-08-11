@@ -605,18 +605,19 @@ class BatchCreator:
         }
         if (
             request.batch_type not in {BATCH_TYPE_SINGLE, BATCH_TYPE_SET}
-            or category_counts[IMAGE_CATEGORY_WHITE_BG] < 1
             or (
                 request.batch_type == BATCH_TYPE_SINGLE
                 and (
-                    category_counts[IMAGE_CATEGORY_SET_GROUP] != 0
+                    category_counts[IMAGE_CATEGORY_WHITE_BG] < 1
+                    or category_counts[IMAGE_CATEGORY_SET_GROUP] != 0
                     or category_counts[IMAGE_CATEGORY_COMPONENT_WHITE_BG] != 0
                 )
             )
             or (
                 request.batch_type == BATCH_TYPE_SET
                 and not (
-                    SET_GROUP_IMAGE_COUNT_MINIMUM
+                    category_counts[IMAGE_CATEGORY_WHITE_BG] == 0
+                    and SET_GROUP_IMAGE_COUNT_MINIMUM
                     <= category_counts[IMAGE_CATEGORY_SET_GROUP]
                     <= SET_GROUP_IMAGE_COUNT_MAXIMUM
                     and COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM

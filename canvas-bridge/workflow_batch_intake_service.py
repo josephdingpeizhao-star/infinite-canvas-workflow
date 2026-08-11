@@ -334,18 +334,19 @@ class WorkflowBatchIntakeService:
                 batch_intake_controller.BATCH_TYPE_SINGLE,
                 batch_intake_controller.BATCH_TYPE_SET,
             }
-            or category_counts[batch_intake_controller.IMAGE_CATEGORY_WHITE_BG] < 1
             or (
                 request.batch_type == batch_intake_controller.BATCH_TYPE_SINGLE
                 and (
-                    category_counts[batch_intake_controller.IMAGE_CATEGORY_SET_GROUP] != 0
+                    category_counts[batch_intake_controller.IMAGE_CATEGORY_WHITE_BG] < 1
+                    or category_counts[batch_intake_controller.IMAGE_CATEGORY_SET_GROUP] != 0
                     or category_counts[batch_intake_controller.IMAGE_CATEGORY_COMPONENT_WHITE_BG] != 0
                 )
             )
             or (
                 request.batch_type == batch_intake_controller.BATCH_TYPE_SET
                 and not (
-                    batch_intake_controller.SET_GROUP_IMAGE_COUNT_MINIMUM
+                    category_counts[batch_intake_controller.IMAGE_CATEGORY_WHITE_BG] == 0
+                    and batch_intake_controller.SET_GROUP_IMAGE_COUNT_MINIMUM
                     <= category_counts[batch_intake_controller.IMAGE_CATEGORY_SET_GROUP]
                     <= batch_intake_controller.SET_GROUP_IMAGE_COUNT_MAXIMUM
                     and batch_intake_controller.COMPONENT_WHITE_BG_IMAGE_COUNT_MINIMUM
