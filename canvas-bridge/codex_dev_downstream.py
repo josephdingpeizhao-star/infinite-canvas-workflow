@@ -158,6 +158,14 @@ SET_ANGLE_ADMISSION_VALUES = frozenset(
 SET_QUALIFIED_ADMISSION_VALUES = frozenset(
     {"合格，可进入对应机位与编排槽位"}
 )
+SET_FINAL_PROMPT_COMPONENT_UPSTREAM_KEY = "component_identity_archive_NN"
+SET_FINAL_PROMPT_UPSTREAM_KEYS = (
+    "set_product_identity",
+    SET_FINAL_PROMPT_COMPONENT_UPSTREAM_KEY,
+    "style_master",
+    "set_angle_layout_inventory",
+    "variable_config",
+)
 SET_ARRANGEMENT_BASIS_LITERAL = (
     "本张套装编排关系以【套装编排槽位】对应的套装合影白底图为唯一依据；"
     "各组成单件的角度以对应单件白底图为唯一依据。各单件相对位置、件距、层叠或并列关系、"
@@ -1794,6 +1802,22 @@ _SET_DIMENSION_SOURCE_TEXT = (
 _SET_DIMENSION_TEMPLATE_TOKEN = "__SET_ARCHIVE_DIMENSION_SOURCE__"
 
 
+def expand_set_final_prompt_upstream_keys(component_count: int) -> tuple[str, ...]:
+    """Expand the closed set-final-prompt upstream family in canonical order."""
+
+    if type(component_count) is not int or component_count <= 0:
+        raise ValueError("component_count must be a positive integer")
+    component_keys = tuple(
+        f"component_identity_archive_{index:02d}"
+        for index in range(1, component_count + 1)
+    )
+    return (
+        SET_FINAL_PROMPT_UPSTREAM_KEYS[0],
+        *component_keys,
+        *SET_FINAL_PROMPT_UPSTREAM_KEYS[2:],
+    )
+
+
 def _render_set_category_prompt(
     requirements: UserConfirmedRequirements,
     *,
@@ -1813,6 +1837,33 @@ def _render_set_category_prompt(
     values["optional_dimensions_main"] = ""
     values["optional_dimensions_detail"] = ""
     rendered = recipe.render_prompt(f"{mode}_prompt", **values)
+    rendered = re.sub(
+        rf"(?:长|宽|高度|高|口径)?\s*约\s*{re.escape(_SET_DIMENSION_TEMPLATE_TOKEN)}\s*厘米",
+        _SET_DIMENSION_SOURCE_TEXT,
+        rendered,
+    )
+    return rendered.replace(
+        _SET_DIMENSION_TEMPLATE_TOKEN,
+        _SET_DIMENSION_SOURCE_TEXT,
+    ).rstrip("\r\n")
+
+
+def _render_set_final_category_prompt(
+    requirements: UserConfirmedRequirements,
+    *,
+    expected_ratio: str,
+    handheld_count: int,
+) -> str:
+    recipe = _requirements_recipe(requirements)
+    values = _category_prompt_values(
+        requirements,
+        expected_ratio=expected_ratio,
+        handheld_count=handheld_count,
+    )
+    for key in DIMENSION_KEYS:
+        values[key] = _SET_DIMENSION_TEMPLATE_TOKEN
+    values["optional_dimensions_final"] = ""
+    rendered = recipe.render_prompt("final_prompt", **values)
     rendered = re.sub(
         rf"(?:长|宽|高度|高|口径)?\s*约\s*{re.escape(_SET_DIMENSION_TEMPLATE_TOKEN)}\s*厘米",
         _SET_DIMENSION_SOURCE_TEXT,
@@ -3920,6 +3971,244 @@ final_prompt 正文必须遵守以下场景安全规则：{scene_safety_collecti
 """
 
 
+def _set_final_prompt_config_bindings(
+    configs: Sequence[Mapping[str, Any]],
+    set_angle_layout_inventory: Mapping[str, Any],
+    *,
+    label: str,
+) -> tuple[tuple[Mapping[str, Any], str, str], ...]:
+    layouts_by_index = _set_layout_by_image_index(set_angle_layout_inventory)
+    resolved: list[tuple[Mapping[str, Any], str, str]] = []
+    for config in configs:
+        config_id = str(config.get("config_id") or "")
+        overrides = config.get("per_image_overrides")
+        if not isinstance(overrides, Mapping):
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}单项结构异常")
+        angle_binding = str(overrides.get("绑定角度槽位") or "")
+        layout_binding = str(overrides.get("套装编排槽位") or "")
+        _validate_set_angle_binding(
+            angle_binding,
+            layouts_by_index,
+            label=label,
+            config_id=config_id,
+        )
+        _validate_set_layout_binding(
+            layout_binding,
+            layouts_by_index,
+            label=label,
+            config_id=config_id,
+        )
+        angle_match = re.fullmatch(
+            r"整体机位 ([ABCD])：(.+?)。对应白底图：图([1-9]\d*)，(.+?)。",
+            angle_binding.strip(),
+        )
+        layout_match = re.fullmatch(
+            r"(编排槽位[一二三四])：(.+?)。对应套装合影白底图：图([1-9]\d*)，(.+?)。",
+            layout_binding.strip(),
+        )
+        if angle_match is None or layout_match is None:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}套装绑定异常")
+        angle_record = layouts_by_index[int(angle_match.group(3))]
+        resolved.append((angle_record, angle_match.group(4), layout_match.group(1)))
+    return tuple(resolved)
+
+
+def _set_final_prompt_forbidden_references(
+    set_angle_layout_inventory: Mapping[str, Any],
+) -> tuple[tuple[int, str, bool], ...]:
+    layouts = set_angle_layout_inventory.get("layouts")
+    if not isinstance(layouts, list):
+        raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排条目")
+    normalized: list[tuple[int, str, Mapping[str, Any]]] = []
+    for raw in layouts:
+        if not isinstance(raw, Mapping):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排条目")
+        image_index = raw.get("image_index")
+        file_name = raw.get("file_name")
+        if type(image_index) is not int or image_index <= 0 or not isinstance(file_name, str):
+            raise ExecutorExecutionError("codex-dev 无法读取有效的套装角度与编排条目")
+        normalized.append((image_index, file_name.strip(), raw))
+    file_name_counts: dict[str, int] = {}
+    for _image_index, file_name, _raw in normalized:
+        file_name_counts[file_name] = file_name_counts.get(file_name, 0) + 1
+    forbidden: list[tuple[int, str, bool]] = []
+    for image_index, file_name, raw in normalized:
+        if (
+            raw.get("admission_result") not in SET_QUALIFIED_ADMISSION_VALUES
+            or raw.get("overall_camera") in SET_ANGLE_CAMERA_VALUES - set(SET_ANGLE_CAMERA_NAMES)
+            or raw.get("layout_slot") in SET_ANGLE_LAYOUT_VALUES - set(SET_LAYOUT_SLOT_NAMES)
+        ):
+            forbidden.append((image_index, file_name, file_name_counts[file_name] == 1))
+    return tuple(forbidden)
+
+
+def _set_final_prompt_enabled_count(configs: Sequence[Mapping[str, Any]]) -> int:
+    return sum(
+        "本张图不启用手持场景"
+        not in str(config["per_image_overrides"].get("手持交互声明") or "")
+        for config in configs
+    )
+
+
+def build_set_final_prompt_batch_prompt(
+    *,
+    mode: str,
+    product_id: str,
+    repository_root: Path,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    style_master: Mapping[str, Any],
+    set_angle_layout_inventory: Mapping[str, Any],
+    variable_config: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
+    final_prompt_skill_text: str,
+    set_workflow_supplement: str,
+    set_layout_rules: str,
+) -> str:
+    """Build one set-only prompt-compilation turn from accepted upstream artifacts."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的套装最终提示词模式")
+    if not component_identities:
+        raise ExecutorExecutionError("codex-dev 缺少套装组成单件产品身份档案")
+    recipe = _requirements_recipe(requirements)
+    runtime = load_skill_runtime_package(
+        repository_root,
+        "final-prompt-compiler",
+        "runtime_rule_slices/final-prompt-compiler.runtime_rule_slices.json",
+        "套装最终提示词",
+        recipe,
+        requirements=requirements,
+        mode=mode,
+    )
+    configs = _validate_variable_config_document(
+        variable_config,
+        mode=mode,
+        product_id=product_id,
+        expected_count=_mode_image_count(requirements, mode),
+    )
+    bindings = _set_final_prompt_config_bindings(
+        configs,
+        set_angle_layout_inventory,
+        label="套装最终提示词编译",
+    )
+    qualified_layouts = qualified_set_layout_entries(set_angle_layout_inventory)
+    forbidden_references = _set_final_prompt_forbidden_references(
+        set_angle_layout_inventory
+    )
+    forbidden_reference_literals = [
+        (image_index, file_name)
+        for image_index, file_name, _file_name_is_unique in forbidden_references
+    ]
+    expected_ids = [str(config["config_id"]) for config in configs]
+    expected_ratio = "1:1" if mode == "main" else "3:4"
+    expected_handheld = _set_final_prompt_enabled_count(configs)
+    handheld_contract_lines: list[str] = []
+    binding_contract_lines: list[str] = []
+    for config, (angle_record, binding_file_name, layout_slot) in zip(configs, bindings):
+        config_id = str(config["config_id"])
+        overrides = config["per_image_overrides"]
+        handheld_declaration = str(overrides.get("手持交互声明") or "")
+        if "本张图不启用手持场景" in handheld_declaration:
+            handheld_contract_lines.append(
+                f"- {config_id}：final_prompt 正文必须原样出现完整否定短语"
+                "“本张图不启用手持场景”。"
+            )
+        else:
+            handheld_contract_lines.append(
+                f"- {config_id}：final_prompt 正文必须原样出现完整肯定短语“启用手持场景”，"
+                "且该正文不得出现完整否定短语“本张图不启用手持场景”。"
+            )
+        image_literal = f"图{angle_record['image_index']}"
+        binding_contract_lines.append(
+            f"- {config_id}：final_prompt 正文必须原样出现“{image_literal}”和"
+            f"“{binding_file_name}”，并且必须原样出现套装编排槽位名“{layout_slot}”。"
+        )
+    forbidden_values = sorted(
+        {
+            *(SET_ANGLE_CAMERA_VALUES - set(SET_ANGLE_CAMERA_NAMES)),
+            *(SET_ANGLE_LAYOUT_VALUES - set(SET_LAYOUT_SLOT_NAMES)),
+        }
+    )
+    literal_contract = "\n".join(
+        (
+            "【套装逐编号字面契约】",
+            "以下每条只允许由同一 config_id 的 final_prompt 正文满足；negative_prompt、"
+            "其他配置正文或上游内容中出现相同字样，均不算满足。",
+            "",
+            "【手持状态】",
+            *handheld_contract_lines,
+            "",
+            "【套装角度与编排绑定】",
+            *binding_contract_lines,
+            "",
+            "全批每一份 final_prompt 正文均不得引用以下不合格条目的图编号或文件名："
+            f"{json.dumps(forbidden_reference_literals, ensure_ascii=False)}。",
+            "全批每一份 final_prompt 正文均不得出现以下不适合值："
+            f"{json.dumps(forbidden_values, ensure_ascii=False)}。",
+        )
+    )
+    facts = {
+        "product_type": requirements.product_type,
+        "main_image_count": requirements.main_image_count,
+        "detail_image_count": requirements.detail_image_count,
+        "expected_handheld": expected_handheld,
+        "forbid_pouring_and_heating": requirements.forbid_pouring_and_heating,
+        "missing_d_no_retake": requirements.missing_d_no_retake,
+    }
+    category_prompt = _render_set_final_category_prompt(
+        requirements,
+        expected_ratio=expected_ratio,
+        handheld_count=expected_handheld,
+    )
+    scene_safety_collective_rule = _category_prompt_values(
+        requirements,
+    )["scene_safety_collective_rule"]
+    return f"""你正在为套装批次 {product_id} 编译 {mode} 配置的最终提示词，只处理 final_prompts 的这一批。
+这是提示词编译，不生成图片、不生成 ComfyUI 作业、不执行 QC，也不处理单品。
+必须且只返回这些配置：{json.dumps(expected_ids, ensure_ascii=False)}。
+{category_prompt}
+final_prompt 正文必须遵守以下场景安全规则：{scene_safety_collective_rule}
+场景规则句（如需复述必须原样）：{_variable_scene_rule(requirements)}
+如需逐词列出禁止项，只能写入 negative_prompt 字段；不得把逐词禁止清单写入 final_prompt 正文。
+恰好 {expected_handheld} 份保持启用手持；{_final_forbidden_rule(requirements)}
+不得新增变量配置没有的道具、文字、卖点或页面任务，不得把 Skill 或运行规则正文复制成最终画面要求。
+只返回一个 JSON 对象，形状必须严格为 {{"prompts":[{{"config_id":"...","final_prompt":"...","negative_prompt":"..."}}]}}，不要 Markdown、说明、上游路径、图片、QC 或其他字段。
+
+{literal_contract}
+
+【final-prompt-compiler Skill 原文】
+{final_prompt_skill_text}
+
+【基础品类运行规则包】
+{json.dumps(runtime, ensure_ascii=False, sort_keys=True)}
+
+【套装产品工作流补充规则】
+{set_workflow_supplement}
+
+【套装编排规则】
+{set_layout_rules}
+
+【用户确认事实】
+{json.dumps(facts, ensure_ascii=False, sort_keys=True)}
+
+【套装产品身份档案】
+{json.dumps(set_identity, ensure_ascii=False, sort_keys=True)}
+
+【各单件产品身份档案】
+{json.dumps(list(component_identities), ensure_ascii=False, sort_keys=True)}
+
+【风格母版】
+{json.dumps(style_master, ensure_ascii=False, sort_keys=True)}
+
+【正式套装变量配置】
+{json.dumps(variable_config, ensure_ascii=False, sort_keys=True)}
+
+【套装角度与编排入库表合格条目】
+{json.dumps(qualified_layouts, ensure_ascii=False, sort_keys=True)}
+"""
+
+
 def build_final_prompt_repair_prompt(
     *,
     mode: str,
@@ -3940,6 +4229,24 @@ def build_final_prompt_repair_prompt(
         "每一份 final_prompt 正文必须原样包含以下两句字面，禁止同义改写：\n"
         f"{ratio_literal}\n"
         f"{height_literal}\n"
+        "只返回原任务要求的完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
+    )
+
+
+def build_set_final_prompt_repair_prompt(*, mode: str) -> str:
+    """Request one complete set-only repair without inventing a height literal."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的套装最终提示词模式")
+    expected_ratio = "1:1" if mode == "main" else "3:4"
+    label = "套装主图" if mode == "main" else "套装详情图"
+    ratio_literal = required_canvas_ratio_literal(expected_ratio)
+    return (
+        f"继续同一 final_prompts {label}批次任务。上一轮未通过编译期完整性校验；"
+        "请完整重发同批全部配置的 JSON，不得引用、解释或局部修补上一轮正文，"
+        "不得改变配置编号、顺序、套装角度与编排绑定、手持状态、页面任务或其他已确认事实。"
+        "每一份 final_prompt 正文必须原样包含以下画布比例字面，禁止同义改写：\n"
+        f"{ratio_literal}\n"
         "只返回原任务要求的完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
     )
 
@@ -4081,6 +4388,135 @@ def parse_final_prompt_batch_response(
         }
     expected_handheld = requirements.handheld_main if mode == "main" else requirements.handheld_detail
     if enabled != expected_handheld:
+        raise ExecutorExecutionError(f"codex-dev 检测到{label}上游手持数量异常")
+    return parsed
+
+
+def parse_set_final_prompt_batch_response(
+    text: str,
+    *,
+    mode: str,
+    product_id: str,
+    requirements: UserConfirmedRequirements,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    set_angle_layout_inventory: Mapping[str, Any],
+    variable_config: Mapping[str, Any],
+    style_master_text: str | None = None,
+) -> dict[str, dict[str, str]]:
+    """Validate one set prompt batch against its accepted configuration bindings."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的套装最终提示词模式")
+    if not component_identities:
+        raise ExecutorExecutionError("codex-dev 缺少套装组成单件产品身份档案")
+    label = "套装主图最终提示词" if mode == "main" else "套装详情图最终提示词"
+    value = _extract_json_object(text, label)
+    if set(value) != {"prompts"} or not isinstance(value["prompts"], list):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}返回格式异常")
+    if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}包含损坏字符")
+    _reject_unsupported_claims(
+        value,
+        None,
+        label,
+        product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=_set_dimension_values(
+            set_identity,
+            component_identities,
+            requirements,
+        ),
+        style_master_text=style_master_text,
+        allow_confirmed_dimension_groups=True,
+    )
+    _reject_scene_policy_violations(value, requirements, label)
+
+    configs = _validate_variable_config_document(
+        variable_config,
+        mode=mode,
+        product_id=product_id,
+        expected_count=_mode_image_count(requirements, mode),
+    )
+    bindings = _set_final_prompt_config_bindings(
+        configs,
+        set_angle_layout_inventory,
+        label=label,
+    )
+    expected_ids = [str(config["config_id"]) for config in configs]
+    if len(value["prompts"]) != len(expected_ids):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}数量异常")
+    expected_ratio = "1:1" if mode == "main" else "3:4"
+    forbidden_references = _set_final_prompt_forbidden_references(
+        set_angle_layout_inventory
+    )
+    forbidden_values = {
+        *(SET_ANGLE_CAMERA_VALUES - set(SET_ANGLE_CAMERA_NAMES)),
+        *(SET_ANGLE_LAYOUT_VALUES - set(SET_LAYOUT_SLOT_NAMES)),
+    }
+    parsed: dict[str, dict[str, str]] = {}
+    enabled = 0
+    for index, raw in enumerate(value["prompts"]):
+        if not isinstance(raw, dict) or set(raw) != {
+            "config_id",
+            "final_prompt",
+            "negative_prompt",
+        }:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}单项结构异常")
+        config_id = raw.get("config_id")
+        final_prompt = raw.get("final_prompt")
+        negative_prompt = raw.get("negative_prompt")
+        if (
+            config_id != expected_ids[index]
+            or not isinstance(final_prompt, str)
+            or not final_prompt.strip()
+            or not isinstance(negative_prompt, str)
+            or not negative_prompt.strip()
+        ):
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}单项内容异常")
+        angle_record, binding_file_name, layout_slot = bindings[index]
+        image_index = int(angle_record["image_index"])
+        if re.search(rf"图{image_index}(?!\d)", final_prompt) is None:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留套装角度图号")
+        if binding_file_name not in final_prompt:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留套装角度文件名")
+        if layout_slot not in final_prompt:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留套装编排槽位")
+        if any(value_text in final_prompt for value_text in forbidden_values):
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}使用了不适合的套装编排值")
+        for forbidden_index, forbidden_file_name, file_name_is_unique in forbidden_references:
+            has_forbidden_index = (
+                re.search(rf"图{forbidden_index}(?!\d)", final_prompt) is not None
+            )
+            has_forbidden_file_name = bool(
+                forbidden_file_name and forbidden_file_name in final_prompt
+            )
+            if (
+                has_forbidden_index
+                or (file_name_is_unique and has_forbidden_file_name)
+            ):
+                raise ExecutorExecutionError(f"codex-dev 收到的{label}引用了不合格套装编排条目")
+        if not has_required_canvas_ratio_literal(final_prompt, expected_ratio):
+            raise FinalPromptLiteralViolation(
+                mode=mode,
+                safe_reason="未保留画布比例",
+            )
+        overrides = configs[index]["per_image_overrides"]
+        handheld = "本张图不启用手持场景" not in str(
+            overrides.get("手持交互声明") or ""
+        )
+        enabled += int(handheld)
+        if handheld and (
+            "本张图不启用手持场景" in final_prompt or "启用手持场景" not in final_prompt
+        ):
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留手持状态")
+        if not handheld and "本张图不启用手持场景" not in final_prompt:
+            raise ExecutorExecutionError(f"codex-dev 收到的{label}未保留手持状态")
+        parsed[str(config_id)] = {
+            "final_prompt": final_prompt.strip(),
+            "negative_prompt": negative_prompt.strip(),
+        }
+    if enabled != _set_final_prompt_enabled_count(configs):
         raise ExecutorExecutionError(f"codex-dev 检测到{label}上游手持数量异常")
     return parsed
 
@@ -4231,6 +4667,130 @@ def build_final_prompt_bundle(
         )
     ):
         raise ExecutorExecutionError("codex-dev 无法构建完整的最终提示词批次")
+    return files
+
+
+def build_set_final_prompt_bundle(
+    *,
+    product_id: str,
+    output_dir: Path,
+    prompt_batches: Mapping[str, Mapping[str, Mapping[str, str]]],
+    variable_configs: Mapping[str, tuple[Mapping[str, Any], Path]],
+    upstream_paths: Mapping[str, Path],
+    set_angle_layout_inventory: Mapping[str, Any],
+    requirements: UserConfirmedRequirements,
+) -> dict[Path, bytes]:
+    """Build the set-only prompt bundle using the shared closed upstream family."""
+
+    if set(prompt_batches) != {"main", "detail"} or set(variable_configs) != {
+        "main",
+        "detail",
+    }:
+        raise ExecutorExecutionError("codex-dev 无法构建完整的套装最终提示词批次")
+    component_prefix = SET_FINAL_PROMPT_COMPONENT_UPSTREAM_KEY.removesuffix("NN")
+    component_keys = tuple(
+        key for key in upstream_paths if key.startswith(component_prefix)
+    )
+    try:
+        expanded_upstream_keys = expand_set_final_prompt_upstream_keys(
+            len(component_keys)
+        )
+    except ValueError:
+        raise ExecutorExecutionError("codex-dev 无法固定套装最终提示词上游引用") from None
+    shared_upstream_keys = tuple(
+        key for key in expanded_upstream_keys if key != "variable_config"
+    )
+    if set(upstream_paths) != set(shared_upstream_keys):
+        raise ExecutorExecutionError("codex-dev 无法固定套装最终提示词上游引用")
+    files: dict[Path, bytes] = {}
+    index_items: list[dict[str, Any]] = []
+    for mode in ("main", "detail"):
+        document, source_path = variable_configs[mode]
+        configs = _validate_variable_config_document(
+            document,
+            mode=mode,
+            product_id=product_id,
+            expected_count=_mode_image_count(requirements, mode),
+        )
+        bindings = _set_final_prompt_config_bindings(
+            configs,
+            set_angle_layout_inventory,
+            label="套装最终提示词产物",
+        )
+        source_sha256 = _file_sha256(source_path)
+        prompts = prompt_batches[mode]
+        if set(prompts) != {config["config_id"] for config in configs}:
+            raise ExecutorExecutionError("codex-dev 无法构建完整的套装最终提示词批次")
+        for index, (config, binding) in enumerate(zip(configs, bindings)):
+            config_id = config["config_id"]
+            angle_record, _binding_file_name, _layout_slot = binding
+            upstream_artifacts = {
+                key: (
+                    str(source_path)
+                    if key == "variable_config"
+                    else str(upstream_paths[key])
+                )
+                for key in expanded_upstream_keys
+            }
+            final_doc = {
+                "product_id": product_id,
+                "artifact_type": "final_prompt",
+                "upstream_artifacts": upstream_artifacts,
+                "variable_config": {
+                    "config_id": config_id,
+                    "output_type": mode,
+                    "source_path": str(source_path),
+                    "source_sha256": source_sha256,
+                    "source_schema": "common_constraints + per_image_overrides",
+                    "common_constraints_ref": {
+                        "path": str(source_path),
+                        "json_pointer": "/common_constraints",
+                    },
+                    "per_image_overrides_ref": {
+                        "path": str(source_path),
+                        "json_pointer": f"/configs/{index}/per_image_overrides",
+                    },
+                    "resolved_variable_config_sha256": config[
+                        "resolved_variable_config_sha256"
+                    ],
+                },
+                "uses_upstream_prompt_files_as_visual_requirements": False,
+                "final_prompt": prompts[config_id]["final_prompt"],
+                "negative_prompt": prompts[config_id]["negative_prompt"],
+                "notes": "仅由已验收套装上游档案和本张变量配置编译；本阶段未生成图片、ComfyUI 作业或 QC 产物。",
+            }
+            json_path = output_dir / f"{config_id}_final_prompt.json"
+            md_path = output_dir / f"{config_id}_final_prompt.md"
+            files[json_path] = _json_bytes(final_doc)
+            files[md_path] = _markdown_bytes(f"{config_id} Final Prompt", final_doc)
+            index_items.append(
+                {
+                    "config_id": config_id,
+                    "output_type": mode,
+                    "final_prompt_path": str(json_path),
+                    "bound_reference": str(angle_record.get("file_name") or ""),
+                }
+            )
+    index = {
+        "product_id": product_id,
+        "artifact_type": "final_prompt_index",
+        "prompt_count": len(index_items),
+        "uses_upstream_prompt_files_as_visual_requirements": False,
+        "items": index_items,
+        "notes": "套装提示词专用索引；未生成 ComfyUI、QC 或图片产物。",
+    }
+    files[output_dir / "final_prompt_index.json"] = _json_bytes(index)
+    files[output_dir / "final_prompt_index.md"] = _markdown_bytes(
+        "Final Prompt Index",
+        index,
+    )
+    if set(files) != set(
+        final_prompt_bundle_targets(
+            output_dir,
+            requirements=requirements,
+        )
+    ):
+        raise ExecutorExecutionError("codex-dev 无法构建完整的套装最终提示词批次")
     return files
 
 

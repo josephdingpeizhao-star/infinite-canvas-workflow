@@ -100,9 +100,9 @@ class SetBatchIntakeDimensionTests(unittest.TestCase):
                 "--detail-count",
                 "8",
                 "--handheld-main",
-                "2",
+                "0",
                 "--handheld-detail",
-                "1",
+                "0",
                 "--forbid-pouring-and-heating",
                 "true",
                 "--missing-d-no-retake",
@@ -199,8 +199,8 @@ class SetBatchIntakeDimensionTests(unittest.TestCase):
                 height_cm=None,
                 main_image_count=6,
                 detail_image_count=8,
-                handheld_main=2,
-                handheld_detail=1,
+                handheld_main=0,
+                handheld_detail=0,
                 forbid_pouring_and_heating=True,
                 missing_d_no_retake=True,
             )
@@ -682,7 +682,15 @@ class St03bGateTests(unittest.TestCase):
             "renders",
             "qc",
         )
-        ready = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}
+        ready = {
+            "identity",
+            "style_master",
+            "angle_inventory",
+            "main_vc",
+            "detail_vc",
+            "final_prompts",
+            "integrity",
+        }
         self.assertEqual(frozenset(ready), batch_type_gate.SET_READY_STEPS)
         for step in steps:
             with self.subTest(batch_type="set", step=step):

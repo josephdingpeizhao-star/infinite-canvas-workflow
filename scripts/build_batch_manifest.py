@@ -304,6 +304,11 @@ def main() -> int:
                 f"{bounds['minimum']} through {maximum}"
             )
             return 2
+    if args.batch_type == "set" and (
+        args.handheld_main != 0 or args.handheld_detail != 0
+    ):
+        print("套装批次暂不支持手持，主图与详情手持数量必须为 0。")
+        return 2
 
     manifest = load_template(root)
     manifest["product_id"] = product_id

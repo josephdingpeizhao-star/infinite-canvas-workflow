@@ -17,16 +17,56 @@
     "artifact_type": { "const": "final_prompt" },
     "upstream_artifacts": {
       "type": "object",
-      "required": ["product_identity_archive", "style_master", "angle_inventory"],
+      "anyOf": [
+        {
+          "required": ["product_identity_archive", "style_master", "angle_inventory"],
+          "not": {
+            "anyOf": [
+              { "required": ["set_product_identity"] },
+              { "required": ["set_angle_layout_inventory"] }
+            ]
+          },
+          "propertyNames": {
+            "not": { "pattern": "^component_identity_archive_0[1-8]$" }
+          }
+        },
+        {
+          "required": [
+            "set_product_identity",
+            "component_identity_archive_01",
+            "component_identity_archive_02",
+            "style_master",
+            "set_angle_layout_inventory",
+            "variable_config"
+          ],
+          "not": {
+            "anyOf": [
+              { "required": ["product_identity_archive"] },
+              { "required": ["angle_inventory"] }
+            ]
+          }
+        }
+      ],
       "properties": {
         "product_identity_archive": { "type": "string", "minLength": 1 },
+        "set_product_identity": { "type": "string", "minLength": 1 },
         "style_master": { "type": "string", "minLength": 1 },
         "angle_inventory": { "type": "string", "minLength": 1 },
+        "set_angle_layout_inventory": { "type": "string", "minLength": 1 },
         "variable_config": { "type": "string", "minLength": 1 },
         "realism_constraints": { "type": "string" },
         "prop_rules": { "type": "string" },
         "platform_rules": { "type": "string" },
         "qc_checklist": { "type": "string" }
+      },
+      "patternProperties": {
+        "^component_identity_archive_0[1-8]$": { "type": "string", "minLength": 1 }
+      },
+      "propertyNames": {
+        "anyOf": [
+          { "not": { "pattern": "^component_identity_archive_" } },
+          { "pattern": "^component_identity_archive_0[1-8]$" }
+        ]
       },
       "additionalProperties": true
     },

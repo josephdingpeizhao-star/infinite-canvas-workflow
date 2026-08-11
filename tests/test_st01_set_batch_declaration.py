@@ -106,6 +106,9 @@ def _canvas_state(
     set_group_ids = [str(node["id"]) for node in set_group]
     component_ids = [str(node["id"]) for node in components]
     source_ids = ["white-1", *set_group_ids, *component_ids]
+    facts = copy.deepcopy(FACTS)
+    if batch_type == "set":
+        facts.update({"handheld_main": 0, "handheld_detail": 0})
     info = {
         "id": "info-1",
         "type": "batch-info",
@@ -124,7 +127,7 @@ def _canvas_state(
                 "category": "杯类",
                 "contractHash": NEW_CONTRACT_HASH,
                 "batch_type": batch_type,
-                "facts": copy.deepcopy(FACTS),
+                "facts": facts,
                 "workflowNodeId": "workflow-1",
                 "sourceImageNodeIds": source_ids,
                 "setGroupImageNodeIds": set_group_ids,
@@ -318,8 +321,8 @@ class St01CreatorTests(unittest.TestCase):
             height_cm=25,
             main_image_count=6,
             detail_image_count=8,
-            handheld_main=2,
-            handheld_detail=1,
+            handheld_main=0,
+            handheld_detail=0,
             forbid_pouring_and_heating=True,
             missing_d_no_retake=True,
         )
@@ -669,10 +672,23 @@ class St01StepGateTests(unittest.TestCase):
         ]
 
     def test_set_eight_step_matrix_stops_before_executor_with_exact_copy(self) -> None:
-        self.assertEqual(frozenset({"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}), batch_type_gate.SET_READY_STEPS)
+        self.assertEqual(
+            frozenset(
+                {
+                    "identity",
+                    "style_master",
+                    "angle_inventory",
+                    "main_vc",
+                    "detail_vc",
+                    "final_prompts",
+                    "integrity",
+                }
+            ),
+            batch_type_gate.SET_READY_STEPS,
+        )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
-            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "final_prompts"),
+            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "renders"),
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
@@ -681,7 +697,20 @@ class St01StepGateTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self._prepare_repository(root)
-            blocked_steps = tuple(step for step in STEPS if step not in {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"})
+            blocked_steps = tuple(
+                step
+                for step in STEPS
+                if step
+                not in {
+                    "identity",
+                    "style_master",
+                    "angle_inventory",
+                    "main_vc",
+                    "detail_vc",
+                    "final_prompts",
+                    "integrity",
+                }
+            )
             for index, step in enumerate(blocked_steps, start=1):
                 with self.subTest(step=step):
                     batch_id = f"set-{index}"

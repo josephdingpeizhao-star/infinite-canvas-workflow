@@ -224,6 +224,19 @@ def _parse_facts(
     if isinstance(raw, Mapping):
         detail_image_count = raw.get("detail_image_count")
         handheld_detail = raw.get("handheld_detail")
+        handheld_main = raw.get("handheld_main")
+        if (
+            batch_type == BATCH_TYPE_SET
+            and type(handheld_main) is int
+            and type(handheld_detail) is int
+            and (handheld_main != 0 or handheld_detail != 0)
+        ):
+            raise _error(
+                "invalid_facts",
+                "套装批次暂不支持手持，主图与详情手持数量必须为 0。",
+                info_node_id=info_node_id,
+                request_id=request_id,
+            )
         if (
             type(detail_image_count) is int
             and type(handheld_detail) is int

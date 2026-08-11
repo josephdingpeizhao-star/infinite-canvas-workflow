@@ -41,12 +41,17 @@ from codex_dev_downstream import (
     build_final_prompt_batch_prompt,
     build_final_prompt_repair_prompt,
     build_final_prompt_bundle,
+    build_set_final_prompt_batch_prompt,
+    build_set_final_prompt_bundle,
+    build_set_final_prompt_repair_prompt,
     build_set_variable_config_prompt,
     build_variable_config_correction_prompt,
     build_variable_config_prompt,
+    expand_set_final_prompt_upstream_keys,
     final_prompt_bundle_targets,
     load_typed_artifact,
     parse_final_prompt_batch_response,
+    parse_set_final_prompt_batch_response,
     parse_detail_variable_config_chunk,
     parse_set_variable_config_response,
     parse_user_confirmed_requirements,
@@ -1618,19 +1623,25 @@ class CodexDevExecutor:
         variable_config: Mapping[str, Any],
         style_master_text: str,
         correction_attempts: int,
+        parse_response: Callable[[str], dict[str, dict[str, str]]] | None = None,
+        repair_prompt_builder: Callable[[], str] | None = None,
     ) -> tuple[dict[str, dict[str, str]], CodexTurnResult, int]:
         thread_id = turn.thread_id
         label = "主图" if mode == "main" else "详情图"
         while True:
             try:
-                batch = parse_final_prompt_batch_response(
-                    turn.text,
-                    mode=mode,
-                    product_id=product_id,
-                    requirements=requirements,
-                    angle_inventory=angle_inventory,
-                    variable_config=variable_config,
-                    style_master_text=style_master_text,
+                batch = (
+                    parse_response(turn.text)
+                    if parse_response is not None
+                    else parse_final_prompt_batch_response(
+                        turn.text,
+                        mode=mode,
+                        product_id=product_id,
+                        requirements=requirements,
+                        angle_inventory=angle_inventory,
+                        variable_config=variable_config,
+                        style_master_text=style_master_text,
+                    )
                 )
             except FinalPromptLiteralViolation as error:
                 if correction_attempts >= FINAL_PROMPT_CORRECTION_LIMIT:
@@ -1642,9 +1653,13 @@ class CodexDevExecutor:
                 correction_attempts += 1
                 turn = self._continue_transport(
                     thread_id,
-                    build_final_prompt_repair_prompt(
-                        mode=mode,
-                        requirements=requirements,
+                    (
+                        repair_prompt_builder()
+                        if repair_prompt_builder is not None
+                        else build_final_prompt_repair_prompt(
+                            mode=mode,
+                            requirements=requirements,
+                        )
                     ),
                     (),
                 )
@@ -1657,6 +1672,8 @@ class CodexDevExecutor:
             return batch, turn, correction_attempts
 
     def _execute_final_prompts(self, product_id: str) -> ExecutionResult:
+        if self.context.manifest.get("batch_type", "single") == "set":
+            return self._execute_set_final_prompts(product_id)
         self._validate_single_product_batch()
         index_path = artifact_file_under_root(
             self.context.manifest,
@@ -1781,6 +1798,214 @@ class CodexDevExecutor:
                 "angle_inventory": angle_path,
             },
             angle_inventory=angle_inventory,
+            requirements=requirements,
+        )
+        write_bundle_exclusive(bundle, "最终提示词")
+        detail = "最终提示词已生成"
+        if correction_attempts:
+            detail += f"（受控纠正 {correction_attempts} 次）"
+        return ExecutionResult(
+            detail=detail,
+            outputs=(index_path,),
+            provider=self.name,
+            metadata={
+                "main_thread_id": main_turn.thread_id,
+                "detail_thread_id": detail_turn.thread_id,
+                "correction_attempts": correction_attempts,
+            },
+        )
+
+    def _execute_set_final_prompts(self, product_id: str) -> ExecutionResult:
+        index_path = artifact_file_under_root(
+            self.context.manifest,
+            "final_prompts",
+            "final_prompt_index.json",
+        )
+        output_dir = index_path.parent
+        requirements = parse_user_confirmed_requirements(
+            self.context.manifest,
+            self.repository_root,
+        )
+        if any(
+            path.exists()
+            for path in final_prompt_bundle_targets(
+                output_dir,
+                requirements=requirements,
+            )
+        ):
+            raise ExecutorExecutionError("正式最终提示词已存在，codex-dev 不会覆盖")
+
+        set_identity = self._load_set_product_identity()
+        set_identity_path = artifact_file_under_root(
+            self.context.manifest,
+            "set_product_identity",
+            "set_product_identity.json",
+        )
+        component_identities, component_paths = (
+            self._load_set_component_identity_archives(set_identity)
+        )
+        style_master, style_path = load_typed_artifact(
+            self.context.manifest,
+            "style_master",
+            "style_master.json",
+            "style_master",
+            "风格母版",
+        )
+        set_layout_inventory, set_layout_path = load_typed_artifact(
+            self.context.manifest,
+            "set_angle_layout_inventory",
+            "set_angle_layout_inventory.json",
+            "set_angle_layout_inventory",
+            "套装角度与编排入库表",
+        )
+        main_variable_config, main_path = load_typed_artifact(
+            self.context.manifest,
+            "main_variable_configs",
+            "main_variable_configs.json",
+            "main_variable_config",
+            "正式主图变量配置",
+        )
+        detail_variable_config, detail_path = load_typed_artifact(
+            self.context.manifest,
+            "detail_variable_configs",
+            "detail_variable_configs.json",
+            "detail_variable_config",
+            "正式详情图变量配置",
+        )
+        style_master_text = style_master_material_reference_text(
+            style_master,
+            product_id=product_id,
+        )
+        final_prompt_skill_text, set_workflow_supplement, set_layout_rules = (
+            self._load_set_final_prompt_rules()
+        )
+
+        main_prompt = build_set_final_prompt_batch_prompt(
+            mode="main",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            set_identity=set_identity,
+            component_identities=component_identities,
+            style_master=style_master,
+            set_angle_layout_inventory=set_layout_inventory,
+            variable_config=main_variable_config,
+            requirements=requirements,
+            final_prompt_skill_text=final_prompt_skill_text,
+            set_workflow_supplement=set_workflow_supplement,
+            set_layout_rules=set_layout_rules,
+        )
+
+        def parse_main_response(response_text: str) -> dict[str, dict[str, str]]:
+            return parse_set_final_prompt_batch_response(
+                response_text,
+                mode="main",
+                product_id=product_id,
+                requirements=requirements,
+                set_identity=set_identity,
+                component_identities=component_identities,
+                set_angle_layout_inventory=set_layout_inventory,
+                variable_config=main_variable_config,
+                style_master_text=style_master_text,
+            )
+
+        main_turn = self._run_transport(main_prompt, ())
+        self._emit_turn_progress()
+        correction_attempts = 0
+        main_batch, main_turn, correction_attempts = (
+            self._parse_final_prompt_with_bounded_correction(
+                main_turn,
+                mode="main",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=set_layout_inventory,
+                variable_config=main_variable_config,
+                style_master_text=style_master_text,
+                correction_attempts=correction_attempts,
+                parse_response=parse_main_response,
+                repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
+                    mode="main"
+                ),
+            )
+        )
+
+        detail_prompt = build_set_final_prompt_batch_prompt(
+            mode="detail",
+            product_id=product_id,
+            repository_root=self.repository_root,
+            set_identity=set_identity,
+            component_identities=component_identities,
+            style_master=style_master,
+            set_angle_layout_inventory=set_layout_inventory,
+            variable_config=detail_variable_config,
+            requirements=requirements,
+            final_prompt_skill_text=final_prompt_skill_text,
+            set_workflow_supplement=set_workflow_supplement,
+            set_layout_rules=set_layout_rules,
+        )
+
+        def parse_detail_response(response_text: str) -> dict[str, dict[str, str]]:
+            return parse_set_final_prompt_batch_response(
+                response_text,
+                mode="detail",
+                product_id=product_id,
+                requirements=requirements,
+                set_identity=set_identity,
+                component_identities=component_identities,
+                set_angle_layout_inventory=set_layout_inventory,
+                variable_config=detail_variable_config,
+                style_master_text=style_master_text,
+            )
+
+        detail_turn = self._run_transport(detail_prompt, ())
+        self._emit_turn_progress()
+        detail_batch, detail_turn, correction_attempts = (
+            self._parse_final_prompt_with_bounded_correction(
+                detail_turn,
+                mode="detail",
+                product_id=product_id,
+                requirements=requirements,
+                angle_inventory=set_layout_inventory,
+                variable_config=detail_variable_config,
+                style_master_text=style_master_text,
+                correction_attempts=correction_attempts,
+                parse_response=parse_detail_response,
+                repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
+                    mode="detail"
+                ),
+            )
+        )
+
+        try:
+            bundle_upstream_keys = expand_set_final_prompt_upstream_keys(
+                len(component_identities)
+            )[:-1]
+            bundle_upstream_paths = dict(
+                zip(
+                    bundle_upstream_keys,
+                    (
+                        set_identity_path,
+                        *component_paths,
+                        style_path,
+                        set_layout_path,
+                    ),
+                    strict=True,
+                )
+            )
+        except ValueError:
+            raise ExecutorExecutionError(
+                "codex-dev 无法固定套装最终提示词上游引用"
+            ) from None
+
+        bundle = build_set_final_prompt_bundle(
+            product_id=product_id,
+            output_dir=output_dir,
+            prompt_batches={"main": main_batch, "detail": detail_batch},
+            variable_configs={
+                "main": (main_variable_config, main_path),
+                "detail": (detail_variable_config, detail_path),
+            },
+            upstream_paths=bundle_upstream_paths,
+            set_angle_layout_inventory=set_layout_inventory,
             requirements=requirements,
         )
         write_bundle_exclusive(bundle, "最终提示词")
@@ -2036,6 +2261,22 @@ class CodexDevExecutor:
             workflow_reference,
             layout_reference,
         )
+
+    def _load_set_final_prompt_rules(self) -> tuple[str, str, str]:
+        skill_root = self.repository_root / ".agents" / "skills" / "final-prompt-compiler"
+        try:
+            skill_text = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+            workflow_reference = load_shared_prompt(
+                self.repository_root,
+                "set_workflow_supplement",
+            )
+            layout_reference = load_shared_prompt(
+                self.repository_root,
+                "set_layout_rules",
+            )
+        except (OSError, CategoryRecipeError):
+            raise ExecutorExecutionError("codex-dev 无法加载套装最终提示词编译规则") from None
+        return skill_text, workflow_reference, layout_reference
 
     def _load_style_master_rules(self) -> tuple[str, str]:
         skill_root = self.repository_root / ".agents" / "skills" / "style-master-extractor"

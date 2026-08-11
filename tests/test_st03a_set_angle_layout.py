@@ -312,7 +312,15 @@ class ExecutorFixture(unittest.TestCase):
 
 class St03aGateRoutingAndCommandTests(unittest.TestCase):
     def test_gate_matrix_opens_five_steps_and_keeps_four_blocked(self) -> None:
-        ready = {"identity", "style_master", "angle_inventory", "main_vc", "detail_vc"}
+        ready = {
+            "identity",
+            "style_master",
+            "angle_inventory",
+            "main_vc",
+            "detail_vc",
+            "final_prompts",
+            "integrity",
+        }
         self.assertEqual(frozenset(ready), batch_type_gate.SET_READY_STEPS)
         for step in STEPS:
             with self.subTest(batch_type="set", step=step):
@@ -836,7 +844,7 @@ class St03aTeachingAndGraphTests(unittest.TestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual("2026-08-10", graph["version"])
+        self.assertEqual("2026-08-11", graph["version"])
         self.assertEqual(1, graph["graph_version"])
         by_id = {node["id"]: node for node in graph["nodes"]}
         for node_id in ("stage_angle_inventory", "art_angle_inventory"):
