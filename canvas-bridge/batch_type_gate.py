@@ -15,8 +15,9 @@ SET_READY_STEPS: frozenset[str] = frozenset(
         "detail_vc",
         "final_prompts",
         "integrity",
+        "renders",
     }
-)  # ST-04 起继续纳入
+)  # qc 待 QC 休眠解除后随套装 QC 专项一并纳入
 _SET_BATCH_BLOCKED_MESSAGE = (
     "套装批次的后续生产工序尚未开通，本批次已停在未开通工序开始之前，"
     "未执行该工序，也未产生任何费用。"

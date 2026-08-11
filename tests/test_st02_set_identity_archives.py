@@ -204,6 +204,7 @@ class St02GateTests(unittest.TestCase):
                     "detail_vc",
                     "final_prompts",
                     "integrity",
+                    "renders",
                 }
             ),
             batch_type_gate.SET_READY_STEPS,
@@ -226,6 +227,7 @@ class St02GateTests(unittest.TestCase):
                 "detail_vc",
                 "final_prompts",
                 "integrity",
+                "renders",
             }
         )
         for step in blocked_steps:
@@ -986,7 +988,7 @@ class St02ServiceTests(unittest.TestCase):
             persistence_timeout_ms=0,
         )
 
-    def test_set_identity_runs_then_rotates_to_the_style_gate_with_heartbeat(self) -> None:
+    def test_set_identity_runs_then_rotates_to_the_render_fee_gate_with_heartbeat(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             repository = self.prepare_repository(root)
@@ -1026,17 +1028,32 @@ class St02ServiceTests(unittest.TestCase):
                 service.poll_once()
 
             events = self.event_names(journal)
+            event_records = [
+                json.loads(line)
+                for line in journal.read_text(encoding="utf-8").splitlines()
+            ]
             production = client.machine["metadata"]["workflowProduction"]
             self.assertEqual(["identity"], built)
             self.assertEqual(["identity"], executed)
             self.assertEqual(1, events.count("step_started"))
             self.assertEqual(1, events.count("step_succeeded"))
             self.assertEqual(0, events.count("step_auto_retry"))
-            self.assertEqual(0, events.count("production_paused"))
-            self.assertEqual("failed", production["status"])
-            self.assertEqual(BLOCKED_MESSAGE, production["errorMessage"])
+            self.assertEqual(1, events.count("production_paused"))
+            self.assertEqual(
+                ["awaiting_render_gate"],
+                [
+                    event.get("reason")
+                    for event in event_records
+                    if event.get("event") == "production_paused"
+                ],
+            )
+            self.assertEqual("paused", production["status"])
+            self.assertEqual(
+                "上游准备完成，已停在出图前。等待批准下一闸门。",
+                production["message"],
+            )
             self.assertIn("running", client.statuses)
-            self.assertEqual("failed", client.statuses[-1])
+            self.assertEqual("paused", client.statuses[-1])
             start_worker.assert_called_once_with(f"req-{batch_id}")
             self.assertTrue(callable(executors[0].turn_progress_callback))
             self.assertEqual(1, len(worker.submitted))
@@ -1058,6 +1075,7 @@ class St02ServiceTests(unittest.TestCase):
                     "detail_vc",
                     "final_prompts",
                     "integrity",
+                    "renders",
                 }
             )
             for index, step in enumerate(blocked_steps, start=1):

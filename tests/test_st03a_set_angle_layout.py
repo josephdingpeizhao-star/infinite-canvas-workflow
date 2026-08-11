@@ -320,6 +320,7 @@ class St03aGateRoutingAndCommandTests(unittest.TestCase):
             "detail_vc",
             "final_prompts",
             "integrity",
+            "renders",
         }
         self.assertEqual(frozenset(ready), batch_type_gate.SET_READY_STEPS)
         for step in STEPS:

@@ -305,7 +305,11 @@ class WorkflowProductionHttpApplication:
                         "无法确认本批是否已有成图，请稍后重试。",
                     )
                 try:
-                    eligibility = evaluate_rebind_eligibility(scan, ready_count)
+                    eligibility = evaluate_rebind_eligibility(
+                        scan,
+                        ready_count,
+                        batch_type=manifest.get("batch_type"),
+                    )
                 except WhiteBgRecoveryError as exc:
                     raise RebindRecomputeRejected(
                         409,

@@ -14,7 +14,9 @@ from executor_contract import ExecutorExecutionError
 from white_bg_recovery import (
     WhiteBgRecoveryError,
     WhiteBgScan,
+    sanitize_filenames,
     scan_white_bg_recovery,
+    set_reference_filenames,
 )
 
 
@@ -51,6 +53,19 @@ def _scan_reference_failure(
         return scan_white_bg_recovery(manifest)
     except WhiteBgRecoveryError:
         return scan_white_bg_recovery(manifest, bound_references=(filename,))
+
+
+def _missing_reference_scan(scan: WhiteBgScan, filename: str) -> WhiteBgScan:
+    """Keep directory-role misses structured even when another input has the same name."""
+
+    if scan.kind != "available":
+        return scan
+    return WhiteBgScan(
+        kind="missing_reference",
+        missing_files=sanitize_filenames((filename,)),
+        missing_count=1,
+        remaining_count=scan.remaining_count,
+    )
 
 
 @dataclass(frozen=True)
@@ -112,13 +127,18 @@ def resolve_final_prompt_index_path(manifest: Mapping[str, Any]) -> Path:
     return final_dir / "final_prompt_index.json"
 
 
-def _reference_image(manifest: Mapping[str, Any], filename: str) -> Path:
+def _reference_image(
+    manifest: Mapping[str, Any],
+    filename: str,
+    *,
+    input_key: str = "white_bg_images",
+) -> Path:
     if not filename or Path(filename).name != filename:
         raise RenderTaskAssemblyError("索引中的绑定参考图文件名无效")
     inputs = manifest.get("inputs")
     if not isinstance(inputs, Mapping):
         raise RenderTaskAssemblyError("manifest.inputs 缺失")
-    roots = _all_paths(inputs.get("white_bg_images"), "white_bg_images")
+    roots = _all_paths(inputs.get(input_key), input_key)
     matches: dict[Path, Path] = {}
     for root in roots:
         if root.is_file():
@@ -142,7 +162,10 @@ def _reference_image(manifest: Mapping[str, Any], filename: str) -> Path:
                 raise RenderTaskAssemblyError("绑定参考图越出白底图目录")
             matches[resolved] = candidate
     if not matches:
-        scan = _scan_reference_failure(manifest, filename)
+        scan = _missing_reference_scan(
+            _scan_reference_failure(manifest, filename),
+            filename,
+        )
         if scan.kind in {"missing_reference", "inputs_unavailable"}:
             raise _white_bg_failure("绑定参考图不在白底图目录中", scan)
         raise RenderTaskAssemblyError("绑定参考图必须在白底图目录中唯一匹配")
@@ -155,14 +178,10 @@ def _reference_image(manifest: Mapping[str, Any], filename: str) -> Path:
         with reference.open("rb") as handle:
             handle.read(1)
     except OSError as exc:
-        scan = _scan_reference_failure(manifest, filename)
-        if scan.kind == "available":
-            scan = WhiteBgScan(
-                kind="missing_reference",
-                missing_files=(filename,),
-                missing_count=1,
-                remaining_count=0,
-            )
+        scan = _missing_reference_scan(
+            _scan_reference_failure(manifest, filename),
+            filename,
+        )
         raise _white_bg_failure("绑定参考图无法读取", scan) from exc
     return reference
 
@@ -207,6 +226,30 @@ def assemble_render_tasks(
         or len(items) != len(expected_ids)
     ):
         raise RenderTaskAssemblyError("最终提示词索引契约无效")
+
+    is_set = manifest.get("batch_type", "single") == "set"
+    component_references: tuple[Path, ...] = ()
+    if is_set:
+        try:
+            reference_filenames = set_reference_filenames(manifest)
+        except WhiteBgRecoveryError as exc:
+            raise RenderTaskAssemblyError(str(exc)) from exc
+        group_filenames = tuple(
+            dict.fromkeys(
+                item.get("bound_reference")
+                for item in items
+                if isinstance(item, Mapping)
+            )
+        )
+        component_filenames = reference_filenames[len(group_filenames) :]
+        component_references = tuple(
+            _reference_image(
+                manifest,
+                filename,
+                input_key="component_white_bg_images",
+            )
+            for filename in component_filenames
+        )
 
     tasks: list[ImageGenerationTask] = []
     planned: list[str] = []
@@ -255,7 +298,11 @@ def assemble_render_tasks(
         negative = document.get("negative_prompt")
         if not isinstance(positive, str) or not positive.strip() or not isinstance(negative, str) or not negative.strip():
             raise RenderTaskAssemblyError("最终提示词正文或 negative_prompt 为空")
-        reference = _reference_image(manifest, str(item.get("bound_reference") or ""))
+        reference = _reference_image(
+            manifest,
+            str(item.get("bound_reference") or ""),
+            input_key="set_group_images" if is_set else "white_bg_images",
+        )
         output_path = renders_dir / f"{config_id}.png"
         if not _is_within(output_path, renders_dir):
             raise RenderTaskAssemblyError("渲染输出路径越界")
@@ -269,7 +316,7 @@ def assemble_render_tasks(
             ImageGenerationTask(
                 prompt=positive + NEGATIVE_PROMPT_SEPARATOR + negative,
                 output_path=output_path,
-                reference_images=(reference,),
+                reference_images=(reference, *component_references),
                 size=ASPECT_TO_IMAGE_SIZE[aspect],
                 output_format="png",
             )

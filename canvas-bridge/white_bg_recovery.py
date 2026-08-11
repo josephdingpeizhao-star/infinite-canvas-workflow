@@ -33,6 +33,7 @@ _ARCHIVE_ARTIFACT_KEYS = (
 )
 _REPO_INTEGRITY_KEY = "repo_final_prompt_integrity_report"
 _MAX_ARCHIVE_ATTEMPTS = 8
+_SET_ANGLE_LAYOUT_FILENAME = "set_angle_layout_inventory.json"
 
 
 class WhiteBgRecoveryError(ValueError):
@@ -99,11 +100,23 @@ def _path_values(value: Any) -> tuple[Path, ...]:
     return tuple(Path(item) for item in values if isinstance(item, str) and item.strip())
 
 
-def _readable_supported_images(manifest: Mapping[str, Any]) -> tuple[Path, ...]:
+def _reference_input_roots(manifest: Mapping[str, Any]) -> tuple[Path, ...]:
     inputs = manifest.get("inputs")
-    roots = _path_values(
-        inputs.get("white_bg_images") if isinstance(inputs, Mapping) else None
-    )
+    if not isinstance(inputs, Mapping):
+        return ()
+    if manifest.get("batch_type", "single") != "set":
+        return _path_values(inputs.get("white_bg_images"))
+
+    white_bg_roots = _path_values(inputs.get("white_bg_images"))
+    group_roots = _path_values(inputs.get("set_group_images"))
+    component_roots = _path_values(inputs.get("component_white_bg_images"))
+    if not group_roots or not component_roots:
+        return ()
+    return (*white_bg_roots, *group_roots, *component_roots)
+
+
+def _readable_supported_images(manifest: Mapping[str, Any]) -> tuple[Path, ...]:
+    roots = _reference_input_roots(manifest)
     if not roots:
         return ()
 
@@ -161,6 +174,78 @@ def _bound_references_from_index(manifest: Mapping[str, Any]) -> tuple[str, ...]
     return tuple(references)
 
 
+def _set_component_reference_filenames(
+    manifest: Mapping[str, Any],
+) -> tuple[str, ...]:
+    artifacts = manifest.get("artifacts")
+    paths = _path_values(
+        artifacts.get("set_angle_layout_inventory")
+        if isinstance(artifacts, Mapping)
+        else None
+    )
+    if not paths:
+        raise WhiteBgRecoveryError("套装角度与编排入库表位置不可用")
+    declared = paths[0]
+    inventory_path = (
+        declared
+        if declared.suffix.lower() == ".json"
+        else declared / _SET_ANGLE_LAYOUT_FILENAME
+    )
+    try:
+        inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise WhiteBgRecoveryError("套装角度与编排入库表无法读取") from exc
+
+    product_id = manifest.get("product_id")
+    layouts = inventory.get("layouts") if isinstance(inventory, Mapping) else None
+    if (
+        not isinstance(inventory, Mapping)
+        or inventory.get("artifact_type") != "set_angle_layout_inventory"
+        or type(product_id) is not str
+        or not product_id
+        or inventory.get("product_id") != product_id
+        or not isinstance(layouts, list)
+    ):
+        raise WhiteBgRecoveryError("套装角度与编排入库表契约无效")
+
+    components: list[tuple[int, str]] = []
+    seen_indexes: set[int] = set()
+    for layout in layouts:
+        if not isinstance(layout, Mapping):
+            raise WhiteBgRecoveryError("套装角度与编排入库表 layouts 结构无效")
+        image_index = layout.get("image_index")
+        file_name = layout.get("file_name")
+        is_set_group = layout.get("is_set_group")
+        if (
+            type(image_index) is not int
+            or image_index <= 0
+            or image_index in seen_indexes
+            or type(file_name) is not str
+            or not file_name
+            or Path(file_name).name != file_name
+            or type(is_set_group) is not bool
+        ):
+            raise WhiteBgRecoveryError("套装角度与编排入库表 layouts 结构无效")
+        seen_indexes.add(image_index)
+        if is_set_group is False:
+            components.append((image_index, file_name))
+    if not components:
+        raise WhiteBgRecoveryError("套装角度与编排入库表未登记组成单件白底图")
+
+    ordered = (file_name for _index, file_name in sorted(components))
+    return tuple(dict.fromkeys(ordered))
+
+
+def set_reference_filenames(manifest: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return every required set reference in deterministic upload order."""
+
+    if manifest.get("batch_type", "single") != "set":
+        raise WhiteBgRecoveryError("当前批次不是套装批次")
+    group_references = tuple(dict.fromkeys(_bound_references_from_index(manifest)))
+    component_references = _set_component_reference_filenames(manifest)
+    return (*group_references, *component_references)
+
+
 def scan_white_bg_recovery(
     manifest: Mapping[str, Any],
     *,
@@ -179,7 +264,11 @@ def scan_white_bg_recovery(
     references = (
         tuple(bound_references)
         if bound_references is not None
-        else _bound_references_from_index(manifest)
+        else (
+            set_reference_filenames(manifest)
+            if manifest.get("batch_type", "single") == "set"
+            else _bound_references_from_index(manifest)
+        )
     )
     if not references or any(type(value) is not str or not value for value in references):
         raise WhiteBgRecoveryError("绑定参考图清单无效")
@@ -206,12 +295,29 @@ def scan_white_bg_recovery(
     )
 
 
+def allows_rebind_recompute(batch_type: object) -> bool:
+    """Only an explicitly declared single-product batch may discard an angle."""
+
+    return type(batch_type) is str and batch_type == "single"
+
+
 def evaluate_rebind_eligibility(
     scan: WhiteBgScan,
     ready_count: int,
+    *,
+    batch_type: object = "single",
 ) -> RecoveryEligibility:
     """Apply the side-effect-free RB-01 endpoint qualification rules."""
 
+    if not allows_rebind_recompute(batch_type):
+        return RecoveryEligibility(
+            eligible=False,
+            code="recompute_unsupported_for_set",
+            message=(
+                "套装每张白底图都是所有图片的必需参照，不能剔除后重排，"
+                "请恢复缺失的白底图后重新开始。"
+            ),
+        )
     if type(ready_count) is not int or ready_count < 0:
         raise WhiteBgRecoveryError("成图计数无效")
     if ready_count:

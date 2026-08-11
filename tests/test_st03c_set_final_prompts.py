@@ -60,7 +60,7 @@ from test_st03b_set_variable_config import (  # noqa: E402
 SET_HANDHELD_DISABLED_MESSAGE = "套装批次暂不支持手持，主图与详情手持数量必须为 0。"
 # 钉住 prompts-only 单品正文；仅在确认有意修改单品正文后才更新此指纹。
 PROMPTS_ONLY_SINGLE_BODY_SHA256 = (
-    "238f1c319c7b7f52e2eac0e30232da887cbb21be3b48c9c55bb57288f5a121ea"
+    "372d9a29430095e5f13ce140fdd5cb448d60e004a3935ca5c58f293f2dcfaf44"
 )
 
 
@@ -312,7 +312,7 @@ class St03cSetHandheldIntakeTests(unittest.TestCase):
 
 
 class St03cGateAndArchitectureTests(unittest.TestCase):
-    def test_set_has_seven_open_steps_two_closed_and_single_has_all_nine(self) -> None:
+    def test_set_has_eight_open_steps_one_closed_and_single_has_all_nine(self) -> None:
         steps = (
             "identity",
             "style_master",
@@ -333,13 +333,14 @@ class St03cGateAndArchitectureTests(unittest.TestCase):
                 "detail_vc",
                 "final_prompts",
                 "integrity",
+                "renders",
             },
             set(batch_type_gate.SET_READY_STEPS),
         )
         for step in steps:
             with self.subTest(batch_type="set", step=step):
                 self.assertEqual(
-                    BLOCKED_MESSAGE if step in {"renders", "qc"} else None,
+                    BLOCKED_MESSAGE if step == "qc" else None,
                     batch_type_gate.set_batch_blocked_message(
                         {"batch_type": "set"},
                         step,
@@ -377,25 +378,30 @@ class St03cGateAndArchitectureTests(unittest.TestCase):
         )
         bundle_source = inspect.getsource(downstream.build_set_final_prompt_bundle)
         integrity_source = inspect.getsource(integrity_validator.build_prompts_only_report)
-        helper_source = inspect.getsource(
+        set_entry_source = inspect.getsource(
             integrity_validator._build_set_prompts_only_report
         )
         self.assertIn("expand_set_final_prompt_upstream_keys", bundle_source)
         self.assertIn("expand_set_final_prompt_upstream_keys", integrity_source)
         self.assertIn("SET_FINAL_PROMPT_COMPONENT_UPSTREAM_KEY", bundle_source)
         self.assertIn("SET_FINAL_PROMPT_UPSTREAM_KEYS", integrity_source)
-        self.assertIn("set_upstream_keys", helper_source)
-        self.assertIn("expand_upstream_keys", helper_source)
+        self.assertIn("_build_prompts_only_report_common", integrity_source)
+        self.assertIn("_build_prompts_only_report_common", set_entry_source)
+        self.assertIn("set_upstream_keys", set_entry_source)
+        self.assertIn("expand_upstream_keys", set_entry_source)
+        self.assertIn('batch_type="set"', set_entry_source)
+        self.assertIn('batch_type="single"', integrity_source)
 
         dispatch_start = integrity_source.index("    batch_manifest_probe =")
         single_body_start = integrity_source.index(
-            "    batch_manifest = load_json(batch_manifest_path)",
+            "    return _build_prompts_only_report_common(",
             dispatch_start,
         )
         public_single_source = (
             integrity_source[:dispatch_start] + integrity_source[single_body_start:]
         )
-        self.assertNotIn("is_set_batch", public_single_source)
+        self.assertNotIn("_build_set_prompts_only_report", public_single_source)
+        self.assertNotIn("SET_FINAL_PROMPT", public_single_source)
         self.assertNotIn("set_upstream_keys", public_single_source)
         self.assertEqual(
             PROMPTS_ONLY_SINGLE_BODY_SHA256,

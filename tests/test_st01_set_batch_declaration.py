@@ -682,13 +682,14 @@ class St01StepGateTests(unittest.TestCase):
                     "detail_vc",
                     "final_prompts",
                     "integrity",
+                    "renders",
                 }
             ),
             batch_type_gate.SET_READY_STEPS,
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
-            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "renders"),
+            batch_type_gate.set_batch_blocked_message({"batch_type": "set"}, "qc"),
         )
         self.assertEqual(
             SET_BATCH_BLOCKED_MESSAGE,
@@ -709,6 +710,7 @@ class St01StepGateTests(unittest.TestCase):
                     "detail_vc",
                     "final_prompts",
                     "integrity",
+                    "renders",
                 }
             )
             for index, step in enumerate(blocked_steps, start=1):

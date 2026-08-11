@@ -52,7 +52,7 @@ from workflow_production_projection import (
     output_node_id,
 )
 from workflow_production_render_observer import ProductionRenderObserverExecutor
-from white_bg_recovery import sanitize_filenames
+from white_bg_recovery import allows_rebind_recompute, sanitize_filenames
 
 
 COMMAND_MAX_AGE_MS = 8_000
@@ -1260,7 +1260,11 @@ class WorkflowProductionService:
         if type(missing_count) is not int or missing_count < 1:
             return None
         eligible = False
-        if type(remaining_count) is int and remaining_count >= 1:
+        if (
+            allows_rebind_recompute(manifest.get("batch_type"))
+            and type(remaining_count) is int
+            and remaining_count >= 1
+        ):
             try:
                 eligible = len(self.artifact_reader(manifest)) == 0
             except Exception:
