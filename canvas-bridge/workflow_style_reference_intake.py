@@ -9,6 +9,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Callable, Mapping, TextIO
 
 from batch_recycle_lock import BatchOperationBusy, existing_batch_operation
@@ -35,6 +36,13 @@ CROSS_ROLE_IMAGE_MESSAGE = (
 UNSAFE_PRODUCT_EVIDENCE_MESSAGE = (
     "无法安全核对本批已登记的产品原图，风格补登已停止。"
     "请保留现场并交由顾问核对，系统不会自动重试。"
+)
+PRODUCT_IMAGE_ROLE_REQUIREMENTS: Mapping[str, tuple[Path, bool, bool]] = MappingProxyType(
+    {
+        "white_bg": (Path("inputs") / "white_bg", True, False),
+        "set_group_shot": (Path("inputs") / "set_group", False, True),
+        "component_white_bg": (Path("inputs") / "component_white_bg", False, False),
+    }
 )
 
 
@@ -344,16 +352,28 @@ def _registered_product_sha256s(manifest_path: Path) -> frozenset[str]:
         assets = asset_manifest.get("assets")
         if not isinstance(assets, list) or not assets:
             raise ValueError
-        white_bg_root = (workspace / "inputs" / "white_bg").resolve(strict=True)
+        role_roots: dict[str, Path] = {}
         hashes: set[str] = set()
         for asset in assets:
+            if not isinstance(asset, Mapping):
+                raise ValueError
+            role = asset.get("asset_role")
+            if not isinstance(role, str):
+                raise ValueError
+            requirements = PRODUCT_IMAGE_ROLE_REQUIREMENTS.get(role)
+            if requirements is None:
+                raise ValueError
+            relative_root, expected_single_product, expected_set_group = requirements
             if (
-                not isinstance(asset, Mapping)
-                or asset.get("asset_role") != "white_bg"
-                or asset.get("is_single_product_white_bg") is not True
+                asset.get("is_single_product_white_bg") is not expected_single_product
+                or asset.get("is_set_group_shot") is not expected_set_group
                 or asset.get("is_style_reference") is not False
             ):
                 raise ValueError
+            role_root = role_roots.get(role)
+            if role_root is None:
+                role_root = (workspace / relative_root).resolve(strict=True)
+                role_roots[role] = role_root
             relative_value = asset.get("file_path")
             if not isinstance(relative_value, str) or not relative_value:
                 raise ValueError
@@ -361,7 +381,7 @@ def _registered_product_sha256s(manifest_path: Path) -> frozenset[str]:
             if relative.is_absolute() or ".." in relative.parts:
                 raise ValueError
             target = (workspace / relative).resolve(strict=True)
-            if target.parent != white_bg_root or not target.is_file() or target.is_symlink():
+            if target.parent != role_root or not target.is_file() or target.is_symlink():
                 raise ValueError
             hashes.add(_sha256_file(target))
         if not hashes:

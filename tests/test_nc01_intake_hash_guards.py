@@ -398,5 +398,368 @@ class Nc01IsolatedNormalFlowTests(unittest.TestCase):
             )
 
 
+class St06SetStyleEvidenceGateTests(unittest.TestCase):
+    GROUP = b"\xff\xd8\xffset-group"
+    COMPONENT_A = b"\xff\xd8\xffcomponent-a"
+    COMPONENT_B = b"\xff\xd8\xffcomponent-b"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.repo = self.root / "repo"
+        self.workspace = self.root / "workspace"
+        self.repo_manifests = self.repo / "manifests"
+        self.workspace_manifests = self.workspace / "manifests"
+        self.set_group = self.workspace / "inputs" / "set_group"
+        self.component_white_bg = self.workspace / "inputs" / "component_white_bg"
+        self.style_root = self.workspace / "inputs" / "style_refs"
+        self.lock_root = self.root / "locks"
+        self.repo_manifests.mkdir(parents=True)
+        self.workspace_manifests.mkdir(parents=True)
+        (self.workspace / ".canvas_batch").write_text(
+            json.dumps({"type": "canvas-batch-v1", "product_id": "set-cup"}) + "\n",
+            encoding="utf-8",
+        )
+        self.manifest_path = self.repo_manifests / "set-cup.batch_manifest.json"
+        self.asset_manifest = self.workspace_manifests / "asset_manifest.json"
+        self._write_manifest(batch_type="set")
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def _write_manifest(self, *, batch_type: str) -> None:
+        manifest = {
+            "product_id": "set-cup",
+            "batch_type": batch_type,
+            "workspace": {"root": str(self.workspace)},
+            "inputs": {"style_reference_images": [str(self.style_root)]},
+            "artifacts": {"asset_manifest": str(self.asset_manifest)},
+        }
+        self.manifest_path.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _asset(
+        asset_id: str,
+        file_path: str,
+        role: str,
+        *,
+        is_single_product_white_bg: bool,
+        is_set_group_shot: bool,
+    ) -> dict[str, object]:
+        return {
+            "asset_id": asset_id,
+            "file_path": file_path,
+            "asset_role": role,
+            "is_single_product_white_bg": is_single_product_white_bg,
+            "is_set_group_shot": is_set_group_shot,
+            "is_style_reference": False,
+            "bound_angle_slot": "",
+            "component_id": "",
+            "notes": "",
+        }
+
+    def _set_assets(self) -> list[dict[str, object]]:
+        return [
+            self._asset(
+                "set_group_001",
+                "inputs/set_group/group.jpg",
+                "set_group_shot",
+                is_single_product_white_bg=False,
+                is_set_group_shot=True,
+            ),
+            self._asset(
+                "component_white_bg_001",
+                "inputs/component_white_bg/component-a.jpg",
+                "component_white_bg",
+                is_single_product_white_bg=False,
+                is_set_group_shot=False,
+            ),
+            self._asset(
+                "component_white_bg_002",
+                "inputs/component_white_bg/component-b.jpg",
+                "component_white_bg",
+                is_single_product_white_bg=False,
+                is_set_group_shot=False,
+            ),
+        ]
+
+    def _write_asset_manifest(self, assets: list[dict[str, object]]) -> None:
+        self.asset_manifest.write_text(
+            json.dumps({"assets": assets}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+
+    def _write_product(self, relative_path: str, data: bytes) -> Path:
+        target = self.workspace / relative_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        return target
+
+    def _install_set_assets(self) -> tuple[list[dict[str, object]], dict[Path, bytes]]:
+        assets = self._set_assets()
+        products = {
+            self._write_product("inputs/set_group/group.jpg", self.GROUP): self.GROUP,
+            self._write_product(
+                "inputs/component_white_bg/component-a.jpg",
+                self.COMPONENT_A,
+            ): self.COMPONENT_A,
+            self._write_product(
+                "inputs/component_white_bg/component-b.jpg",
+                self.COMPONENT_B,
+            ): self.COMPONENT_B,
+        }
+        self._write_asset_manifest(assets)
+        return assets, products
+
+    @staticmethod
+    def _upload(data: bytes = STYLE) -> style_intake.StyleReferenceUpload:
+        return style_intake.StyleReferenceUpload(
+            node_id="style-node",
+            name="style.jpg",
+            mime_type="image/jpeg",
+            size=len(data),
+            sha256=hashlib.sha256(data).hexdigest(),
+            data=data,
+        )
+
+    def _publish(
+        self,
+        data: bytes = STYLE,
+        *,
+        request_id: str,
+    ) -> style_intake.StyleReferencePublishResult:
+        return style_intake.publish_style_references(
+            self.manifest_path,
+            request_id,
+            (self._upload(data),),
+            batch_lock_root=self.lock_root,
+        )
+
+    def _receipt_paths(self) -> list[Path]:
+        return list(self.workspace_manifests.glob("style_reference_intake_receipt.*.json"))
+
+    def _assert_product_bytes(self, products: dict[Path, bytes]) -> None:
+        for path, expected in products.items():
+            self.assertEqual(expected, path.read_bytes())
+
+    def _assert_cross_role_without_writes(
+        self,
+        data: bytes,
+        *,
+        request_id: str,
+        products: dict[Path, bytes],
+    ) -> None:
+        original_asset_manifest = self.asset_manifest.read_bytes()
+        with self.assertRaises(style_intake.StyleReferenceIntakeError) as caught:
+            self._publish(data, request_id=request_id)
+        self.assertEqual(CROSS_ROLE_IMAGE_MESSAGE, str(caught.exception))
+        self.assertFalse(self.style_root.exists())
+        self.assertEqual([], self._receipt_paths())
+        self.assertEqual(original_asset_manifest, self.asset_manifest.read_bytes())
+        self._assert_product_bytes(products)
+
+    def _assert_unsafe_without_writes(self, *, request_id: str) -> None:
+        with self.assertRaises(style_intake.StyleReferenceIntakeError) as caught:
+            self._publish(request_id=request_id)
+        self.assertEqual(UNSAFE_PRODUCT_EVIDENCE_MESSAGE, str(caught.exception))
+        self.assertFalse(self.style_root.exists())
+        self.assertEqual([], self._receipt_paths())
+
+    def test_g1_set_group_and_components_publish_distinct_style(self) -> None:
+        _assets, products = self._install_set_assets()
+        original_asset_manifest = self.asset_manifest.read_bytes()
+        result = self._publish(request_id="st06-g1")
+
+        receipt_path = self.workspace_manifests / "style_reference_intake_receipt.st06-g1.json"
+        self.assertEqual("set-cup", result.batch_id)
+        self.assertEqual(1, result.file_count)
+        self.assertEqual(str(receipt_path), result.receipt_path)
+        self.assertEqual(("style.jpg",), result.files)
+        self.assertEqual(STYLE, (self.style_root / "style.jpg").read_bytes())
+        self.assertEqual(
+            {
+                "receipt_type": "style_reference_intake_v1",
+                "product_id": "set-cup",
+                "request_id": "st06-g1",
+                "file_count": 1,
+                "files": [
+                    {
+                        "node_id": "style-node",
+                        "name": "style.jpg",
+                        "size": len(STYLE),
+                        "mime_type": "image/jpeg",
+                        "sha256": hashlib.sha256(STYLE).hexdigest(),
+                    }
+                ],
+            },
+            json.loads(receipt_path.read_text(encoding="utf-8")),
+        )
+        self.assertEqual(original_asset_manifest, self.asset_manifest.read_bytes())
+        self._assert_product_bytes(products)
+
+    def test_g2_group_hash_is_rejected_before_any_style_write(self) -> None:
+        _assets, products = self._install_set_assets()
+        self._assert_cross_role_without_writes(
+            self.GROUP,
+            request_id="st06-g2",
+            products=products,
+        )
+
+    def test_g3_component_hash_is_rejected_before_any_style_write(self) -> None:
+        _assets, products = self._install_set_assets()
+        self._assert_cross_role_without_writes(
+            self.COMPONENT_B,
+            request_id="st06-g3",
+            products=products,
+        )
+
+    def test_g4_group_role_rejects_component_directory(self) -> None:
+        assets, _products = self._install_set_assets()
+        assets[0]["file_path"] = "inputs/component_white_bg/component-a.jpg"
+        self._write_asset_manifest(assets)
+        self._assert_unsafe_without_writes(request_id="st06-g4")
+
+    def test_g5_role_flags_must_match_exactly(self) -> None:
+        cases = (
+            ("group-flag", 0, "is_set_group_shot", False),
+            ("component-flag", 1, "is_single_product_white_bg", True),
+        )
+        for case_name, asset_index, field, wrong_value in cases:
+            with self.subTest(case=case_name):
+                assets, _products = self._install_set_assets()
+                assets[asset_index][field] = wrong_value
+                self._write_asset_manifest(assets)
+                self._assert_unsafe_without_writes(request_id=f"st06-g5-{case_name}")
+
+    def test_g6_mixed_roles_collect_both_hashes_and_block_duplicate(self) -> None:
+        white_data = b"\xff\xd8\xfflegacy-white"
+        group_path = self._write_product("inputs/set_group/group.jpg", self.GROUP)
+        white_path = self._write_product("inputs/white_bg/white.jpg", white_data)
+        assets = [
+            self._asset(
+                "white_bg_001",
+                "inputs/white_bg/white.jpg",
+                "white_bg",
+                is_single_product_white_bg=True,
+                is_set_group_shot=False,
+            ),
+            self._asset(
+                "set_group_001",
+                "inputs/set_group/group.jpg",
+                "set_group_shot",
+                is_single_product_white_bg=False,
+                is_set_group_shot=True,
+            ),
+        ]
+        self._write_asset_manifest(assets)
+
+        self.assertEqual(
+            frozenset(
+                {
+                    hashlib.sha256(white_data).hexdigest(),
+                    hashlib.sha256(self.GROUP).hexdigest(),
+                }
+            ),
+            style_intake._registered_product_sha256s(self.manifest_path),
+        )
+        self._assert_cross_role_without_writes(
+            white_data,
+            request_id="st06-g6",
+            products={white_path: white_data, group_path: self.GROUP},
+        )
+
+    def test_g7_legacy_white_bg_only_does_not_require_set_directories(self) -> None:
+        self._write_manifest(batch_type="single")
+        white_data = b"\xff\xd8\xfflegacy-only-white"
+        white_path = self._write_product("inputs/white_bg/white.jpg", white_data)
+        self._write_asset_manifest(
+            [
+                self._asset(
+                    "white_bg_001",
+                    "inputs/white_bg/white.jpg",
+                    "white_bg",
+                    is_single_product_white_bg=True,
+                    is_set_group_shot=False,
+                )
+            ]
+        )
+        self.assertFalse(self.set_group.exists())
+        self.assertFalse(self.component_white_bg.exists())
+
+        result = self._publish(request_id="st06-g7")
+
+        self.assertEqual(1, result.file_count)
+        self.assertEqual(STYLE, (self.style_root / "style.jpg").read_bytes())
+        self.assertEqual(white_data, white_path.read_bytes())
+        self.assertEqual(1, len(self._receipt_paths()))
+        self.assertFalse(self.set_group.exists())
+        self.assertFalse(self.component_white_bg.exists())
+
+    def test_g8_mixed_valid_and_unknown_role_fails_closed(self) -> None:
+        valid_asset = self._asset(
+            "set_group_001",
+            "inputs/set_group/group.jpg",
+            "set_group_shot",
+            is_single_product_white_bg=False,
+            is_set_group_shot=True,
+        )
+        unknown_asset = self._asset(
+            "unknown_001",
+            "inputs/set_group/unknown.jpg",
+            "style_reference",
+            is_single_product_white_bg=False,
+            is_set_group_shot=True,
+        )
+        self._write_product("inputs/set_group/group.jpg", self.GROUP)
+        self._write_product("inputs/set_group/unknown.jpg", STYLE)
+        self._write_asset_manifest([valid_asset, unknown_asset])
+
+        self._assert_unsafe_without_writes(request_id="st06-g8")
+
+    def test_g9_nested_product_file_fails_closed(self) -> None:
+        nested_asset = self._asset(
+            "set_group_001",
+            "inputs/set_group/nested/group.jpg",
+            "set_group_shot",
+            is_single_product_white_bg=False,
+            is_set_group_shot=True,
+        )
+        self._write_product("inputs/set_group/nested/group.jpg", self.GROUP)
+        self._write_asset_manifest([nested_asset])
+
+        self._assert_unsafe_without_writes(request_id="st06-g9")
+
+    def test_g10_integer_one_is_not_true_flag_fails_closed(self) -> None:
+        white_asset = self._asset(
+            "white_bg_001",
+            "inputs/white_bg/white.jpg",
+            "white_bg",
+            is_single_product_white_bg=True,
+            is_set_group_shot=False,
+        )
+        white_asset["is_single_product_white_bg"] = 1
+        self._write_product("inputs/white_bg/white.jpg", PRODUCT_A)
+        self._write_asset_manifest([white_asset])
+
+        self._assert_unsafe_without_writes(request_id="st06-g10")
+
+    def test_g11_missing_style_reference_flag_fails_closed(self) -> None:
+        group_asset = self._asset(
+            "set_group_001",
+            "inputs/set_group/group.jpg",
+            "set_group_shot",
+            is_single_product_white_bg=False,
+            is_set_group_shot=True,
+        )
+        del group_asset["is_style_reference"]
+        self._write_product("inputs/set_group/group.jpg", self.GROUP)
+        self._write_asset_manifest([group_asset])
+
+        self._assert_unsafe_without_writes(request_id="st06-g11")
+
+
 if __name__ == "__main__":
     unittest.main()
