@@ -1,0 +1,62 @@
+{
+  "product_id": "杯子_20260812_013323",
+  "planned": [
+    "main_01",
+    "main_02",
+    "main_03",
+    "detail_01",
+    "detail_02",
+    "detail_03"
+  ],
+  "skipped": [],
+  "reference_sequences": {
+    "main_01": [
+      "1S0A1884.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ],
+    "main_02": [
+      "1S0A1887.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ],
+    "main_03": [
+      "1S0A1888.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ],
+    "detail_01": [
+      "1S0A1884.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ],
+    "detail_02": [
+      "1S0A1887.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ],
+    "detail_03": [
+      "1S0A1888.JPG",
+      "1S0A1890.JPG",
+      "1S0A1898.JPG",
+      "1S0A1908.JPG",
+      "1S0A1913.JPG",
+      "1S0A1921.JPG"
+    ]
+  }
+}

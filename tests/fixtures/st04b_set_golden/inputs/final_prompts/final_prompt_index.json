@@ -1,0 +1,45 @@
+{
+  "artifact_type": "final_prompt_index",
+  "items": [
+    {
+      "bound_reference": "1S0A1884.JPG",
+      "config_id": "main_01",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\main_01_final_prompt.json",
+      "output_type": "main"
+    },
+    {
+      "bound_reference": "1S0A1887.JPG",
+      "config_id": "main_02",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\main_02_final_prompt.json",
+      "output_type": "main"
+    },
+    {
+      "bound_reference": "1S0A1888.JPG",
+      "config_id": "main_03",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\main_03_final_prompt.json",
+      "output_type": "main"
+    },
+    {
+      "bound_reference": "1S0A1884.JPG",
+      "config_id": "detail_01",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\detail_01_final_prompt.json",
+      "output_type": "detail"
+    },
+    {
+      "bound_reference": "1S0A1887.JPG",
+      "config_id": "detail_02",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\detail_02_final_prompt.json",
+      "output_type": "detail"
+    },
+    {
+      "bound_reference": "1S0A1888.JPG",
+      "config_id": "detail_03",
+      "final_prompt_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\final_prompts\\detail_03_final_prompt.json",
+      "output_type": "detail"
+    }
+  ],
+  "notes": "套装提示词专用索引；未生成 ComfyUI、QC 或图片产物。",
+  "product_id": "杯子_20260812_013323",
+  "prompt_count": 6,
+  "uses_upstream_prompt_files_as_visual_requirements": false
+}

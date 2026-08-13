@@ -1,0 +1,101 @@
+{
+  "product_id": "杯子_20260812_013323",
+  "artifact_type": "final_prompt_integrity_report",
+  "gate_name": "final_prompt_integrity_gate",
+  "mode": "prompts-only",
+  "status": "pass",
+  "render_blocked": false,
+  "checked_at": "<TIMESTAMP>",
+  "batch_manifest": "<TMP>\\runtime\\manifests\\batch_manifest.json",
+  "product_identity_archive": "<TMP>\\runtime\\artifacts\\identity\\set_product_identity.json",
+  "final_prompt_index": "<TMP>\\runtime\\artifacts\\final_prompts\\final_prompt_index.json",
+  "checked_assets": [
+    "<TMP>\\runtime\\artifacts\\final_prompts\\main_01_final_prompt.json",
+    "<TMP>\\runtime\\artifacts\\final_prompts\\main_02_final_prompt.json",
+    "<TMP>\\runtime\\artifacts\\final_prompts\\main_03_final_prompt.json",
+    "<TMP>\\runtime\\artifacts\\final_prompts\\detail_01_final_prompt.json",
+    "<TMP>\\runtime\\artifacts\\final_prompts\\detail_02_final_prompt.json",
+    "<TMP>\\runtime\\artifacts\\final_prompts\\detail_03_final_prompt.json"
+  ],
+  "checked_prompt_count": 6,
+  "expected_prompt_count": 6,
+  "output_canvas_ratio_summary": {
+    "main_prompt_count": 3,
+    "detail_prompt_count": 3,
+    "invalid_ratio_count": 0,
+    "invalid_height_count": 0
+  },
+  "handheld_count_summary": {
+    "expected_main": 0,
+    "expected_detail": 0,
+    "variable_config_main": 0,
+    "variable_config_detail": 0,
+    "final_prompt_main": 0,
+    "final_prompt_detail": 0
+  },
+  "blocking_issue_count": 0,
+  "warning_count": 0,
+  "results": [
+    {
+      "check_item": "prompt_count_schema_and_sequence",
+      "status": "pass",
+      "notes": "expected=6, indexed=6."
+    },
+    {
+      "check_item": "source_and_resolved_fingerprint_chain",
+      "status": "pass",
+      "notes": "Source file SHA-256 and compact stable JSON fingerprints are recomputed."
+    },
+    {
+      "check_item": "ratio_and_confirmed_height_literals",
+      "status": "pass",
+      "notes": "invalid_ratios=0, invalid_heights=skipped."
+    },
+    {
+      "check_item": "handheld_counts",
+      "status": "pass",
+      "notes": "{\"expected_detail\": 0, \"expected_main\": 0, \"final_prompt_detail\": 0, \"final_prompt_main\": 0, \"variable_config_detail\": 0, \"variable_config_main\": 0}"
+    },
+    {
+      "check_item": "unicode_integrity",
+      "status": "pass",
+      "notes": "unicode_issue_count=0."
+    }
+  ],
+  "blocking_issues": [],
+  "warnings": [],
+  "issues": [],
+  "skipped_checks": [
+    {
+      "check": "comfyui_job_manifest",
+      "reason": "prompts-only 在 ComfyUI 作业生成前运行，因此不读取或要求作业清单。"
+    },
+    {
+      "check": "index_job_path_set_comparison",
+      "reason": "没有 ComfyUI 作业清单；索引集合改由变量配置确定性序列核对。"
+    },
+    {
+      "check": "job_dimensions_and_ratio",
+      "reason": "没有作业尺寸层；改为核对每份最终提示词中的 1:1 或 3:4 字面约束。"
+    },
+    {
+      "check": "job_layer_handheld_count",
+      "reason": "没有作业层；套装改为核对变量配置与最终提示词两层一致，并确认配置实际启用数不超过 manifest 目标数。"
+    },
+    {
+      "check": "legacy_content_heuristics",
+      "reason": "为避免真实批次误报，跳过旧 must_keep、禁用语境、道具本体和低置信单位扫描；改用 Schema、指纹、比例和已确认高度语义检查。"
+    },
+    {
+      "check": "legacy_compiler_literal_scan",
+      "reason": "prompts-only 验证已编译产物，不扫描编译器源码，以避免真实批次误报。"
+    },
+    {
+      "check": "confirmed_height_literal",
+      "reason": "套装编译链不产出已确认高度字面，故本检查按设计跳过。"
+    }
+  ],
+  "image_generation_performed": false,
+  "comfyui_execution_performed": false,
+  "notes": "Deterministic prompts-only gate; legacy heuristic content and compiler scans are intentionally skipped with recorded reasons."
+}

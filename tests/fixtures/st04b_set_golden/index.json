@@ -1,0 +1,139 @@
+{
+  "encoding": "utf-8; frozen input line endings preserved byte-for-byte",
+  "files": {
+    "component_01_identity_prompt.txt": {
+      "bytes": 21560,
+      "sha256": "01c684a4aa1937a8919ab0c0f68e629f7323efd658e5dee166f1d5dcdf52c5f7"
+    },
+    "component_02_identity_prompt.txt": {
+      "bytes": 21560,
+      "sha256": "5f60b138a8ea40f146b8b35b9e23ec4420f2b108e010e43d031db6a254a2c428"
+    },
+    "component_03_identity_prompt.txt": {
+      "bytes": 21560,
+      "sha256": "6d5f8e638c3aff5495129565b7fa72c962f1c4b2d603e486031489e2ba75e242"
+    },
+    "component_04_identity_prompt.txt": {
+      "bytes": 21560,
+      "sha256": "bb91eb76a376225509bff25704789aacd3ce8d8687010a651eb295fabc2e4d95"
+    },
+    "component_05_identity_prompt.txt": {
+      "bytes": 21560,
+      "sha256": "62d9afd9d16d5a28fc6a915c1df8f3b57f76251b98497cc2ed572ec2831cb748"
+    },
+    "detail_final_prompt_batch_prompt.txt": {
+      "bytes": 232253,
+      "sha256": "4d0fc0d3d1563520ebda4a0e479140aa9fdf196551b50d40419241b5d71d5b02"
+    },
+    "detail_final_prompt_repair_prompt.txt": {
+      "bytes": 538,
+      "sha256": "0df233f1a15f12450ee61973d7a52b82452967582fb0db2521b798a88dce2bd3"
+    },
+    "detail_variable_config_prompt.txt": {
+      "bytes": 265781,
+      "sha256": "2eeb6611f16af819f901e40e286d8f9a5289b9000d149de7bf8833db4febf240"
+    },
+    "inputs/angle_inventory/set_angle_layout_inventory.json": {
+      "bytes": 15836,
+      "sha256": "315a9ef8cff556945110efb12324e37c04362ba7d716930563f28ddf7c7b5ab4"
+    },
+    "inputs/final_prompts/detail_01_final_prompt.json": {
+      "bytes": 7833,
+      "sha256": "a513c2c0b77bd003217c4ffc6854cad97209cc60f09e9b0343dd2a7498808b83"
+    },
+    "inputs/final_prompts/detail_02_final_prompt.json": {
+      "bytes": 8388,
+      "sha256": "478962639a4d2aa1c051ca487d37e36f0124613f5901d6a44a5ffde5c9e16fc8"
+    },
+    "inputs/final_prompts/detail_03_final_prompt.json": {
+      "bytes": 7987,
+      "sha256": "fcfb9c5f88e7c64e7676384a1fc147b6f76e99fdc9d0fef1e52a2c7c969e3e74"
+    },
+    "inputs/final_prompts/final_prompt_index.json": {
+      "bytes": 1982,
+      "sha256": "afed282e0ad52375dad9dbc5a66e3dd9c83a21822ab122e99d9b5fc253991aef"
+    },
+    "inputs/final_prompts/main_01_final_prompt.json": {
+      "bytes": 7516,
+      "sha256": "dd8189288fdd1f214a054cf85dded2c332fe30716e2e89f9624dfc5d8e47cfda"
+    },
+    "inputs/final_prompts/main_02_final_prompt.json": {
+      "bytes": 7420,
+      "sha256": "287c2eedc6286b96e2d0b6f14144953c9842a86207444d3fc738378f0cd7ef18"
+    },
+    "inputs/final_prompts/main_03_final_prompt.json": {
+      "bytes": 7620,
+      "sha256": "823d5621fc01bc4c5308cb5c765fe3ef505be4c9a80ee929792cac0898fe2b13"
+    },
+    "inputs/identity/component_01_product_identity_archive.json": {
+      "bytes": 13017,
+      "sha256": "f7ea3147c4af8a2d7e04af86fc6c47e111dc0948c1aa7c340ab49c769f2d27e8"
+    },
+    "inputs/identity/component_02_product_identity_archive.json": {
+      "bytes": 13559,
+      "sha256": "382a4a56eea207bce439d0d43d92d51ae8e649d3da000843ea374db9d3011dd2"
+    },
+    "inputs/identity/component_03_product_identity_archive.json": {
+      "bytes": 13522,
+      "sha256": "2e39749d117ff56ca0b672ec9bbcd9cb74bc5d838f4022bd9b40a6046992c871"
+    },
+    "inputs/identity/component_04_product_identity_archive.json": {
+      "bytes": 12363,
+      "sha256": "b2f075983213859e334acfd71066b44626c5311ba0a611f1945a91eae9b0152a"
+    },
+    "inputs/identity/component_05_product_identity_archive.json": {
+      "bytes": 12920,
+      "sha256": "a6b40251ec1d7e671efd2f2dabbe0ef414ed35b8d25f9db1ed70e1b999055a45"
+    },
+    "inputs/identity/set_product_identity.json": {
+      "bytes": 21932,
+      "sha256": "24af386921cb17a2c27db9115b7cadcd69589d84c245fdb62b2b9b78c66c1812"
+    },
+    "inputs/style_master/style_master.json": {
+      "bytes": 12207,
+      "sha256": "012b5c8769f89e563188202c83765fe2eb2b7312860bb7b590d995934b9bceb3"
+    },
+    "inputs/variable_configs/detail_variable_configs.json": {
+      "bytes": 42695,
+      "sha256": "dc954ff56ba1b32321a97dd47dad3dd6fe870c6e434e2797e0aa90fe340f035b"
+    },
+    "inputs/variable_configs/main_variable_configs.json": {
+      "bytes": 28841,
+      "sha256": "b25442c4e8b1c45c27cbb4c5f75bd37fcbb93867279e495031de2d26fb7a9a5e"
+    },
+    "integrity_report.json": {
+      "bytes": 3912,
+      "sha256": "358c9a93386347894ae423827a04a233a88cc0c8035e67a00d463734961239d5"
+    },
+    "main_final_prompt_batch_prompt.txt": {
+      "bytes": 218647,
+      "sha256": "de558fc43c1d0e72f32371884da4b5a1fed6071417089240e3898a867533dd2e"
+    },
+    "main_final_prompt_repair_prompt.txt": {
+      "bytes": 535,
+      "sha256": "eead9ea92c9df80f3f30276b0289ca5dfd5580b4f83e3b1fcab0bfabbc16aca2"
+    },
+    "main_variable_config_prompt.txt": {
+      "bytes": 220360,
+      "sha256": "6c236813925d352ffd4b825f4c4055a2e4f16e2b62ff80f66e52f2cfc6227d5e"
+    },
+    "render_reference_sequences.json": {
+      "bytes": 1144,
+      "sha256": "771909de26aa8fb2320f9b47a0c0182db74007a6568d5e040f2836aec3f47d92"
+    },
+    "set_angle_layout_prompt.txt": {
+      "bytes": 46102,
+      "sha256": "313edf0fa6823c8acf0d29b7150343b15ae8a1cd3f02be2a7e54c299282578d7"
+    },
+    "set_identity_prompt.txt": {
+      "bytes": 99680,
+      "sha256": "d4b3089535115f4848a294f6c2f95d0702a49b4c1d174df2b4ffd5b5aa04965b"
+    }
+  },
+  "provenance": {
+    "accepted_render_result": "renders 6/6 completed on 2026-08-13 at 18:41 and the user accepted the batch as 正常无误.",
+    "batch_id": "杯子_20260812_013323",
+    "source": "17 JSON files copied byte-for-byte from the accepted real batch artifacts; photos, Markdown mirrors, qc_reports, outputs, and batch inputs are excluded."
+  },
+  "source_head": "a050201dbea63a664e2f7712607d56b0f24b7833"
+}

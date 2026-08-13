@@ -1,0 +1,35 @@
+{
+  "artifact_type": "final_prompt",
+  "final_prompt": "请基于以下条件生成本张淘宝天猫电商详情图。生成前严格遵守《工作流总控规则》《套装产品工作流补充规则》《电商图片通用质检清单》《套装产品身份档案》、套装中各组成单件的《产品身份档案》《风格母版》《真实感约束》《套装角度与编排入库表》《套装编排规则》《道具生成规则模块》《淘宝天猫详情页链路与平台规范模块》和《本张变量配置》。本张为 detail_02，页面任务是详情页中段验证：证明五件套装的组成关系、局部层叠陈列、杯体与杯碟搭配、釉面纹理可见性、尺寸来源边界和真实桌面可信感，帮助买家判断是否符合自己的桌面使用想象。输出画布比例固定为 3:4，建议交付规格为 1440x1920，不得为了画布比例改变产品身份、角度、颜色、真实尺寸关系或套装编排关系。本张绑定套装合影白底图为图2，文件名 1S0A1887.JPG；绑定角度槽位为整体机位 B：45°斜侧机位；套装编排槽位为编排槽位二：主从层叠。套装整体机位、五件数量、相对比例、局部层叠承托和编排关系以图2 1S0A1887.JPG 为唯一依据；各组成单件自身角度以对应单件白底图为唯一依据；各组成单件商品本体颜色分别以当次输入的对应单件白底图作为唯一颜色参照，套装合影白底图只用于件数、相对比例、编排关系和整体机位，不替代单件颜色参照。套装必须全员出镜：第 1/5 件蓝白纹带杯碟咖啡杯、第 2/5 件浅青绿色浮雕纹杯碟组、第 3/5 件深青绿色浮雕纹陶瓷杯碟组合、第 4/5 件深蓝黑釉咖啡杯与托碟单件、第 5/5 件深色釉面带杯碟咖啡杯；五件均为商品本体，允许局部层叠但不得缺件、错件、替换、合并或被外部道具混淆。产品以《套装产品身份档案》及各单件《产品身份档案》的真实尺寸字段为准；套装整体与各单件尺寸置信度均为低，真实尺寸均为无法确认，画面占比只代表构图和镜头距离，不代表实物尺寸改变，不得用强比例参照暗示具体大小。本张包含模块05尺寸来源边界，只允许以克制参数区表达尺寸来源边界；画面中允许出现的尺寸标注文字仅为“以《套装产品身份档案》及各单件《产品身份档案》的真实尺寸字段为准”，不得自行新增尺寸、容量、宽度、直径、重量、材质、工艺、认证或功效信息，不得假装某一尺寸方向已被确认。套装整体居中略偏右，占画面约 62% 至 70%；右侧或下方预留克制信息标注区，标注区不得压住杯口、杯柄、杯碟边缘和层叠计数关系。构图为 3:4 竖版左右轻信息分区，主体、信息区、桌面和背景形成一个连续真实场景，不做拼图、宫格、多画面切分或复杂信息图。浅米白真实桌面承托套装，左前景浅米色织物局部虚化并避开标注区，左后方虚化绿植与白色小花保留生活化背景层，右后方浅色小碗或少量自然食物颗粒作为低权重场景提示；外部道具控制在 2 至 3 类，不使用手部、手机、书本、餐盘等强比例参照元素说明大小。五件杯碟之间的层叠、落点、阴影和空间距离必须可信，釉面反光和纹理清晰但不过度锐化。中文营销文案只允许渲染：主标题：五件同屏，组合更清楚。卖点短语：杯体与杯碟对应可见。卖点短语：釉色纹理近看更真实。尺寸标注：以《套装产品身份档案》及各单件《产品身份档案》的真实尺寸字段为准。文字横排为主，深灰或暖灰小面积排版，主标题最大，卖点短语次级，尺寸标注最小但清晰可读；不得遮挡产品主体，不得自行新增文字、价格、促销、销量、认证、报告、评价、售后承诺、规格参数或资料缺失提示。本张图不启用手持场景；动态手持样式参考图调用为无。内容物状态：本张保持空置，不出现任何禁止的内容物或动作。非产品元素可有自然褶皱、轻微纹理、微小摆放偏差和真实接触阴影，但不得作用于套装组成单件。",
+  "negative_prompt": "不要改变产品身份、套装件数、单件数量、套装编排关系、各单件相对比例、杯体与杯碟关系、商品本体颜色、材质观感、纹理和图案。不要增加第 6 件杯子、杯碟、杯盖、勺子、托盘、包装或其他未确认配件；不要删除任一组成单件；不要把五件套装画成连体器物或互不相关的散件；不要把外部道具强化成疑似套装组成。不要生成精确尺寸、容量、宽度、直径、重量、具体材质、耐热、认证、品牌、型号、报告、评价、售后或促销承诺；当前无已确认宽度和长度字段，不要另行编造宽度和长度。不要出现清水、饮品、液体、倾倒、倒水、倒出、加热、沸腾、炉灶、热水动作。不要出现 D 机位、被拒绝源图、不适合归入现有机位、不适合归入现有编排。不要出现产品改形、改色、图案丢失、边缘融化、材质发糊、漂浮悬空、虚假景深、文字漂浮、标注线不贴合、道具穿插、明显 AI 合成感、乱码、错字或无意义符号。",
+  "notes": "仅由已验收套装上游档案和本张变量配置编译；本阶段未生成图片、ComfyUI 作业或 QC 产物。",
+  "product_id": "杯子_20260812_013323",
+  "upstream_artifacts": {
+    "component_identity_archive_01": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_01_product_identity_archive.json",
+    "component_identity_archive_02": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_02_product_identity_archive.json",
+    "component_identity_archive_03": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_03_product_identity_archive.json",
+    "component_identity_archive_04": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_04_product_identity_archive.json",
+    "component_identity_archive_05": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_05_product_identity_archive.json",
+    "set_angle_layout_inventory": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\angle_inventory\\set_angle_layout_inventory.json",
+    "set_product_identity": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\set_product_identity.json",
+    "style_master": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\style_master\\style_master.json",
+    "variable_config": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\detail_variable_configs.json"
+  },
+  "uses_upstream_prompt_files_as_visual_requirements": false,
+  "variable_config": {
+    "common_constraints_ref": {
+      "json_pointer": "/common_constraints",
+      "path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\detail_variable_configs.json"
+    },
+    "config_id": "detail_02",
+    "output_type": "detail",
+    "per_image_overrides_ref": {
+      "json_pointer": "/configs/1/per_image_overrides",
+      "path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\detail_variable_configs.json"
+    },
+    "resolved_variable_config_sha256": "092735e238234c171de645bdb56d6af51cb5a668e5d8e92fb4e5c078b9dbe683",
+    "source_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\detail_variable_configs.json",
+    "source_schema": "common_constraints + per_image_overrides",
+    "source_sha256": "dc954ff56ba1b32321a97dd47dad3dd6fe870c6e434e2797e0aa90fe340f035b"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "artifact_type": "final_prompt",
+  "final_prompt": "请基于以下条件生成本张淘宝天猫电商主图：生成本张图片前，请严格遵守项目源文件中的《工作流总控规则》《套装产品工作流补充规则》《电商图片通用质检清单》《套装产品身份档案》、套装中各组成单件的《产品身份档案》《风格母版》《真实感约束》《套装角度与编排入库表》《套装编排规则》《道具生成规则模块》《本张变量配置》。请将这些文件作为生成约束，而不是参考建议。页面任务：套装主图首张识别任务，完整展示五件杯碟套装的件数、釉色差异、同批次组合关系和桌面陈列秩序。输出画布比例固定为 1:1，单张交付图可采用 1440x1440；不得为了规格、裁切或画布适配改变产品身份、角度、颜色、真实尺寸关系或套装编排关系。绑定源图与槽位：本张绑定套装合影白底图为图1，文件名 1S0A1884.JPG；整体机位 B：45°斜侧机位；套装编排槽位为编排槽位三：阶梯纵深。套装编排关系以编排槽位三对应的套装合影白底图为唯一依据，各组成单件的角度以对应单件白底图为唯一依据。套装组成：全员出镜，展示套装第 1/5 件蓝白纹带杯碟咖啡杯、第 2/5 件浅青绿色浮雕纹杯碟组、第 3/5 件深青绿色浮雕纹陶瓷杯碟组合、第 4/5 件深蓝黑釉咖啡杯与托碟单件、第 5/5 件深色釉面带杯碟咖啡杯；五件均为商品本体，件数正确，不得增减、替换、合并或被外部道具混淆。产品以《套装产品身份档案》及各单件《产品身份档案》的真实尺寸字段为准；当前套装整体尺寸与各单件尺寸置信度均为低，真实尺寸均为无法确认，不输出精确尺寸、容量、重量、具体材质、认证、品牌或型号。套装在画面中的占比只代表构图和镜头距离，不改变套装整体、各单件、桌面和外部道具之间的现实尺寸关系，不使用强比例参照道具暗示具体大小。各组成单件的商品本体颜色分别以当次输入的对应单件白底图作为唯一颜色参照，套装合影白底图只用于件数、相对比例、编排关系和整体机位，不替代各单件白底图的颜色参照。构图方式：1:1 画布内采用中景桌面生活构图，套装整体位于中下部略偏右，五件按图1的阶梯纵深关系展开，左前景布料与后景植物形成生活层次，保持五件均可识别。背景与光线延续浅色真实桌面生活场景，主光从左上或左前方进入，明亮柔和不过曝，产品、桌面和外部道具的阴影方向一致；五件杯碟与桌面之间必须有真实接触阴影。道具密度克制，外部非产品元素控制在 2 至 3 类：左前景浅米色布料、左后方虚化绿植或白色小花、右后方低存在感浅色小碗或少量棕色食物颗粒；道具分布在边缘和背景，不遮挡任一杯体、杯口、杯柄、杯碟边缘或五件计数关系，不被摆放成疑似套装组成。内容物与动作边界：只允许空置，不出现任何禁止的内容物或动作。本张图不启用手持场景。动态手持样式参考图调用：无。文字信息：本张图不设置文字信息。非产品环境可保留轻微真实不完美，但不得作用于套装组成单件，不得让商品本体变脏、变旧、改色或出现原图不存在的瑕疵。",
+  "negative_prompt": "不要出现 D 槽位或侧面低角度机位。不要使用被拒绝源图。不要出现不适合归入现有机位、不适合归入现有编排。不要出现清水场景、倾倒、倒水、倒出、加热、沸腾、炉灶、热水动作。不要增加第 6 件杯子、杯碟、杯盖、勺子、托盘、包装或其他未确认配件。不要删除、替换、合并任一组成单件。不要把任一组成单件弱化成背景道具、虚化件或装饰摆件。不要把外部道具误画成套装组成。不要改变各单件结构、比例、颜色、纹理、图案、杯口、杯柄或杯碟关系。不要输出容量、其他尺寸、重量、具体材质、耐热、认证、品牌、型号、价格、促销、销量、检测报告、评价、售后承诺或未确认文字。不要生成大标题、乱码、错字、Logo、商标或额外卖点。不要使用手部、手机、书本等强比例参照暗示具体大小。不要出现漂浮、贴片、穿模、阴影方向混乱、整体偏色、过度棚拍或明显 AI 痕迹。",
+  "notes": "仅由已验收套装上游档案和本张变量配置编译；本阶段未生成图片、ComfyUI 作业或 QC 产物。",
+  "product_id": "杯子_20260812_013323",
+  "upstream_artifacts": {
+    "component_identity_archive_01": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_01_product_identity_archive.json",
+    "component_identity_archive_02": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_02_product_identity_archive.json",
+    "component_identity_archive_03": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_03_product_identity_archive.json",
+    "component_identity_archive_04": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_04_product_identity_archive.json",
+    "component_identity_archive_05": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\component_05_product_identity_archive.json",
+    "set_angle_layout_inventory": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\angle_inventory\\set_angle_layout_inventory.json",
+    "set_product_identity": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\identity\\set_product_identity.json",
+    "style_master": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\style_master\\style_master.json",
+    "variable_config": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\main_variable_configs.json"
+  },
+  "uses_upstream_prompt_files_as_visual_requirements": false,
+  "variable_config": {
+    "common_constraints_ref": {
+      "json_pointer": "/common_constraints",
+      "path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\main_variable_configs.json"
+    },
+    "config_id": "main_01",
+    "output_type": "main",
+    "per_image_overrides_ref": {
+      "json_pointer": "/configs/0/per_image_overrides",
+      "path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\main_variable_configs.json"
+    },
+    "resolved_variable_config_sha256": "e0e10281564d478742c9a8617d6c7416d51a480011b1c99bb534c5d185355f56",
+    "source_path": "D:\\onedrive\\OneDrive\\Desktop\\无限画布工作流\\杯类\\杯子_20260812_013323\\artifacts\\variable_configs\\main_variable_configs.json",
+    "source_schema": "common_constraints + per_image_overrides",
+    "source_sha256": "b25442c4e8b1c45c27cbb4c5f75bd37fcbb93867279e495031de2d26fb7a9a5e"
+  }
+}
