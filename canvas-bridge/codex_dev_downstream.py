@@ -123,6 +123,14 @@ SET_DETAIL_REQUIRED_OVERRIDE_FIELDS = (
     "套装尺寸标注信息",
 )
 SET_HANDHELD_SUMMARY_EXPLANATION_FIELD = "手持启用数量说明"
+SET_HANDHELD_SATISFIED_VALUES = frozenset({"是", True})
+SET_HANDHELD_UNSATISFIED_VALUES = frozenset({"否", False})
+SET_HANDHELD_SUMMARY_VALUE_RULES = (
+    "handheld_count_summary 取值：三个数量字段为整数；启用手持配置为启用图位 "
+    "config_id 的 JSON 数组（无启用则为空数组）；是否完全满足用户数量为「是」或「否」"
+    "（也接受布尔 true/false）；手持启用数量说明为一句话字符串，必须包含实际启用数量的数字，"
+    "完全满足时含「已按目标启用」，未满足时含「原因」。"
+)
 
 
 def set_handheld_summary_required_fields(mode: str) -> tuple[str, ...]:
@@ -2097,9 +2105,11 @@ def build_set_variable_config_prompt(
 {all_appear_rule}
 手持目标为 {target_handheld} 项，实际启用允许少于或等于目标；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。
 handheld_count_summary 必须恰好包含这些字段：{'、'.join(set_handheld_summary_required_fields(mode))}。
+{SET_HANDHELD_SUMMARY_VALUE_RULES}
 handheld_count_summary 必须恒含【{SET_HANDHELD_SUMMARY_EXPLANATION_FIELD}】：完全满足时写明“已按目标启用”，少于目标时写明实际启用数量与原因，不得静默全部不启用。
 标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
+顶层四个键必须全部出现，缺一不可。
 {category_prompt}
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片或 QC。该禁令适用于任何层级，包括 common_constraints 内部。
 
@@ -3073,30 +3083,59 @@ def _validate_set_handheld_summary(
     config_id: str,
 ) -> None:
     scope = "主图" if mode == "main" else "详情图"
-    required_keys = set(set_handheld_summary_required_fields(mode))
+    required_fields = set_handheld_summary_required_fields(mode)
     enabled = len(enabled_ids)
     explanation = summary.get(SET_HANDHELD_SUMMARY_EXPLANATION_FIELD)
     satisfied = enabled == target
-    if (
-        set(summary) != required_keys
-        or summary.get(f"用户要求{scope}手持数量") != target
-        or summary.get("实际启用手持数量") != enabled
-        or summary.get("未启用手持数量") != expected_count - enabled
-        or summary.get("启用手持配置") != enabled_ids
-        or summary.get("是否完全满足用户数量") != ("是" if satisfied else "否")
-        or not isinstance(explanation, str)
-        or not explanation.strip()
-        or str(enabled) not in explanation
-        or (satisfied and "已按目标启用" not in explanation)
-        or (not satisfied and "原因" not in explanation)
-    ):
+
+    def fail(field: str, expected: str) -> None:
         raise ContentPredicateViolation(
             f"codex-dev 收到的{label}手持数量说明异常",
             code="handheld_summary",
             config_id=config_id,
-            field="handheld_count_summary",
-            expected="必须逐项对应目标、实际启用结果并填写手持启用数量说明",
+            field=field,
+            expected=expected,
         )
+
+    if set(summary) != set(required_fields):
+        fail(
+            "handheld_count_summary",
+            f"必须恰好包含这些字段：{'、'.join(required_fields)}",
+        )
+    requested_field = f"用户要求{scope}手持数量"
+    if summary.get(requested_field) != target:
+        fail(requested_field, f"必须等于 {target}")
+    if summary.get("实际启用手持数量") != enabled:
+        fail("实际启用手持数量", f"必须等于 {enabled}")
+    disabled = expected_count - enabled
+    if summary.get("未启用手持数量") != disabled:
+        fail("未启用手持数量", f"必须等于 {disabled}")
+    if summary.get("启用手持配置") != enabled_ids:
+        fail("启用手持配置", f"必须等于启用图位列表 {enabled_ids}")
+    satisfied_values = (
+        SET_HANDHELD_SATISFIED_VALUES
+        if satisfied
+        else SET_HANDHELD_UNSATISFIED_VALUES
+    )
+    if summary.get("是否完全满足用户数量") not in satisfied_values:
+        fail(
+            "是否完全满足用户数量",
+            "满足时为「是」或 true，未满足时为「否」或 false",
+        )
+    if not isinstance(explanation, str) or not explanation.strip():
+        fail(SET_HANDHELD_SUMMARY_EXPLANATION_FIELD, "必须是非空字符串")
+    if str(enabled) not in explanation:
+        fail(
+            SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+            f"必须包含数字 {enabled}",
+        )
+    if satisfied and "已按目标启用" not in explanation:
+        fail(
+            SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+            "必须包含「已按目标启用」",
+        )
+    if not satisfied and "原因" not in explanation:
+        fail(SET_HANDHELD_SUMMARY_EXPLANATION_FIELD, "必须包含「原因」")
 
 
 def _validate_set_config_items(

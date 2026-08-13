@@ -1159,5 +1159,282 @@ class St07SetHandheldSummaryContractTests(unittest.TestCase):
                         )
 
 
+class St08SetHandheldSummaryAlignmentTests(unittest.TestCase):
+    @staticmethod
+    def _summary(
+        satisfied_value: object,
+        *,
+        target: int = 0,
+        expected_count: int = 3,
+        enabled_ids: list[str] | None = None,
+        explanation: str | None = None,
+    ) -> dict[str, object]:
+        enabled = list(enabled_ids or [])
+        return {
+            "用户要求主图手持数量": target,
+            "实际启用手持数量": len(enabled),
+            "未启用手持数量": expected_count - len(enabled),
+            "启用手持配置": enabled,
+            "是否完全满足用户数量": satisfied_value,
+            SET_HANDHELD_SUMMARY_EXPLANATION_FIELD: (
+                explanation
+                if explanation is not None
+                else f"实际启用 {len(enabled)} 项，已按目标启用。"
+            ),
+        }
+
+    def _validate(
+        self,
+        summary: dict[str, object],
+        *,
+        target: int = 0,
+        expected_count: int = 3,
+        enabled_ids: list[str] | None = None,
+    ) -> None:
+        from codex_dev_downstream import _validate_set_handheld_summary  # noqa: PLC0415
+
+        _validate_set_handheld_summary(
+            summary,
+            mode="main",
+            target=target,
+            expected_count=expected_count,
+            enabled_ids=list(enabled_ids or []),
+            label="套装主图变量配置",
+            config_id="main_01",
+        )
+
+    def test_g1_main_and_detail_prompts_include_the_shared_value_rules(self) -> None:
+        from codex_dev_downstream import (  # noqa: PLC0415
+            SET_HANDHELD_SUMMARY_VALUE_RULES,
+        )
+
+        hardcoded_rule = (
+            "handheld_count_summary 取值：三个数量字段为整数；启用手持配置为启用图位 "
+            "config_id 的 JSON 数组（无启用则为空数组）；是否完全满足用户数量为「是」或「否」"
+            "（也接受布尔 true/false）；手持启用数量说明为一句话字符串，必须包含实际启用数量的数字，"
+            "完全满足时含「已按目标启用」，未满足时含「原因」。"
+        )
+        self.assertEqual(hardcoded_rule, SET_HANDHELD_SUMMARY_VALUE_RULES)
+        for mode in ("main", "detail"):
+            with self.subTest(mode=mode):
+                prompt = build_set_variable_config_prompt(
+                    mode=mode,
+                    product_id=PRODUCT_ID,
+                    repository_root=ROOT,
+                    set_identity=valid_set_identity(),
+                    component_identities=(
+                        valid_component_identity(1),
+                        valid_component_identity(2),
+                    ),
+                    style_master=valid_style_master(),
+                    set_angle_layout_inventory=valid_set_layout_inventory(),
+                    requirements=set_requirements(),
+                    set_skill_text="SET_SKILL_MARKER",
+                    set_variable_config_supplement="SET_VARIABLE_SUPPLEMENT_MARKER",
+                    set_workflow_supplement="SET_WORKFLOW_SUPPLEMENT_MARKER",
+                    set_layout_rules="SET_LAYOUT_RULES_MARKER",
+                    main_variable_config=(
+                        valid_set_variable_response("main", count=2, handheld_target=1)
+                        if mode == "detail"
+                        else None
+                    ),
+                )
+                self.assertIn(SET_HANDHELD_SUMMARY_VALUE_RULES, prompt)
+
+    def test_g2_real_rollout_boolean_true_summary_is_accepted(self) -> None:
+        summary = {
+            "用户要求主图手持数量": 0,
+            "实际启用手持数量": 0,
+            "未启用手持数量": 3,
+            "启用手持配置": [],
+            "是否完全满足用户数量": True,
+            SET_HANDHELD_SUMMARY_EXPLANATION_FIELD: (
+                "已按目标启用：用户要求主图手持数量为 0 项，"
+                "本批 main_01 至 main_03 均不启用手持场景。"
+            ),
+        }
+        self._validate(summary)
+
+    def test_g3_satisfaction_value_quadrants(self) -> None:
+        for value in ("是", True):
+            with self.subTest(satisfied=True, accepted=value):
+                self._validate(self._summary(value))
+        for value in ("否", False, "true"):
+            with self.subTest(satisfied=True, rejected=value):
+                with self.assertRaises(ContentPredicateViolation) as caught:
+                    self._validate(self._summary(value))
+                self.assertEqual("handheld_summary", caught.exception.code)
+                self.assertEqual(
+                    "是否完全满足用户数量",
+                    caught.exception.details.field,
+                )
+        with self.subTest(satisfied=True, rejected="True"):
+            with self.assertRaises(ContentPredicateViolation) as caught:
+                self._validate(self._summary("True"))
+            self.assertEqual("handheld_summary", caught.exception.code)
+            self.assertEqual(
+                "是否完全满足用户数量",
+                caught.exception.details.field,
+            )
+
+        explanation = "实际启用 0 项；未满足原因：当前无合格手持图位。"
+        for value in ("否", False):
+            with self.subTest(satisfied=False, accepted=value):
+                self._validate(
+                    self._summary(value, target=1, explanation=explanation),
+                    target=1,
+                )
+        for value in ("是", True):
+            with self.subTest(satisfied=False, rejected=value):
+                with self.assertRaises(ContentPredicateViolation) as caught:
+                    self._validate(
+                        self._summary(value, target=1, explanation=explanation),
+                        target=1,
+                    )
+                self.assertEqual("handheld_summary", caught.exception.code)
+                self.assertEqual(
+                    "是否完全满足用户数量",
+                    caught.exception.details.field,
+                )
+        with self.subTest(satisfied=False, rejected="False"):
+            with self.assertRaises(ContentPredicateViolation) as caught:
+                self._validate(
+                    self._summary("False", target=1, explanation=explanation),
+                    target=1,
+                )
+            self.assertEqual("handheld_summary", caught.exception.code)
+            self.assertEqual(
+                "是否完全满足用户数量",
+                caught.exception.details.field,
+            )
+
+    def test_g4_each_failure_reports_its_own_field_and_expected_rule(self) -> None:
+        cases: list[tuple[str, dict[str, object], str, str]] = []
+
+        missing_key = self._summary("是")
+        del missing_key["用户要求主图手持数量"]
+        cases.append(
+            (
+                "missing_key",
+                missing_key,
+                "handheld_count_summary",
+                "必须恰好包含这些字段",
+            )
+        )
+
+        wrong_enabled_count = self._summary("是")
+        wrong_enabled_count["实际启用手持数量"] = 1
+        cases.append(
+            (
+                "wrong_enabled_count",
+                wrong_enabled_count,
+                "实际启用手持数量",
+                "必须等于 0",
+            )
+        )
+
+        wrong_enabled_ids = self._summary("是")
+        wrong_enabled_ids["启用手持配置"] = ["main_01"]
+        cases.append(
+            (
+                "wrong_enabled_ids",
+                wrong_enabled_ids,
+                "启用手持配置",
+                "必须等于启用图位列表 []",
+            )
+        )
+
+        missing_enabled_digit = self._summary(
+            "是",
+            explanation="已按目标启用。",
+        )
+        cases.append(
+            (
+                "missing_enabled_digit",
+                missing_enabled_digit,
+                SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+                "必须包含数字 0",
+            )
+        )
+
+        missing_satisfied_literal = self._summary(
+            "是",
+            explanation="实际启用 0 项。",
+        )
+        cases.append(
+            (
+                "missing_satisfied_literal",
+                missing_satisfied_literal,
+                SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+                "必须包含「已按目标启用」",
+            )
+        )
+
+        integer_explanation = self._summary("是")
+        integer_explanation[SET_HANDHELD_SUMMARY_EXPLANATION_FIELD] = 123
+        cases.append(
+            (
+                "integer_explanation",
+                integer_explanation,
+                SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+                "必须是非空字符串",
+            )
+        )
+
+        blank_explanation = self._summary("是", explanation="   ")
+        cases.append(
+            (
+                "blank_explanation",
+                blank_explanation,
+                SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+                "必须是非空字符串",
+            )
+        )
+
+        for name, summary, expected_field, expected_text in cases:
+            with self.subTest(case=name):
+                with self.assertRaises(ContentPredicateViolation) as caught:
+                    self._validate(summary)
+                self.assertEqual(expected_field, caught.exception.details.field)
+                self.assertIn(expected_text, caught.exception.details.expected)
+
+    def test_g5_public_message_and_code_remain_unchanged(self) -> None:
+        with self.assertRaises(ContentPredicateViolation) as caught:
+            self._validate(self._summary("true"))
+        self.assertEqual(
+            "codex-dev 收到的套装主图变量配置手持数量说明异常",
+            str(caught.exception),
+        )
+        self.assertEqual("handheld_summary", caught.exception.code)
+
+    def test_set_prompt_requires_all_four_top_level_keys_for_each_mode(self) -> None:
+        expected = "顶层四个键必须全部出现，缺一不可。"
+        for mode in ("main", "detail"):
+            with self.subTest(mode=mode):
+                prompt = build_set_variable_config_prompt(
+                    mode=mode,
+                    product_id=PRODUCT_ID,
+                    repository_root=ROOT,
+                    set_identity=valid_set_identity(),
+                    component_identities=(
+                        valid_component_identity(1),
+                        valid_component_identity(2),
+                    ),
+                    style_master=valid_style_master(),
+                    set_angle_layout_inventory=valid_set_layout_inventory(),
+                    requirements=set_requirements(),
+                    set_skill_text="SET_SKILL_MARKER",
+                    set_variable_config_supplement="SET_VARIABLE_SUPPLEMENT_MARKER",
+                    set_workflow_supplement="SET_WORKFLOW_SUPPLEMENT_MARKER",
+                    set_layout_rules="SET_LAYOUT_RULES_MARKER",
+                    main_variable_config=(
+                        valid_set_variable_response("main", count=2, handheld_target=1)
+                        if mode == "detail"
+                        else None
+                    ),
+                )
+                self.assertIn(expected, prompt)
+
+
 if __name__ == "__main__":
     unittest.main()
