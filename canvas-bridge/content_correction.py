@@ -27,6 +27,7 @@ CONTENT_CORRECTION_CODES = frozenset(
         "chunk_coverage",
         "handheld_count",
         "handheld_summary",
+        "set_key_scope",
     }
 )
 _CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")

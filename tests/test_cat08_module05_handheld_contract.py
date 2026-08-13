@@ -48,6 +48,7 @@ EXPECTED_CONTENT_CORRECTION_CODES = {
     "chunk_coverage",
     "handheld_count",
     "handheld_summary",
+    "set_key_scope",
 }
 HARD_PRIORITY = "模块05硬约束优先于手持名额分配"
 HARD_ALLOCATION = "手持名额只在标准模块归属不包含模块05的图位之间分配"

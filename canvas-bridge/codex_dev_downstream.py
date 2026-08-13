@@ -123,6 +123,20 @@ SET_DETAIL_REQUIRED_OVERRIDE_FIELDS = (
     "套装尺寸标注信息",
 )
 SET_HANDHELD_SUMMARY_EXPLANATION_FIELD = "手持启用数量说明"
+
+
+def set_handheld_summary_required_fields(mode: str) -> tuple[str, ...]:
+    scope = "主图" if mode == "main" else "详情图"
+    return (
+        f"用户要求{scope}手持数量",
+        "实际启用手持数量",
+        "未启用手持数量",
+        "启用手持配置",
+        "是否完全满足用户数量",
+        SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
+    )
+
+
 SET_VARIABLE_CONFIG_ALLOWED_SET_KEYS = frozenset(
     {
         *SET_VARIABLE_CONFIG_ADDED_FIELDS,
@@ -1302,10 +1316,15 @@ def _reject_unicode_damage_or_forbidden_keys(
     def inspect(mapping: Mapping[str, Any]) -> None:
         for key, item in mapping.items():
             normalized = str(key).strip().lower()
-            if normalized in _FORBIDDEN_DOWNSTREAM_KEYS or (
-                "套装" in normalized and str(key) not in allowed_set_keys
-            ):
+            if normalized in _FORBIDDEN_DOWNSTREAM_KEYS:
                 raise ExecutorExecutionError(f"codex-dev 收到的{label}包含越界字段")
+            if "套装" in normalized and str(key) not in allowed_set_keys:
+                raise ContentPredicateViolation(
+                    f"codex-dev 收到的{label}包含越界字段",
+                    code="set_key_scope",
+                    field=str(key),
+                    expected="该键不属于本工序允许返回的键，删除该键及其取值后完整重发",
+                )
             if isinstance(item, Mapping):
                 inspect(item)
             elif isinstance(item, list):
@@ -2077,11 +2096,12 @@ def build_set_variable_config_prompt(
 【套装尺寸比例锁定】必须非空并逐字包含“置信度”，尺寸只来自套装档案及各单件档案。
 {all_appear_rule}
 手持目标为 {target_handheld} 项，实际启用允许少于或等于目标；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。
+handheld_count_summary 必须恰好包含这些字段：{'、'.join(set_handheld_summary_required_fields(mode))}。
 handheld_count_summary 必须恒含【{SET_HANDHELD_SUMMARY_EXPLANATION_FIELD}】：完全满足时写明“已按目标启用”，少于目标时写明实际启用数量与原因，不得静默全部不启用。
 标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。
 顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
 {category_prompt}
-只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片或 QC。
+只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片或 QC。该禁令适用于任何层级，包括 common_constraints 内部。
 
 【基础 {skill_name} Skill 原文】
 {base_skill_text}
@@ -3053,14 +3073,7 @@ def _validate_set_handheld_summary(
     config_id: str,
 ) -> None:
     scope = "主图" if mode == "main" else "详情图"
-    required_keys = {
-        f"用户要求{scope}手持数量",
-        "实际启用手持数量",
-        "未启用手持数量",
-        "启用手持配置",
-        "是否完全满足用户数量",
-        SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
-    }
+    required_keys = set(set_handheld_summary_required_fields(mode))
     enabled = len(enabled_ids)
     explanation = summary.get(SET_HANDHELD_SUMMARY_EXPLANATION_FIELD)
     satisfied = enabled == target

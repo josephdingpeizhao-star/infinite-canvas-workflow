@@ -1051,5 +1051,113 @@ class St03bExecutorTests(SetVariableConfigFixture):
             component_loader.assert_not_called()
 
 
+class St07SetHandheldSummaryContractTests(unittest.TestCase):
+    def test_set_prompt_lists_the_exact_six_handheld_summary_fields_for_each_mode(self) -> None:
+        expected_sentences = {
+            "main": (
+                "handheld_count_summary 必须恰好包含这些字段："
+                "用户要求主图手持数量、实际启用手持数量、未启用手持数量、"
+                "启用手持配置、是否完全满足用户数量、手持启用数量说明。"
+            ),
+            "detail": (
+                "handheld_count_summary 必须恰好包含这些字段："
+                "用户要求详情图手持数量、实际启用手持数量、未启用手持数量、"
+                "启用手持配置、是否完全满足用户数量、手持启用数量说明。"
+            ),
+        }
+        for mode, expected in expected_sentences.items():
+            with self.subTest(mode=mode):
+                prompt = build_set_variable_config_prompt(
+                    mode=mode,
+                    product_id=PRODUCT_ID,
+                    repository_root=ROOT,
+                    set_identity=valid_set_identity(),
+                    component_identities=(
+                        valid_component_identity(1),
+                        valid_component_identity(2),
+                    ),
+                    style_master=valid_style_master(),
+                    set_angle_layout_inventory=valid_set_layout_inventory(),
+                    requirements=set_requirements(),
+                    set_skill_text="SET_SKILL_MARKER",
+                    set_variable_config_supplement="SET_VARIABLE_SUPPLEMENT_MARKER",
+                    set_workflow_supplement="SET_WORKFLOW_SUPPLEMENT_MARKER",
+                    set_layout_rules="SET_LAYOUT_RULES_MARKER",
+                    main_variable_config=(
+                        valid_set_variable_response("main", count=2, handheld_target=1)
+                        if mode == "detail"
+                        else None
+                    ),
+                )
+                self.assertIn(expected, prompt)
+
+    def test_set_handheld_summary_validator_uses_the_shared_six_field_contract(self) -> None:
+        from codex_dev_downstream import (  # noqa: PLC0415
+            _validate_set_handheld_summary,
+            set_handheld_summary_required_fields,
+        )
+
+        for mode in ("main", "detail"):
+            with self.subTest(mode=mode):
+                scope = "主图" if mode == "main" else "详情图"
+                enabled_ids = [f"{mode}_01"]
+                summary = {
+                    f"用户要求{scope}手持数量": 1,
+                    "实际启用手持数量": 1,
+                    "未启用手持数量": 1,
+                    "启用手持配置": enabled_ids,
+                    "是否完全满足用户数量": "是",
+                    SET_HANDHELD_SUMMARY_EXPLANATION_FIELD: (
+                        "实际启用 1 项，已按目标启用。"
+                    ),
+                }
+                required_fields = set_handheld_summary_required_fields(mode)
+                self.assertEqual(set(required_fields), set(summary))
+                _validate_set_handheld_summary(
+                    summary,
+                    mode=mode,
+                    target=1,
+                    expected_count=2,
+                    enabled_ids=enabled_ids,
+                    label=f"套装{scope}变量配置",
+                    config_id=f"{mode}_01",
+                )
+
+                for field in required_fields:
+                    with self.subTest(mode=mode, missing_field=field):
+                        missing = copy.deepcopy(summary)
+                        del missing[field]
+                        with self.assertRaisesRegex(
+                            ContentPredicateViolation,
+                            "手持数量说明异常",
+                        ):
+                            _validate_set_handheld_summary(
+                                missing,
+                                mode=mode,
+                                target=1,
+                                expected_count=2,
+                                enabled_ids=enabled_ids,
+                                label=f"套装{scope}变量配置",
+                                config_id=f"{mode}_01",
+                            )
+
+                with self.subTest(mode=mode, extra_field="多余字段"):
+                    extra = copy.deepcopy(summary)
+                    extra["多余字段"] = "x"
+                    with self.assertRaisesRegex(
+                        ContentPredicateViolation,
+                        "手持数量说明异常",
+                    ):
+                        _validate_set_handheld_summary(
+                            extra,
+                            mode=mode,
+                            target=1,
+                            expected_count=2,
+                            enabled_ids=enabled_ids,
+                            label=f"套装{scope}变量配置",
+                            config_id=f"{mode}_01",
+                        )
+
+
 if __name__ == "__main__":
     unittest.main()
