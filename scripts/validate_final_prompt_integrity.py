@@ -2198,7 +2198,7 @@ def _build_prompts_only_report_common(
                 asset=prompt_path,
                 config_id=config_id,
             )
-        if confirmed_height is not None:
+        if batch_type != "set" and confirmed_height is not None:
             height_pattern = re.compile(
                 rf"高度[^。；;\n]{{0,24}}约\s*{confirmed_height}\s*(?:厘米|cm)",
                 re.IGNORECASE,
@@ -2285,7 +2285,11 @@ def _build_prompts_only_report_common(
         {
             "check_item": "ratio_and_confirmed_height_literals",
             "status": check_status(("canvas_ratio_", "confirmed_height_")),
-            "notes": f"invalid_ratios={invalid_ratio_count}, invalid_heights={height_mismatch_count}.",
+            "notes": (
+                f"invalid_ratios={invalid_ratio_count}, invalid_heights=skipped."
+                if batch_type == "set"
+                else f"invalid_ratios={invalid_ratio_count}, invalid_heights={height_mismatch_count}."
+            ),
         },
         {
             "check_item": "handheld_counts",
@@ -2328,6 +2332,13 @@ def _build_prompts_only_report_common(
             "reason": "prompts-only 验证已编译产物，不扫描编译器源码，以避免真实批次误报。",
         },
     ]
+    if batch_type == "set":
+        skipped_checks.append(
+            {
+                "check": "confirmed_height_literal",
+                "reason": "套装编译链不产出已确认高度字面，故本检查按设计跳过。",
+            }
+        )
     return {
         "product_id": product_id,
         "artifact_type": "final_prompt_integrity_report",

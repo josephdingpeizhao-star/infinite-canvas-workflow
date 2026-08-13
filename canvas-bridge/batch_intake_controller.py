@@ -225,6 +225,15 @@ def _parse_facts(
         detail_image_count = raw.get("detail_image_count")
         handheld_detail = raw.get("handheld_detail")
         handheld_main = raw.get("handheld_main")
+        if batch_type == BATCH_TYPE_SET and any(
+            raw.get(field) is not None for field in ("length_cm", "width_cm", "height_cm")
+        ):
+            raise _error(
+                "invalid_facts",
+                "套装批次不填写长、宽、高，请清空三项尺寸后再登记。",
+                info_node_id=info_node_id,
+                request_id=request_id,
+            )
         if (
             batch_type == BATCH_TYPE_SET
             and type(handheld_main) is int

@@ -1096,7 +1096,7 @@ class WorkflowProductionService:
             count = getattr(exc, "blocking_issue_count", None)
             if type(count) is not int or not 1 <= count <= 9_999:
                 return None
-            event_detail = f"完整性检查未通过：{count} 项阻塞，报告已写入 qc_reports"
+            event_detail = f"完整性检查未通过：{count} 项阻塞，报告已写入 reports"
             return event_detail, f"{event_detail}。机器已停下，未自动重试。"
         if code == _REAL_EXECUTION_DISABLED_CODE:
             return (

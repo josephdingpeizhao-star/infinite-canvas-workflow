@@ -1368,7 +1368,7 @@ class ProductionServiceTest(unittest.TestCase):
             .read_text(encoding="utf-8")
             .splitlines()
         ]
-        expected = "完整性检查未通过：11 项阻塞，报告已写入 qc_reports"
+        expected = "完整性检查未通过：11 项阻塞，报告已写入 reports"
         self.assertEqual(expected, events[-1]["detail"])
         message = client.state["nodes"][0]["metadata"]["workflowProduction"]["errorMessage"]
         self.assertEqual(f"{expected}。机器已停下，未自动重试。", message)

@@ -109,6 +109,7 @@ def _canvas_state(
     source_ids = [str(node["id"]) for node in source_nodes]
     facts = copy.deepcopy(FACTS)
     if batch_type == "set":
+        facts.update({"length_cm": None, "width_cm": None, "height_cm": None})
         facts.update({"handheld_main": 0, "handheld_detail": 0})
     info = {
         "id": "info-1",

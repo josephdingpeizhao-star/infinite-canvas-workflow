@@ -539,7 +539,7 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
             ),
             (
                 integrity_failure,
-                "完整性检查未通过：3 项阻塞，报告已写入 qc_reports。机器已停下，未自动重试。",
+                "完整性检查未通过：3 项阻塞，报告已写入 reports。机器已停下，未自动重试。",
             ),
             (
                 real_execution_disabled,
@@ -555,7 +555,7 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
                 )
 
         self.assertEqual(
-            "完整性检查未通过：3 项阻塞，报告已写入 qc_reports",
+            "完整性检查未通过：3 项阻塞，报告已写入 reports",
             WorkflowProductionService._safe_event_detail(integrity_failure),
         )
 

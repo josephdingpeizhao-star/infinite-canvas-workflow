@@ -45,7 +45,7 @@ SET_BLOCKED_MESSAGE = (
     "未执行该工序，也未产生任何费用。"
 )
 SINGLE_REPORT_SHA256 = "e49a889daa73217db8e8e34438fc02408b7b49cae62065137d3ed727a324a467"
-SET_REPORT_SHA256 = "813007df2a3bc4a5c68bc8d07a1c09f2920041a6098847c57a72acf95da2791e"
+SET_REPORT_SHA256 = "4460a6aededcc9ca85a4d76ab231b1d5dcabdbae7bdab265dffe4c80b8782afe"
 
 
 def _write_json(path: Path, value: object) -> None:

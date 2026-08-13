@@ -441,11 +441,11 @@ class StepAutoRetryTest(unittest.TestCase):
         failed = self._events(result, "step_failed")
         self.assertEqual(1, len(failed))
         self.assertEqual(
-            "完整性检查未通过：7 项阻塞，报告已写入 qc_reports",
+            "完整性检查未通过：7 项阻塞，报告已写入 reports",
             failed[0]["detail"],
         )
         self.assertEqual(
-            "完整性检查未通过：7 项阻塞，报告已写入 qc_reports。机器已停下，未自动重试。",
+            "完整性检查未通过：7 项阻塞，报告已写入 reports。机器已停下，未自动重试。",
             result["production"]["errorMessage"],
         )
 
