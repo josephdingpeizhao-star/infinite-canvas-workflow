@@ -184,7 +184,12 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
             skipped=(),
         )
 
-    def _run_failure(self, executor_factory) -> tuple[str, dict[str, object]]:
+    def _run_failure(
+        self,
+        executor_factory,
+        *,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, object]]:
         with tempfile.TemporaryDirectory() as tmp:
             temp_root = Path(tmp)
             repo = temp_root / "repo"
@@ -205,6 +210,7 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
                 "OPENAI_API_KEY": "server-secret",
                 "OPENAI_IMAGE_TIMEOUT_SECONDS": "90",
             }
+            environment.update(environment_overrides or {})
 
             def build_executor(step, manifest, path, _on_output):
                 self.assertEqual("renders", step)
@@ -245,7 +251,12 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
             failed_event = next(event for event in events if event["event"] == "step_failed")
             return str(card_message), failed_event
 
-    def _run_transport_failure(self, transport) -> tuple[str, dict[str, object]]:
+    def _run_transport_failure(
+        self,
+        transport,
+        *,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> tuple[str, dict[str, object]]:
         def make_executor(context: ExecutorContext, bundle):
             image_executor = OpenAIImageExecutor(context, transport=transport)
             return ImageProductionExecutor(
@@ -256,7 +267,10 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
                 ),
             )
 
-        return self._run_failure(make_executor)
+        return self._run_failure(
+            make_executor,
+            environment_overrides=environment_overrides,
+        )
 
     @staticmethod
     def _http_response(
@@ -282,7 +296,10 @@ class Er01RenderFailureReportingTest(unittest.TestCase):
             )
         )
 
-        card, event = self._run_transport_failure(transport)
+        card, event = self._run_transport_failure(
+            transport,
+            environment_overrides={"RENDER_MAX_CONCURRENCY": "1"},
+        )
 
         self.assertEqual(1, len(transport.calls))
         self.assertEqual(

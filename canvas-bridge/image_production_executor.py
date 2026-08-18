@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -27,6 +29,10 @@ from render_task_assembler import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RENDER_MAX_CONCURRENCY_ENV = "RENDER_MAX_CONCURRENCY"
+DEFAULT_RENDER_MAX_CONCURRENCY = 3
+MIN_RENDER_MAX_CONCURRENCY = 1
+MAX_RENDER_MAX_CONCURRENCY = 8
 _RENDER_FAILURE_FIELDS = (
     "code",
     "http_status",
@@ -90,6 +96,7 @@ class ImageProductionExecutor:
         repo_report_dir: Path | None = None,
         integrity_script: Path | None = None,
         task_assembler: Callable[[Mapping[str, Any], Path], RenderTaskPlan] | None = None,
+        on_task_success: Callable[[Any, ExecutionResult], None] | None = None,
     ) -> None:
         self.context = context
         self.manifest = context.manifest
@@ -99,6 +106,7 @@ class ImageProductionExecutor:
         self.repo_report_dir = repo_report_dir or ROOT / "reports"
         self.integrity_script = integrity_script or ROOT / "scripts" / "validate_final_prompt_integrity.py"
         self.task_assembler = task_assembler or assemble_render_tasks
+        self.on_task_success = on_task_success
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         if request.step not in {"integrity", "renders"}:
@@ -170,6 +178,18 @@ class ImageProductionExecutor:
             raise ExecutorExecutionError("RENDER_MAX_IMAGES 必须是正整数")
         return value
 
+    def _render_concurrency(self) -> int:
+        raw = (self.environment.get(RENDER_MAX_CONCURRENCY_ENV) or "").strip()
+        if not raw:
+            return DEFAULT_RENDER_MAX_CONCURRENCY
+        try:
+            value = int(raw)
+        except ValueError as exc:
+            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 8 的整数") from exc
+        if not MIN_RENDER_MAX_CONCURRENCY <= value <= MAX_RENDER_MAX_CONCURRENCY or str(value) != raw:
+            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 8 的整数")
+        return value
+
     def _execute_renders(self, request: ExecutionRequest) -> ExecutionResult:
         if self.environment.get("RENDER_ALLOW_REAL_EXECUTION") != "1":
             raise ExecutorExecutionError("真实渲染未开启：RENDER_ALLOW_REAL_EXECUTION 必须为 1")
@@ -177,6 +197,7 @@ class ImageProductionExecutor:
         if not api_key:
             raise ExecutorExecutionError("服务器未配置 OPENAI_API_KEY")
         limit = self._render_limit()
+        concurrency = self._render_concurrency()
         try:
             index_path = resolve_final_prompt_index_path(self.manifest)
             plan = self.task_assembler(self.manifest, index_path)
@@ -212,23 +233,76 @@ class ImageProductionExecutor:
         outputs: list[Path] = []
         successful_count = 0
         model = ""
-        for task in selected:
+        workers = min(concurrency, len(selected))
+        stop_starting = threading.Event()
+        not_started = object()
+        serial_start_events = (
+            tuple(threading.Event() for _task in selected)
+            if workers == 1
+            else ()
+        )
+
+        def execute_task(index: int, task: Any) -> ExecutionResult | object:
+            if serial_start_events:
+                serial_start_events[index].wait()
+            if stop_starting.is_set():
+                return not_started
             try:
-                result = image_executor.execute(
+                return image_executor.execute(
                     ExecutionRequest(step="renders", payload=task, metadata=request.metadata)
                 )
-            except Exception as exc:
-                reason = self._sanitize_reason(exc, api_key, selected)
-                raise _wrapped_render_failure(
-                    reason,
-                    exc,
-                    successful_count=successful_count,
-                    planned_count=planned_count,
-                    skipped_count=skipped_count,
-                ) from exc
-            successful_count += 1
-            outputs.extend(result.outputs)
-            model = result.model or model
+            except Exception:
+                stop_starting.set()
+                raise
+
+        primary_failure: Exception | None = None
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = tuple(
+                pool.submit(execute_task, index, task)
+                for index, task in enumerate(selected)
+            )
+            if serial_start_events:
+                serial_start_events[0].set()
+
+            for index, (task, future) in enumerate(zip(selected, futures)):
+                if future.cancelled():
+                    continue
+                try:
+                    result = future.result()
+                    if result is not_started:
+                        continue
+                    if self.on_task_success is not None:
+                        self.on_task_success(task, result)
+                except Exception as exc:
+                    if primary_failure is None:
+                        primary_failure = exc
+                        stop_starting.set()
+                        for pending in futures[index + 1 :]:
+                            pending.cancel()
+                        for start_event in serial_start_events[index + 1 :]:
+                            start_event.set()
+                    continue
+
+                successful_count += 1
+                outputs.extend(result.outputs)
+                model = result.model or model
+                next_index = index + 1
+                if (
+                    serial_start_events
+                    and not stop_starting.is_set()
+                    and next_index < len(serial_start_events)
+                ):
+                    serial_start_events[next_index].set()
+
+        if primary_failure is not None:
+            reason = self._sanitize_reason(primary_failure, api_key, selected)
+            raise _wrapped_render_failure(
+                reason,
+                primary_failure,
+                successful_count=successful_count,
+                planned_count=planned_count,
+                skipped_count=skipped_count,
+            ) from primary_failure
         return ExecutionResult(
             detail=f"成功 {successful_count}/计划 {planned_count}（跳过 {skipped_count}）",
             outputs=tuple(outputs),

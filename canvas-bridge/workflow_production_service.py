@@ -51,7 +51,6 @@ from workflow_production_projection import (
     build_output_projection_ops,
     output_node_id,
 )
-from workflow_production_render_observer import ProductionRenderObserverExecutor
 from white_bg_recovery import allows_rebind_recompute, sanitize_filenames
 
 
@@ -1053,17 +1052,20 @@ class WorkflowProductionService:
             if not render_roots or not _inside(render_roots[0], workspace):
                 raise ProductionGateError("正式渲染目录不在批次工作区内。")
 
-            image_observer = ProductionRenderObserverExecutor(
-                OpenAIImageExecutor(context),
-                batch_id=str(manifest.get("product_id") or ""),
-                on_output=on_output,
-                expected_ids=expected_ids,
+            raw = OpenAIImageExecutor(context)
+            batch_id = str(manifest.get("product_id") or "")
+
+            def on_task_success(_task: Any, result: ExecutionResult) -> None:
+                for path in result.outputs:
+                    if expected_ids is not None and path.stem not in expected_ids:
+                        raise ExecutorExecutionError("渲染结果不在当前批次登记图位中。")
+                    on_output(artifact_from_path(batch_id, path))
+
+            return ImageProductionExecutor(
+                context,
+                image_executor_factory=lambda _inner_context: raw,
+                on_task_success=on_task_success,
             )
-
-            def image_factory(_inner_context: ExecutorContext) -> Executor:
-                return image_observer
-
-            return ImageProductionExecutor(context, image_executor_factory=image_factory)
         raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
 
     @staticmethod

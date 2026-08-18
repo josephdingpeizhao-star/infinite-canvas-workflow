@@ -16,8 +16,14 @@ BRIDGE = ROOT / "canvas-bridge"
 if str(BRIDGE) not in sys.path:
     sys.path.insert(0, str(BRIDGE))
 
-from executor_contract import ExecutionResult, ExecutorExecutionError  # noqa: E402
+from executor_contract import (  # noqa: E402
+    ExecutionRequest,
+    ExecutionResult,
+    ExecutorExecutionError,
+    ImageGenerationTask,
+)
 from codex_dev_executor import CodexDevExecutionError  # noqa: E402
+from render_task_assembler import RenderTaskPlan  # noqa: E402
 from workflow_demo_executor import write_placeholder_png  # noqa: E402
 from workflow_production_projection import artifact_from_path  # noqa: E402
 import ic_client  # noqa: E402
@@ -946,6 +952,89 @@ class ProductionServiceTest(unittest.TestCase):
 
         self.assertIs(expected, actual)
         build.assert_called_once_with("codex-dev", manifest, self.manifest)
+
+    def test_renders_executor_projects_registered_outputs_and_rejects_unknown_ids(self) -> None:
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["artifacts"]["final_prompts"] = [
+            str(self.workspace / "artifacts" / "final_prompts")
+        ]
+        service = production_service.WorkflowProductionService(
+            self.repo,
+            client=FakeCanvasClient(),
+            environment={
+                "RENDER_ALLOW_REAL_EXECUTION": "1",
+                "OPENAI_API_KEY": "server-secret",
+            },
+        )
+        raw_calls: list[str] = []
+        projected = []
+
+        class FakeRawImageExecutor:
+            name = "fake-raw-image"
+
+            def execute(inner_self, request: ExecutionRequest) -> ExecutionResult:
+                path = request.payload.output_path
+                raw_calls.append(path.name)
+                write_placeholder_png(
+                    path,
+                    width=96,
+                    height=96,
+                    kind="main",
+                    ordinal=int(path.stem.split("_")[1]),
+                )
+                return ExecutionResult(
+                    detail="generated",
+                    outputs=(path,),
+                    provider=inner_self.name,
+                    model="fixture-model",
+                )
+
+        def one_task_plan(filename: str) -> RenderTaskPlan:
+            task = ImageGenerationTask(
+                prompt="safe fixture prompt",
+                output_path=self.workspace / "outputs" / "renders" / filename,
+            )
+            return RenderTaskPlan(
+                tasks=(task,),
+                planned=(task.output_path.stem,),
+                skipped=(),
+            )
+
+        raw = FakeRawImageExecutor()
+        with (
+            mock.patch.object(service, "_expected_ids", return_value=("main_01",)),
+            mock.patch.object(
+                production_service,
+                "OpenAIImageExecutor",
+                return_value=raw,
+            ) as openai_executor,
+        ):
+            executor = service._build_executor(
+                "renders",
+                manifest,
+                self.manifest,
+                projected.append,
+            )
+
+        executor.task_assembler = lambda _manifest, _index: one_task_plan("main_01.png")
+        result = executor.execute(ExecutionRequest(step="renders"))
+
+        self.assertEqual(("main_01.png",), tuple(path.name for path in result.outputs))
+        self.assertEqual(1, len(projected))
+        self.assertEqual("cup", projected[0].batch_id)
+        self.assertEqual("main_01", projected[0].config_id)
+        openai_executor.assert_called_once()
+
+        executor.task_assembler = lambda _manifest, _index: one_task_plan("main_02.png")
+        with self.assertRaisesRegex(
+            ExecutorExecutionError,
+            "^渲染结果不在当前批次登记图位中。$",
+        ) as ctx:
+            executor.execute(ExecutionRequest(step="renders"))
+
+        self.assertEqual(0, ctx.exception.successful_count)
+        self.assertEqual(["main_01.png", "main_02.png"], raw_calls)
+        self.assertEqual(1, len(projected))
 
     def test_existing_fourteen_images_run_qc_and_complete_without_duplicate_production_event(self) -> None:
         manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
