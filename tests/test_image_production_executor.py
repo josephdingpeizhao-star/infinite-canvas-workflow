@@ -228,18 +228,22 @@ class ImageProductionExecutorTest(unittest.TestCase):
             self.assertEqual(14, result.metadata["full_missing_count"])
             self.assertEqual(13, result.metadata["remaining_count"])
 
-    def test_render_concurrency_defaults_to_three_when_unset_or_empty(self) -> None:
-        for environment in ({}, {"RENDER_MAX_CONCURRENCY": ""}):
+    def test_render_concurrency_unset_or_empty_means_follow_task_count(self) -> None:
+        for environment in (
+            {},
+            {"RENDER_MAX_CONCURRENCY": ""},
+            {"RENDER_MAX_CONCURRENCY": "   "},
+        ):
             with self.subTest(environment=environment):
                 executor = ImageProductionExecutor(
                     ExecutorContext(manifest={}, environment=environment)
                 )
 
-                self.assertEqual(3, executor._render_concurrency())
+                self.assertIsNone(executor._render_concurrency())
 
     def test_invalid_render_concurrency_values_fail_closed_with_exact_message(self) -> None:
-        message = "RENDER_MAX_CONCURRENCY 必须是 1 到 8 的整数"
-        for raw in ("0", "9", "abc", "03"):
+        message = "RENDER_MAX_CONCURRENCY 必须是 1 到 60 的整数"
+        for raw in ("0", "abc", "03", "61", "060"):
             with self.subTest(raw=raw):
                 executor = ImageProductionExecutor(
                     ExecutorContext(
@@ -250,6 +254,145 @@ class ImageProductionExecutorTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(ExecutorExecutionError, f"^{message}$"):
                     executor._render_concurrency()
+
+    def test_render_concurrency_accepts_nine_and_sixty(self) -> None:
+        for raw, expected in (("9", 9), ("60", 60)):
+            with self.subTest(raw=raw):
+                executor = ImageProductionExecutor(
+                    ExecutorContext(
+                        manifest={},
+                        environment={"RENDER_MAX_CONCURRENCY": raw},
+                    )
+                )
+
+                self.assertEqual(expected, executor._render_concurrency())
+
+    def test_five_renders_without_explicit_limit_reach_full_batch_concurrency(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_final_prompt_bundle(Path(tmp))
+            plan = render_plan(bundle.renders_dir, 5)
+            lock = threading.Lock()
+            full_batch_started = threading.Event()
+            active = 0
+            peak = 0
+
+            class PeakRecordingExecutor:
+                name = "full-batch-peak-recording"
+
+                def execute(inner_self, request: ExecutionRequest) -> ExecutionResult:
+                    nonlocal active, peak
+                    with lock:
+                        active += 1
+                        peak = max(peak, active)
+                        if active == 5:
+                            full_batch_started.set()
+                    try:
+                        if not full_batch_started.wait(timeout=2):
+                            raise AssertionError("full batch did not overlap")
+                        return successful_render(request)
+                    finally:
+                        with lock:
+                            active -= 1
+
+            executor = ImageProductionExecutor(
+                self._context(
+                    bundle,
+                    RENDER_ALLOW_REAL_EXECUTION="1",
+                    OPENAI_API_KEY="server-secret",
+                ),
+                image_executor_factory=lambda _context: PeakRecordingExecutor(),
+                task_assembler=lambda _manifest, _index: plan,
+            )
+
+            result = executor.execute(ExecutionRequest(step="renders"))
+
+            self.assertEqual(5, peak)
+            self.assertEqual(5, result.metadata["successful_count"])
+
+    def test_single_render_without_explicit_limit_preserves_serial_behavior(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_final_prompt_bundle(Path(tmp))
+            plan = render_plan(bundle.renders_dir, 1)
+            observed: list[str] = []
+            callback_threads: list[int] = []
+            main_thread = threading.get_ident()
+
+            class SingleRenderExecutor:
+                name = "single-render-serial"
+
+                def execute(inner_self, request: ExecutionRequest) -> ExecutionResult:
+                    name = request.payload.output_path.name
+                    observed.append(f"start:{name}")
+                    result = successful_render(request)
+                    observed.append(f"finish:{name}")
+                    return result
+
+            def on_task_success(task, _result: ExecutionResult) -> None:
+                observed.append(f"callback:{task.output_path.name}")
+                callback_threads.append(threading.get_ident())
+
+            executor = ImageProductionExecutor(
+                self._context(
+                    bundle,
+                    RENDER_ALLOW_REAL_EXECUTION="1",
+                    OPENAI_API_KEY="server-secret",
+                ),
+                image_executor_factory=lambda _context: SingleRenderExecutor(),
+                task_assembler=lambda _manifest, _index: plan,
+                on_task_success=on_task_success,
+            )
+
+            result = executor.execute(ExecutionRequest(step="renders"))
+
+            self.assertEqual(
+                ["start:main_01.png", "finish:main_01.png", "callback:main_01.png"],
+                observed,
+            )
+            self.assertEqual([main_thread], callback_threads)
+            self.assertEqual((plan.tasks[0].output_path,), result.outputs)
+
+    def test_explicit_limit_two_caps_five_renders_at_two_concurrent_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_final_prompt_bundle(Path(tmp))
+            plan = render_plan(bundle.renders_dir, 5)
+            lock = threading.Lock()
+            two_workers_started = threading.Event()
+            active = 0
+            peak = 0
+
+            class PeakRecordingExecutor:
+                name = "explicit-limit-peak-recording"
+
+                def execute(inner_self, request: ExecutionRequest) -> ExecutionResult:
+                    nonlocal active, peak
+                    with lock:
+                        active += 1
+                        peak = max(peak, active)
+                        if active == 2:
+                            two_workers_started.set()
+                    try:
+                        if not two_workers_started.wait(timeout=2):
+                            raise AssertionError("two workers did not overlap")
+                        return successful_render(request)
+                    finally:
+                        with lock:
+                            active -= 1
+
+            executor = ImageProductionExecutor(
+                self._context(
+                    bundle,
+                    RENDER_ALLOW_REAL_EXECUTION="1",
+                    OPENAI_API_KEY="server-secret",
+                    RENDER_MAX_CONCURRENCY="2",
+                ),
+                image_executor_factory=lambda _context: PeakRecordingExecutor(),
+                task_assembler=lambda _manifest, _index: plan,
+            )
+
+            result = executor.execute(ExecutionRequest(step="renders"))
+
+            self.assertEqual(2, peak)
+            self.assertEqual(5, result.metadata["successful_count"])
 
     def test_five_renders_with_three_workers_reach_exact_concurrency_peak(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -412,6 +555,60 @@ class ImageProductionExecutorTest(unittest.TestCase):
             self.assertNotIn("main_04.png", calls)
             self.assertNotIn("main_05.png", calls)
             self.assertEqual(["main_01.png", "main_03.png"], callback_order)
+
+    def test_full_batch_failure_drains_all_in_flight_successes_in_task_order(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = build_final_prompt_bundle(Path(tmp))
+            plan = render_plan(bundle.renders_dir, 5)
+            barrier = threading.Barrier(5)
+            failure_started = threading.Event()
+            lock = threading.Lock()
+            calls: list[str] = []
+            callback_order: list[str] = []
+
+            class IdentityFailureExecutor:
+                name = "full-batch-identity-failure"
+
+                def execute(inner_self, request: ExecutionRequest) -> ExecutionResult:
+                    name = request.payload.output_path.name
+                    with lock:
+                        calls.append(name)
+                    barrier.wait(timeout=2)
+                    if name == "main_02.png":
+                        failure_started.set()
+                        raise ExecutorExecutionError("main_02 task failed")
+                    if not failure_started.wait(timeout=2):
+                        raise AssertionError("identified task did not fail")
+                    return successful_render(request)
+
+            executor = ImageProductionExecutor(
+                self._context(
+                    bundle,
+                    RENDER_ALLOW_REAL_EXECUTION="1",
+                    OPENAI_API_KEY="server-secret",
+                ),
+                image_executor_factory=lambda _context: IdentityFailureExecutor(),
+                task_assembler=lambda _manifest, _index: plan,
+                on_task_success=lambda task, _result: callback_order.append(
+                    task.output_path.name
+                ),
+            )
+
+            with self.assertRaises(ExecutorExecutionError) as ctx:
+                executor.execute(ExecutionRequest(step="renders"))
+
+            self.assertEqual("main_02 task failed", str(ctx.exception))
+            self.assertEqual(4, ctx.exception.successful_count)
+            self.assertEqual(5, ctx.exception.planned_count)
+            self.assertEqual(0, ctx.exception.skipped_count)
+            self.assertEqual(
+                {f"main_{index:02d}.png" for index in range(1, 6)},
+                set(calls),
+            )
+            self.assertEqual(
+                ["main_01.png", "main_03.png", "main_04.png", "main_05.png"],
+                callback_order,
+            )
 
     def test_task_success_callback_failure_uses_wrapped_render_failure_semantics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -30,9 +30,8 @@ from render_task_assembler import (
 
 ROOT = Path(__file__).resolve().parents[1]
 RENDER_MAX_CONCURRENCY_ENV = "RENDER_MAX_CONCURRENCY"
-DEFAULT_RENDER_MAX_CONCURRENCY = 3
 MIN_RENDER_MAX_CONCURRENCY = 1
-MAX_RENDER_MAX_CONCURRENCY = 8
+MAX_RENDER_MAX_CONCURRENCY = 60  # image_count_contract: 30 main + 30 detail images per batch.
 _RENDER_FAILURE_FIELDS = (
     "code",
     "http_status",
@@ -178,16 +177,16 @@ class ImageProductionExecutor:
             raise ExecutorExecutionError("RENDER_MAX_IMAGES 必须是正整数")
         return value
 
-    def _render_concurrency(self) -> int:
+    def _render_concurrency(self) -> int | None:
         raw = (self.environment.get(RENDER_MAX_CONCURRENCY_ENV) or "").strip()
         if not raw:
-            return DEFAULT_RENDER_MAX_CONCURRENCY
+            return None
         try:
             value = int(raw)
         except ValueError as exc:
-            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 8 的整数") from exc
+            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 60 的整数") from exc
         if not MIN_RENDER_MAX_CONCURRENCY <= value <= MAX_RENDER_MAX_CONCURRENCY or str(value) != raw:
-            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 8 的整数")
+            raise ExecutorExecutionError("RENDER_MAX_CONCURRENCY 必须是 1 到 60 的整数")
         return value
 
     def _execute_renders(self, request: ExecutionRequest) -> ExecutionResult:
@@ -233,7 +232,7 @@ class ImageProductionExecutor:
         outputs: list[Path] = []
         successful_count = 0
         model = ""
-        workers = min(concurrency, len(selected))
+        workers = len(selected) if concurrency is None else min(concurrency, len(selected))
         stop_starting = threading.Event()
         not_started = object()
         serial_start_events = (
