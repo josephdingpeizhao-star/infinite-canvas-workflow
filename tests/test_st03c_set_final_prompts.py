@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -39,7 +40,11 @@ from codex_dev_downstream import (  # noqa: E402
     parse_set_variable_config_response,
     parse_user_confirmed_requirements,
 )
-from codex_dev_executor import CodexDevExecutor  # noqa: E402
+from codex_dev_executor import (  # noqa: E402
+    CodexAttachment,
+    CodexDevExecutor,
+    CodexTurnResult,
+)
 from executor_contract import ExecutionRequest, ExecutorContext, ExecutorExecutionError  # noqa: E402
 from test_st03b_set_variable_config import (  # noqa: E402
     BLOCKED_MESSAGE,
@@ -467,6 +472,86 @@ class St03cGateAndArchitectureTests(unittest.TestCase):
 
 
 class St03cSetFinalPromptFixture(SetVariableConfigFixture):
+    class _FinalPromptTransport:
+        _INITIAL_MARKERS = {
+            "main": "编译 main 配置的最终提示词",
+            "detail": "编译 detail 配置的最终提示词",
+        }
+        _REPAIR_MARKERS = {
+            "main": "final_prompts 套装主图批次任务",
+            "detail": "final_prompts 套装详情图批次任务",
+        }
+        _THREAD_IDS = {
+            "main": "st03c-final-main-thread",
+            "detail": "st03c-final-detail-thread",
+        }
+
+        def __init__(
+            self,
+            responses: dict[str, dict[str, object]],
+            *,
+            prior_calls: list[tuple[str, tuple[CodexAttachment, ...]]],
+            prior_continuation_calls: list[
+                tuple[str, str, tuple[CodexAttachment, ...]]
+            ],
+        ) -> None:
+            self._responses = {
+                mode: [
+                    CodexTurnResult(
+                        text=json.dumps(response, ensure_ascii=False),
+                        thread_id=self._THREAD_IDS[mode],
+                    )
+                ]
+                for mode, response in responses.items()
+            }
+            self._lock = threading.Lock()
+            self.calls = list(prior_calls)
+            self.continuation_calls: list[
+                tuple[str, str, tuple[CodexAttachment, ...]]
+            ] = list(prior_continuation_calls)
+
+        @staticmethod
+        def _mode_from_prompt(prompt: str, markers: dict[str, str]) -> str:
+            matches = [mode for mode, marker in markers.items() if marker in prompt]
+            if len(matches) != 1:
+                raise AssertionError("set final prompt mode could not be identified")
+            return matches[0]
+
+        def _next_result(self, mode: str) -> CodexTurnResult:
+            results = self._responses.get(mode)
+            if not results:
+                raise AssertionError(f"unexpected {mode} set final prompt transport call")
+            return results.pop(0)
+
+        def run_turn(
+            self,
+            prompt: str,
+            attachments: tuple[CodexAttachment, ...],
+        ) -> CodexTurnResult:
+            mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
+            with self._lock:
+                self.calls.append((prompt, attachments))
+                result = self._next_result(mode)
+                if result.thread_id != self._THREAD_IDS[mode]:
+                    raise AssertionError(f"{mode} set final response changed thread identity")
+                return result
+
+        def continue_turn(
+            self,
+            thread_id: str,
+            prompt: str,
+            attachments: tuple[CodexAttachment, ...],
+        ) -> CodexTurnResult:
+            mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
+            with self._lock:
+                if thread_id != self._THREAD_IDS[mode]:
+                    raise AssertionError(f"{mode} set final repair used the wrong thread identity")
+                self.continuation_calls.append((thread_id, prompt, attachments))
+                result = self._next_result(mode)
+                if result.thread_id != thread_id:
+                    raise AssertionError(f"{mode} set final repair changed thread identity")
+                return result
+
     def prepare_full_chain(
         self,
         root: Path,
@@ -498,10 +583,8 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
         responses = [
             main_variable_response,
             *set_detail_chunks(detail_variable_response),
-            _final_prompt_response("main", count=main_count, enabled_ids=main_enabled),
-            _final_prompt_response("detail", count=detail_count, enabled_ids=detail_enabled),
         ]
-        executor, transport, manifest, paths = self.make_executor(root, responses)
+        executor, _upstream_transport, manifest, paths = self.make_executor(root, responses)
         manifest["user_confirmed_facts"] = set_manifest_facts(
             main_count=main_count,
             detail_count=detail_count,
@@ -526,6 +609,23 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
 
         executor.execute(ExecutionRequest(step="main_vc"))
         executor.execute(ExecutionRequest(step="detail_vc"))
+        transport = self._FinalPromptTransport(
+            {
+                "main": _final_prompt_response(
+                    "main",
+                    count=main_count,
+                    enabled_ids=main_enabled,
+                ),
+                "detail": _final_prompt_response(
+                    "detail",
+                    count=detail_count,
+                    enabled_ids=detail_enabled,
+                ),
+            },
+            prior_calls=_upstream_transport.calls,
+            prior_continuation_calls=_upstream_transport.continuation_calls,
+        )
+        executor.transport = transport
         final_transport_calls_before = len(transport.calls)
         final_continuations_before = len(transport.continuation_calls)
         result = executor.execute(ExecutionRequest(step="final_prompts"))
@@ -596,6 +696,8 @@ class St03cSetFinalPromptCompilerTests(St03cSetFinalPromptFixture):
                 set(final_prompt_bundle_targets(final_dir, requirements=requirements)),
                 {path for path in final_dir.iterdir()},
             )
+            self.assertEqual(2, prepared["final_transport_calls_before"])
+            self.assertEqual(3, prepared["final_continuations_before"])
             self.assertEqual(
                 2,
                 len(prepared["transport"].calls)

@@ -11,6 +11,7 @@ import threading
 import unittest
 import urllib.error
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
@@ -481,6 +482,100 @@ class FakeTransport:
         return self.results.pop(0)
 
 
+def final_prompt_mode(prompt: str) -> str:
+    markers = {
+        "main": (
+            "编译 main 配置的最终提示词",
+            "final_prompts 主图批次任务",
+        ),
+        "detail": (
+            "编译 detail 配置的最终提示词",
+            "final_prompts 详情图批次任务",
+        ),
+    }
+    matches = [
+        mode
+        for mode, candidates in markers.items()
+        if any(marker in prompt for marker in candidates)
+    ]
+    assert len(matches) == 1, "final prompt must identify exactly one of main or detail"
+    return matches[0]
+
+
+class FinalPromptIdentityTransport:
+    """Route concurrent final-prompt chains by prompt type and thread identity."""
+
+    def __init__(self, *, main: list[object], detail: list[object]):
+        self._results = {"main": list(main), "detail": list(detail)}
+        self._thread_modes: dict[str, str] = {}
+        self._lock = threading.Lock()
+        self.calls: list[tuple[str, tuple[CodexAttachment, ...]]] = []
+        self.run_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+        self.continuation_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+        self.continuation_modes: list[str] = []
+        self.active_calls = 0
+        self.peak_active_calls = 0
+
+    def _take(self, mode: str) -> object:
+        with self._lock:
+            assert self._results[mode], f"missing {mode} response"
+            return self._results[mode].pop(0)
+
+    def _resolve(
+        self,
+        mode: str,
+        *,
+        expected_thread_id: str | None = None,
+    ) -> CodexTurnResult:
+        try:
+            value = self._take(mode)
+            resolved = value(mode) if callable(value) else value
+            if isinstance(resolved, Exception):
+                raise resolved
+            assert isinstance(resolved, CodexTurnResult)
+            if expected_thread_id is not None:
+                assert (
+                    resolved.thread_id == expected_thread_id
+                ), "continuation response must preserve its requested thread identity"
+            with self._lock:
+                existing_mode = self._thread_modes.setdefault(resolved.thread_id, mode)
+                assert existing_mode == mode
+            return resolved
+        finally:
+            with self._lock:
+                self.active_calls -= 1
+
+    def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+        mode = final_prompt_mode(prompt)
+        with self._lock:
+            self.calls.append((prompt, attachments))
+            self.run_calls.append((mode, prompt, attachments))
+            self.active_calls += 1
+            self.peak_active_calls = max(self.peak_active_calls, self.active_calls)
+        return self._resolve(mode)
+
+    def continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        prompt_mode = final_prompt_mode(prompt)
+        with self._lock:
+            mode = self._thread_modes.get(thread_id)
+            assert mode in {"main", "detail"}, "continuation must use a known chain thread"
+            assert prompt_mode == mode, "continuation prompt mode must match its thread identity"
+            self.continuation_calls.append((thread_id, prompt, attachments))
+            self.continuation_modes.append(mode)
+            self.active_calls += 1
+            self.peak_active_calls = max(self.peak_active_calls, self.active_calls)
+        return self._resolve(mode, expected_thread_id=thread_id)
+
+    def remaining(self, mode: str) -> int:
+        with self._lock:
+            return len(self._results[mode])
+
+
 class FakeResponse:
     def __init__(self, body: bytes):
         self.body = body
@@ -497,6 +592,115 @@ class FakeResponse:
 
     def readline(self) -> bytes:
         return self.stream.readline()
+
+
+class DeferredSseResponse(FakeResponse):
+    def __init__(self):
+        super().__init__(b"")
+
+    def set_body(self, body: bytes) -> None:
+        self.body = body
+        self.stream = io.BytesIO(body)
+
+
+class RoutedIsolatedOpener:
+    """Pair each worker's /events stream with its isolated POST by thread identity."""
+
+    def __init__(self, dispatch):
+        self.dispatch = dispatch
+        self.requests: list[tuple[urllib.request.Request, float]] = []
+        self._local = threading.local()
+        self._lock = threading.Lock()
+
+    def __call__(self, request, timeout):
+        path = urllib.parse.urlparse(request.full_url).path
+        with self._lock:
+            self.requests.append((request, timeout))
+        if path == "/events":
+            response = DeferredSseResponse()
+            self._local.event_stream = response
+            return response
+        if path in {
+            "/agent/codex/isolated/turn",
+            "/agent/codex/isolated/continue",
+        }:
+            body = json.loads(request.data.decode("utf-8"))
+            response_payload, sse = self.dispatch(path, body)
+            event_stream = getattr(self._local, "event_stream", None)
+            assert isinstance(event_stream, DeferredSseResponse)
+            event_stream.set_body(sse)
+            return FakeResponse(json.dumps(response_payload).encode("utf-8"))
+        raise AssertionError(f"unexpected legacy or unrelated route: {path}")
+
+
+def sse_event(event: str, payload: dict[str, object]) -> bytes:
+    return (
+        f"event: {event}\n"
+        f"data: {json.dumps(payload, ensure_ascii=False, separators=(',', ':'))}\n\n"
+    ).encode("utf-8")
+
+
+def completed_sse(thread_id: str, assistant_text: str) -> bytes:
+    return sse_event(
+        "agent_done",
+        {
+            "agent": "codex",
+            "threadId": thread_id,
+            "status": "completed",
+            "assistantText": assistant_text,
+        },
+    )
+
+
+class FinalPromptIdentityTransportTest(unittest.TestCase):
+    def test_rejects_ambiguous_initial_prompt_mode(self) -> None:
+        transport = FinalPromptIdentityTransport(
+            main=[CodexTurnResult(text="unused", thread_id="thread-main")],
+            detail=[CodexTurnResult(text="unused", thread_id="thread-detail")],
+        )
+
+        with self.assertRaisesRegex(AssertionError, "exactly one"):
+            transport.run_turn(
+                "编译 main 配置的最终提示词；编译 detail 配置的最终提示词",
+                (),
+            )
+
+        self.assertEqual([], transport.run_calls)
+
+    def test_rejects_cross_mode_continuation_prompt(self) -> None:
+        transport = FinalPromptIdentityTransport(
+            main=[CodexTurnResult(text="initial", thread_id="thread-main")],
+            detail=[],
+        )
+        transport.run_turn("编译 main 配置的最终提示词", ())
+
+        with self.assertRaisesRegex(AssertionError, "prompt mode"):
+            transport.continue_turn(
+                "thread-main",
+                "继续同一 final_prompts 详情图批次任务",
+                (),
+            )
+
+        self.assertEqual([], transport.continuation_calls)
+
+    def test_rejects_continuation_response_thread_id_drift(self) -> None:
+        transport = FinalPromptIdentityTransport(
+            main=[
+                CodexTurnResult(text="initial", thread_id="thread-main"),
+                CodexTurnResult(text="repair", thread_id="thread-drift"),
+            ],
+            detail=[],
+        )
+        transport.run_turn("编译 main 配置的最终提示词", ())
+
+        with self.assertRaisesRegex(AssertionError, "preserve"):
+            transport.continue_turn(
+                "thread-main",
+                "继续同一 final_prompts 主图批次任务",
+                (),
+            )
+
+        self.assertEqual(["main"], transport.continuation_modes)
 
 
 class CodexDevFixture(unittest.TestCase):
@@ -1080,17 +1284,19 @@ class CodexDevExecutorTest(CodexDevFixture):
                 root / "final"
             )
             final_context = self.with_structured_facts(final_context, allow_clear_water=False)
-            final_transport = FakeTransport(
-                [
+            final_transport = FinalPromptIdentityTransport(
+                main=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
                         thread_id="thread-final-clear-water-rejected",
-                    ),
+                    )
+                ],
+                detail=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="unused",
-                    ),
-                ]
+                        thread_id="thread-final-detail-clear-water-rejected",
+                    )
+                ],
             )
             cases.append(("final_prompts", (final_context, final_transport), final_dir))
 
@@ -1105,10 +1311,19 @@ class CodexDevExecutorTest(CodexDevFixture):
                         ).execute(ExecutionRequest(step=step))
                     self.assertIn("场景边界", str(caught.exception))
                     self.assertFalse(output.exists())
-                    prompt = case_transport.calls[0][0]
                     if step == "final_prompts":
-                        self.assertIn("清水场景", prompt)
+                        self.assertEqual(
+                            {"main", "detail"},
+                            {mode for mode, _prompt, _attachments in case_transport.run_calls},
+                        )
+                        self.assertTrue(
+                            all(
+                                "清水场景" in prompt
+                                for _mode, prompt, _attachments in case_transport.run_calls
+                            )
+                        )
                     else:
+                        prompt = case_transport.calls[0][0]
                         self.assertIn("只允许空置", prompt)
             self.assertEqual([], final_transport.continuation_calls)
 
@@ -2155,17 +2370,19 @@ class CodexDevExecutorTest(CodexDevFixture):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, final_dir, main_path, detail_path = self.make_final_prompt_fixture(root)
-            transport = FakeTransport(
-                [
+            transport = FinalPromptIdentityTransport(
+                main=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
                         thread_id="thread-final-main",
-                    ),
+                    )
+                ],
+                detail=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
                         thread_id="thread-final-detail",
-                    ),
-                ]
+                    )
+                ],
             )
 
             result = CodexDevExecutor(context, transport=transport, repository_root=root).execute(
@@ -2206,10 +2423,91 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertEqual("最终提示词已生成", result.detail)
             self.assertEqual(2, len(transport.calls))
             self.assertTrue(all(attachments == () for _prompt, attachments in transport.calls))
-            self.assertIn("FINAL_PROMPT_SKILL_MARKER", transport.calls[0][0])
-            self.assertIn("FINAL_RUNTIME_MARKER", transport.calls[1][0])
+            self.assertEqual(
+                {"main", "detail"},
+                {mode for mode, _prompt, _attachments in transport.run_calls},
+            )
+            for _mode, prompt, _attachments in transport.run_calls:
+                self.assertIn("FINAL_PROMPT_SKILL_MARKER", prompt)
+                self.assertIn("FINAL_RUNTIME_MARKER", prompt)
             self.assertFalse((root / "workspace" / "artifacts" / "comfyui_jobs").exists())
             self.assertFalse((root / "workspace" / "artifacts" / "qc_reports").exists())
+
+    def test_final_prompts_main_and_detail_turns_overlap_with_peak_two(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
+            both_started = threading.Barrier(2)
+
+            def response(mode: str) -> CodexTurnResult:
+                both_started.wait(timeout=3)
+                return CodexTurnResult(
+                    text=json.dumps(valid_final_prompt_response(mode), ensure_ascii=False),
+                    thread_id=f"thread-final-parallel-{mode}",
+                )
+
+            transport = FinalPromptIdentityTransport(
+                main=[response],
+                detail=[response],
+            )
+
+            result = CodexDevExecutor(
+                context,
+                transport=transport,
+                repository_root=root,
+            ).execute(ExecutionRequest(step="final_prompts"))
+
+            self.assertEqual("最终提示词已生成", result.detail)
+            self.assertEqual(2, transport.peak_active_calls)
+            self.assertEqual(
+                {"main", "detail"},
+                {mode for mode, _prompt, _attachments in transport.run_calls},
+            )
+            self.assertTrue((final_dir / "final_prompt_index.json").is_file())
+
+    def test_final_prompts_waits_for_other_chain_before_failure_and_writes_no_bundle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
+            both_started = threading.Barrier(2)
+            detail_failed = threading.Event()
+            main_completed = threading.Event()
+
+            def main_response(_mode: str) -> CodexTurnResult:
+                both_started.wait(timeout=3)
+                if not detail_failed.wait(timeout=3):
+                    raise AssertionError("detail chain did not fail while main was still running")
+                main_completed.set()
+                return CodexTurnResult(
+                    text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
+                    thread_id="thread-final-main-completes-after-detail-failure",
+                )
+
+            def detail_response(_mode: str) -> CodexTurnResult:
+                both_started.wait(timeout=3)
+                detail_failed.set()
+                raise CanvasAgentTransportError("thread")
+
+            transport = FinalPromptIdentityTransport(
+                main=[main_response],
+                detail=[detail_response],
+            )
+
+            with self.assertRaises(ExecutorExecutionError):
+                CodexDevExecutor(
+                    context,
+                    transport=transport,
+                    repository_root=root,
+                ).execute(ExecutionRequest(step="final_prompts"))
+
+            self.assertTrue(detail_failed.is_set())
+            self.assertTrue(main_completed.is_set())
+            self.assertEqual(2, transport.peak_active_calls)
+            self.assertEqual(
+                {"main", "detail"},
+                {mode for mode, _prompt, _attachments in transport.run_calls},
+            )
+            self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
 
     def test_final_prompts_contract_allows_non_product_material_in_prompt_body(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2217,17 +2515,19 @@ class CodexDevExecutorTest(CodexDevFixture):
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；后景玻璃器皿虚化。"
-            transport = FakeTransport(
-                [
+            transport = FinalPromptIdentityTransport(
+                main=[
                     CodexTurnResult(
                         text=json.dumps(main_response, ensure_ascii=False),
                         thread_id="thread-final-main-style-prop",
-                    ),
+                    )
+                ],
+                detail=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
                         thread_id="thread-final-detail-style-prop",
-                    ),
-                ]
+                    )
+                ],
             )
 
             CodexDevExecutor(context, transport=transport, repository_root=root).execute(
@@ -2245,11 +2545,19 @@ class CodexDevExecutorTest(CodexDevFixture):
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；杯身为玻璃。"
-            transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(main_response, ensure_ascii=False),
-                    thread_id="thread-final-main-product-material",
-                )
+            transport = FinalPromptIdentityTransport(
+                main=[
+                    CodexTurnResult(
+                        text=json.dumps(main_response, ensure_ascii=False),
+                        thread_id="thread-final-main-product-material",
+                    )
+                ],
+                detail=[
+                    CodexTurnResult(
+                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
+                        thread_id="thread-final-detail-product-material",
+                    )
+                ],
             )
 
             with self.assertRaises(ExecutorExecutionError) as caught:
@@ -2260,6 +2568,11 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertIn("未确认商品事实", str(caught.exception))
             self.assertFalse(final_dir.exists())
             self.assertEqual([], transport.continuation_calls)
+            self.assertEqual(
+                {"main", "detail"},
+                {mode for mode, _prompt, _attachments in transport.run_calls},
+            )
+            self.assertEqual(0, transport.remaining("detail"))
 
     def test_final_prompts_invalid_second_batch_leaves_no_formal_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2267,17 +2580,19 @@ class CodexDevExecutorTest(CodexDevFixture):
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             invalid_detail = valid_final_prompt_response("detail")
             invalid_detail["prompts"].pop()
-            transport = FakeTransport(
-                [
+            transport = FinalPromptIdentityTransport(
+                main=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
                         thread_id="thread-final-main",
-                    ),
+                    )
+                ],
+                detail=[
                     CodexTurnResult(
                         text=json.dumps(invalid_detail, ensure_ascii=False),
                         thread_id="thread-final-detail-invalid",
-                    ),
-                ]
+                    )
+                ],
             )
 
             with self.assertRaises(ExecutorExecutionError):
@@ -2286,6 +2601,11 @@ class CodexDevExecutorTest(CodexDevFixture):
                 )
 
             self.assertEqual(2, len(transport.calls))
+            self.assertEqual(
+                {"main", "detail"},
+                {mode for mode, _prompt, _attachments in transport.run_calls},
+            )
+            self.assertEqual(0, transport.remaining("main"))
             self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
 
     def test_final_prompts_reject_changed_config_decisions_and_unknown_fields(self) -> None:
@@ -2343,11 +2663,19 @@ class CodexDevExecutorTest(CodexDevFixture):
                 context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
                 main_response = copy.deepcopy(valid_final_prompt_response("main"))
                 mutate(main_response)
-                transport = FakeTransport(
-                    CodexTurnResult(
-                        text=json.dumps(main_response, ensure_ascii=False),
-                        thread_id=f"final-{case_name}",
-                    )
+                transport = FinalPromptIdentityTransport(
+                    main=[
+                        CodexTurnResult(
+                            text=json.dumps(main_response, ensure_ascii=False),
+                            thread_id=f"final-main-{case_name}",
+                        )
+                    ],
+                    detail=[
+                        CodexTurnResult(
+                            text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
+                            thread_id=f"final-detail-{case_name}",
+                        )
+                    ],
                 )
 
                 with self.assertRaises(ExecutorExecutionError) as caught:
@@ -2355,7 +2683,11 @@ class CodexDevExecutorTest(CodexDevFixture):
                         ExecutionRequest(step="final_prompts")
                     )
 
-                self.assertEqual(1, len(transport.calls))
+                self.assertEqual(2, len(transport.calls))
+                self.assertEqual(
+                    {"main", "detail"},
+                    {mode for mode, _prompt, _attachments in transport.run_calls},
+                )
                 self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
                 self.assertNotIn("PRIVATE_IMAGE_BODY", str(caught.exception))
 
@@ -2797,6 +3129,10 @@ class CodexDevExecutorTest(CodexDevFixture):
         cases = {
             "connection": "无法连接 canvas-agent",
             "thread": "Codex 线程执行失败",
+            "isolated_unavailable": (
+                "codex-dev 无法使用：canvas-agent 未提供 Codex 隔离会话路由"
+            ),
+            "isolated_capacity": "codex-dev 无法启动：Codex 隔离会话已达并发上限",
         }
         for code, expected in cases.items():
             with self.subTest(code=code), tempfile.TemporaryDirectory() as tmp:
@@ -2809,7 +3145,10 @@ class CodexDevExecutorTest(CodexDevFixture):
                     executor.execute(ExecutionRequest(step="identity"))
 
                 message = str(caught.exception)
-                self.assertIn(expected, message)
+                if code.startswith("isolated_"):
+                    self.assertEqual(expected, message)
+                else:
+                    self.assertIn(expected, message)
                 self.assertNotIn("secret", message)
                 self.assertNotIn("FULL_PRODUCT_BODY", message)
                 self.assertIsNone(caught.exception.__cause__)
@@ -2987,18 +3326,9 @@ class CodexDevExecutorTest(CodexDevFixture):
                     self.end_headers()
                     if turn_started.wait(3):
                         self.wfile.write(
-                            b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
+                            b'event: agent_done\ndata: {"agent":"codex","threadId":"thread-null","status":"completed","assistantText":""}\n\n'
                         )
                         self.wfile.flush()
-                    return
-                if path == "/agent/codex/threads/thread-null":
-                    self._send_json(
-                        {
-                            "ok": True,
-                            "thread": {"id": "thread-null"},
-                            "messages": [{"role": "user", "text": "batch input"}],
-                        }
-                    )
                     return
                 self.send_error(404)
 
@@ -3006,10 +3336,7 @@ class CodexDevExecutorTest(CodexDevFixture):
                 path = urllib.parse.urlparse(self.path).path
                 body = self._json_body()
                 request_bodies.append((path, body))
-                if path == "/agent/codex/threads/new":
-                    self._send_json({"ok": True, "thread": {"id": "thread-null"}})
-                    return
-                if path == "/agent/codex/turn":
+                if path == "/agent/codex/isolated/turn":
                     self._send_json({"ok": True, "threadId": "thread-null"})
                     turn_started.set()
                     return
@@ -3036,16 +3363,29 @@ class CodexDevExecutorTest(CodexDevFixture):
 
                 self.assertEqual("empty_assistant_response", getattr(caught.exception, "code", ""))
                 self.assertEqual(
-                    ["/agent/codex/threads/new", "/agent/codex/turn"],
+                    ["/agent/codex/isolated/turn"],
                     [path for path, _body in request_bodies],
                 )
                 self.assertEqual(
-                    {"model": "gpt-5.5", "effort": "xhigh"},
+                    {
+                        "prompt": mock.ANY,
+                        "attachments": mock.ANY,
+                        "model": "gpt-5.5",
+                        "effort": "xhigh",
+                    },
                     request_bodies[0][1],
                 )
+                self.assertTrue(request_bodies[0][1]["prompt"])
+                self.assertEqual(1, len(request_bodies[0][1]["attachments"]))
                 self.assertEqual(
                     1,
-                    sum(path == "/agent/codex/turn" for path, _body in request_bodies),
+                    sum(
+                        path == "/agent/codex/isolated/turn"
+                        for path, _body in request_bodies
+                    ),
+                )
+                self.assertFalse(
+                    any("/agent/codex/threads" in path for path, _body in request_bodies)
                 )
                 self.assertFalse((output_dir / "product_identity_archive.json").exists())
             finally:
@@ -3097,20 +3437,14 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             )
 
     def test_thread_start_http_payload_contains_fixed_model_and_effort(self) -> None:
-        sse = b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-settings"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-settings"}'),
-            FakeResponse(
-                b'{"ok":true,"messages":[{"role":"assistant","text":"SETTINGS_OK"}]}'
-            ),
-        ]
-        requests = []
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            return (
+                {"ok": True, "threadId": "thread-settings"},
+                completed_sse("thread-settings", "SETTINGS_OK"),
+            )
 
-        def opener(request, timeout):
-            requests.append(request)
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3119,37 +3453,51 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
         result = transport.run_turn("offline prompt", ())
 
-        new_thread_request = next(
+        turn_request = next(
             request
-            for request in requests
-            if urllib.parse.urlparse(request.full_url).path == "/agent/codex/threads/new"
+            for request, _timeout in opener.requests
+            if urllib.parse.urlparse(request.full_url).path == "/agent/codex/isolated/turn"
         )
         self.assertEqual("SETTINGS_OK", result.text)
         self.assertEqual(
-            {"model": "gpt-5.5", "effort": "xhigh"},
-            json.loads(new_thread_request.data.decode("utf-8")),
+            {
+                "prompt": "offline prompt",
+                "attachments": [],
+                "model": "gpt-5.5",
+                "effort": "xhigh",
+            },
+            json.loads(turn_request.data.decode("utf-8")),
+        )
+        self.assertEqual(
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
         )
 
     def test_http_and_sse_are_wrapped_without_real_network(self) -> None:
-        sse = b"".join(
-            [
-                b'event: hello\ndata: {"ok":true}\n\n',
-                b'event: agent_event\ndata: {"agent":"codex","type":"turn.started"}\n\n',
-                b'event: agent_event\ndata: {"agent":"codex","type":"item.updated","item":{"type":"agent_message","text":"{\\"artifact_type\\":\\"product_identity_archive\\"}"}}\n\n',
-                b'event: agent_done\ndata: {"agent":"codex"}\n\n',
-            ]
-        )
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-3"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-3"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"assistant","text":"{\\"artifact_type\\":\\"product_identity_archive\\",\\"identity\\":{}}"}]}'),
-        ]
-        requests = []
+        assistant_text = '{"artifact_type":"product_identity_archive","identity":{}}'
 
-        def opener(request, timeout):
-            requests.append((request, timeout))
-            return responses.pop(0)
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            self.assertEqual("offline prompt", body["prompt"])
+            return (
+                {"ok": True, "threadId": "thread-3"},
+                b"".join(
+                    [
+                        sse_event("hello", {"ok": True}),
+                        sse_event(
+                            "agent_event",
+                            {
+                                "agent": "codex",
+                                "threadId": "thread-3",
+                                "type": "turn.started",
+                            },
+                        ),
+                        completed_sse("thread-3", assistant_text),
+                    ]
+                ),
+            )
+
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3161,19 +3509,29 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         self.assertEqual("thread-3", result.thread_id)
         self.assertIn("product_identity_archive", result.text)
         self.assertEqual(
-            ["/events", "/agent/codex/threads/new", "/agent/codex/turn", "/agent/codex/threads/thread-3"],
-            [urllib.parse.urlparse(item[0].full_url).path for item in requests],
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
         )
-        new_thread_request = next(
+        turn_request = next(
             item[0]
-            for item in requests
-            if urllib.parse.urlparse(item[0].full_url).path == "/agent/codex/threads/new"
+            for item in opener.requests
+            if urllib.parse.urlparse(item[0].full_url).path == "/agent/codex/isolated/turn"
         )
         self.assertEqual(
-            {"model": "gpt-5.5", "effort": "xhigh"},
-            json.loads(new_thread_request.data.decode("utf-8")),
+            {
+                "prompt": "offline prompt",
+                "attachments": [],
+                "model": "gpt-5.5",
+                "effort": "xhigh",
+            },
+            json.loads(turn_request.data.decode("utf-8")),
         )
-        self.assertTrue(all(item[0].get_header("X-canvas-agent-token") == "test-token" for item in requests))
+        self.assertTrue(
+            all(
+                item[0].get_header("X-canvas-agent-token") == "test-token"
+                for item in opener.requests
+            )
+        )
 
     def test_sse_ping_cannot_extend_the_hard_turn_deadline(self) -> None:
         clock = [0.0]
@@ -3194,30 +3552,28 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
                 return False
 
             def readline(self) -> bytes:
-                clock[0] += 1.0
+                clock[0] += 200.0
                 if self.index >= 30:
                     return b""
                 line = self.lines[self.index % len(self.lines)]
                 self.index += 1
                 return line
 
-        responses = [
-            PingResponse(),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-timeout"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-timeout"}'),
-            FakeResponse(b'{"ok":true}'),
-        ]
         requests: list[tuple[urllib.request.Request, float]] = []
 
         def opener(request, timeout):
             requests.append((request, timeout))
-            return responses.pop(0)
+            path = urllib.parse.urlparse(request.full_url).path
+            if path == "/events":
+                return PingResponse()
+            if path == "/agent/codex/isolated/turn":
+                return FakeResponse(b'{"ok":true,"threadId":"thread-timeout"}')
+            raise AssertionError(f"unexpected legacy or unrelated route: {path}")
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
             opener=opener,
             timeout=300.0,
-            turn_timeout=3.0,
             monotonic=lambda: clock[0],
         )
 
@@ -3226,32 +3582,20 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
         paths = [urllib.parse.urlparse(item[0].full_url).path for item in requests]
         self.assertEqual("timeout", caught.exception.code)
-        self.assertEqual("/agent/codex/interrupt", paths[-1])
-        self.assertLessEqual(requests[-1][1], 2.0)
+        self.assertEqual(["/events", "/agent/codex/isolated/turn"], paths)
+        self.assertNotIn("/agent/codex/interrupt", paths)
+        self.assertEqual(600.0, clock[0])
 
     def test_existing_thread_continuation_reuses_thread_without_creating_another(self) -> None:
-        sse = b'event: agent_done\ndata: {"agent":"codex","status":"completed"}\n\n'
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(
-                b'{"ok":true,"thread":{"id":"thread-existing"},"messages":['
-                b'{"role":"user","text":"original"},'
-                b'{"role":"assistant","text":"OLD_RESULT"}]}'
-            ),
-            FakeResponse(b'{"ok":true,"threadId":"thread-existing"}'),
-            FakeResponse(
-                b'{"ok":true,"thread":{"id":"thread-existing"},"messages":['
-                b'{"role":"user","text":"original"},'
-                b'{"role":"assistant","text":"OLD_RESULT"},'
-                b'{"role":"user","text":"repair"},'
-                b'{"role":"assistant","text":"NEW_REPAIRED_RESULT"}]}'
-            ),
-        ]
-        requests = []
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/continue", path)
+            self.assertEqual("thread-existing", body["threadId"])
+            return (
+                {"ok": True, "threadId": "thread-existing"},
+                completed_sse("thread-existing", "NEW_REPAIRED_RESULT"),
+            )
 
-        def opener(request, timeout):
-            requests.append(request)
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3260,20 +3604,19 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
         result = transport.continue_turn("thread-existing", "repair", ())
 
-        paths = [urllib.parse.urlparse(request.full_url).path for request in requests]
+        paths = [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests]
         self.assertEqual("thread-existing", result.thread_id)
         self.assertEqual("NEW_REPAIRED_RESULT", result.text)
         self.assertEqual(
             [
                 "/events",
-                "/agent/codex/threads/thread-existing",
-                "/agent/codex/turn",
-                "/agent/codex/threads/thread-existing",
+                "/agent/codex/isolated/continue",
             ],
             paths,
         )
-        self.assertNotIn("/agent/codex/threads/new", paths)
-        turn_request = requests[2]
+        self.assertFalse(any("/agent/codex/threads" in path for path in paths))
+        self.assertNotIn("/agent/codex/turn", paths)
+        turn_request = opener.requests[1][0]
         self.assertEqual(
             {
                 "threadId": "thread-existing",
@@ -3286,17 +3629,21 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         )
 
     def test_failed_agent_done_is_rejected_before_thread_result_read(self) -> None:
-        sse = b'event: agent_done\ndata: {"agent":"codex","status":"failed"}\n\n'
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-failed"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-failed"}'),
-        ]
-        requests = []
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            return (
+                {"ok": True, "threadId": "thread-failed"},
+                sse_event(
+                    "agent_done",
+                    {
+                        "agent": "codex",
+                        "threadId": "thread-failed",
+                        "status": "failed",
+                    },
+                ),
+            )
 
-        def opener(request, timeout):
-            requests.append(request)
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3307,23 +3654,28 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             transport.run_turn("offline prompt", ())
 
         self.assertEqual("thread", caught.exception.code)
-        self.assertNotIn(
-            "/agent/codex/threads/thread-failed",
-            [urllib.parse.urlparse(request.full_url).path for request in requests],
+        self.assertEqual(
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
         )
 
     def test_typed_empty_agent_done_is_classified_without_thread_result_read(self) -> None:
-        sse = b'event: agent_done\ndata: {"agent":"codex","status":"failed","failureCode":"empty_assistant_response"}\n\n'
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-empty-typed"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-empty-typed"}'),
-        ]
-        requests = []
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            return (
+                {"ok": True, "threadId": "thread-empty-typed"},
+                sse_event(
+                    "agent_done",
+                    {
+                        "agent": "codex",
+                        "threadId": "thread-empty-typed",
+                        "status": "failed",
+                        "failureCode": "empty_assistant_response",
+                    },
+                ),
+            )
 
-        def opener(request, timeout):
-            requests.append(request)
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3334,9 +3686,9 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             transport.run_turn("offline prompt", ())
 
         self.assertEqual("empty_response", caught.exception.code)
-        self.assertNotIn(
-            "/agent/codex/threads/thread-empty-typed",
-            [urllib.parse.urlparse(request.full_url).path for request in requests],
+        self.assertEqual(
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
         )
 
     def test_typed_empty_agent_error_crosses_real_loopback_http_sse_boundary(self) -> None:
@@ -3373,7 +3725,8 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
                 self.end_headers()
                 if turn_started.wait(3):
                     self.wfile.write(
-                        b'event: agent_error\ndata: {"agent":"codex","message":"Codex turn failed","failureCode":"empty_assistant_response"}\n\n'
+                        b'event: agent_error\ndata: {"agent":"codex","threadId":"thread-loopback","message":"Codex turn failed","failureCode":"empty_assistant_response"}\n\n'
+                        b'event: agent_done\ndata: {"agent":"codex","threadId":"thread-loopback","status":"failed","failureCode":"empty_assistant_response","assistantText":""}\n\n'
                     )
                     self.wfile.flush()
 
@@ -3381,10 +3734,7 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
                 path = urllib.parse.urlparse(self.path).path
                 body = self._json_body()
                 request_bodies.append((path, body))
-                if path == "/agent/codex/threads/new":
-                    self._send_json({"ok": True, "thread": {"id": "thread-loopback"}})
-                    return
-                if path == "/agent/codex/turn":
+                if path == "/agent/codex/isolated/turn":
                     self._send_json({"ok": True, "threadId": "thread-loopback"})
                     turn_started.set()
                     return
@@ -3407,11 +3757,16 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
             self.assertEqual("empty_response", caught.exception.code)
             self.assertEqual(
-                ["/agent/codex/threads/new", "/agent/codex/turn"],
+                ["/agent/codex/isolated/turn"],
                 [path for path, _body in request_bodies],
             )
             self.assertEqual(
-                {"model": "gpt-5.5", "effort": "xhigh"},
+                {
+                    "prompt": "offline prompt",
+                    "attachments": [],
+                    "model": "gpt-5.5",
+                    "effort": "xhigh",
+                },
                 request_bodies[0][1],
             )
         finally:
@@ -3420,25 +3775,27 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             server_thread.join(timeout=3)
 
     def test_sse_message_from_another_turn_is_not_used_as_result(self) -> None:
-        sse = b"".join(
-            [
-                b'event: agent_event\ndata: {"agent":"codex","type":"turn.started"}\n\n',
-                b'event: agent_event\ndata: {"agent":"codex","type":"item.updated","item":{"type":"agent_message","text":"WRONG_THREAD_PRIVATE_BODY"}}\n\n',
-                b'event: agent_done\ndata: {"agent":"codex"}\n\n',
-                b'event: agent_event\ndata: {"agent":"codex","type":"turn.started"}\n\n',
-                b'event: agent_done\ndata: {"agent":"codex"}\n\n',
-            ]
-        )
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-own"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-own"}'),
-            FakeResponse(b'{"ok":true,"messages":[]}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"assistant","text":"OWN_THREAD_RESULT"}]}'),
-        ]
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            return (
+                {"ok": True, "threadId": "thread-own"},
+                b"".join(
+                    [
+                        sse_event(
+                            "agent_done",
+                            {
+                                "agent": "codex",
+                                "status": "completed",
+                                "assistantText": "WRONG_UNSCOPED_RESULT",
+                            },
+                        ),
+                        completed_sse("thread-other", "WRONG_THREAD_PRIVATE_BODY"),
+                        completed_sse("thread-own", "OWN_THREAD_RESULT"),
+                    ]
+                ),
+            )
 
-        def opener(_request, timeout):
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3448,27 +3805,92 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         result = transport.run_turn("offline prompt", ())
 
         self.assertEqual("OWN_THREAD_RESULT", result.text)
+        self.assertNotEqual("WRONG_UNSCOPED_RESULT", result.text)
         self.assertNotEqual("WRONG_THREAD_PRIVATE_BODY", result.text)
+        self.assertEqual(
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
+        )
+
+    def test_parallel_transports_filter_interleaved_done_events_by_thread_id(self) -> None:
+        both_posts_started = threading.Barrier(2)
+        shared_sse = b"".join(
+            [
+                sse_event(
+                    "agent_done",
+                    {
+                        "agent": "codex",
+                        "status": "completed",
+                        "assistantText": "UNSCOPED_MUST_BE_IGNORED",
+                    },
+                ),
+                completed_sse("thread-B", "RESULT_B"),
+                completed_sse("thread-A", "RESULT_A"),
+            ]
+        )
+
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            prompt = body["prompt"]
+            self.assertIn(prompt, {"prompt-A", "prompt-B"})
+            both_posts_started.wait(timeout=3)
+            identity = prompt.rsplit("-", 1)[1]
+            return {"ok": True, "threadId": f"thread-{identity}"}, shared_sse
+
+        opener = RoutedIsolatedOpener(dispatch)
+        transports = {
+            identity: CanvasAgentCodexTransport(
+                config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+                opener=opener,
+            )
+            for identity in ("A", "B")
+        }
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                identity: executor.submit(transport.run_turn, f"prompt-{identity}", ())
+                for identity, transport in transports.items()
+            }
+            results = {identity: future.result() for identity, future in futures.items()}
+
+        self.assertEqual("thread-A", results["A"].thread_id)
+        self.assertEqual("RESULT_A", results["A"].text)
+        self.assertEqual("thread-B", results["B"].thread_id)
+        self.assertEqual("RESULT_B", results["B"].text)
+        paths = [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests]
+        self.assertEqual(2, paths.count("/events"))
+        self.assertEqual(2, paths.count("/agent/codex/isolated/turn"))
+        self.assertFalse(any("/agent/codex/threads" in path for path in paths))
+        event_client_ids = {
+            urllib.parse.parse_qs(urllib.parse.urlparse(item[0].full_url).query)["clientId"][0]
+            for item in opener.requests
+            if urllib.parse.urlparse(item[0].full_url).path == "/events"
+        }
+        self.assertEqual(2, len(event_client_ids))
 
     def test_large_attachment_set_is_split_across_one_thread_before_final_synthesis(self) -> None:
-        sse = b"".join(
-            b'event: agent_done\ndata: {"agent":"codex"}\n\n' for _ in range(3)
-        )
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-batch"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-batch"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"assistant","text":"RECORDED_1"}]}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-batch"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"assistant","text":"RECORDED_1"},{"role":"assistant","text":"RECORDED_2"}]}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-batch"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"assistant","text":"RECORDED_1"},{"role":"assistant","text":"RECORDED_2"},{"role":"assistant","text":"FINAL_IDENTITY_JSON"}]}'),
-        ]
-        requests = []
+        def dispatch(path, body):
+            prompt = body["prompt"]
+            if path == "/agent/codex/isolated/turn":
+                self.assertNotIn("threadId", body)
+                self.assertIn("第 1/2 批", prompt)
+                text = "RECORDED_1"
+            elif path == "/agent/codex/isolated/continue":
+                self.assertEqual("thread-batch", body["threadId"])
+                if "第 2/2 批" in prompt:
+                    text = "RECORDED_2"
+                elif "综合本线程全部" in prompt:
+                    text = "FINAL_IDENTITY_JSON"
+                else:
+                    raise AssertionError("continue prompt must identify its batch role")
+            else:
+                raise AssertionError(f"unexpected route: {path}")
+            return (
+                {"ok": True, "threadId": "thread-batch"},
+                completed_sse("thread-batch", text),
+            )
 
-        def opener(request, timeout):
-            requests.append(request)
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3484,18 +3906,31 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
         turn_bodies = [
             json.loads(request.data.decode("utf-8"))
-            for request in requests
-            if urllib.parse.urlparse(request.full_url).path == "/agent/codex/turn"
+            for request, _timeout in opener.requests
+            if urllib.parse.urlparse(request.full_url).path
+            in {"/agent/codex/isolated/turn", "/agent/codex/isolated/continue"}
         ]
+        paths = [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests]
         self.assertEqual("FINAL_IDENTITY_JSON", result.text)
         self.assertEqual(3, len(turn_bodies))
         self.assertEqual([1, 1, 0], [len(body["attachments"]) for body in turn_bodies])
-        self.assertTrue(all(body["threadId"] == "thread-batch" for body in turn_bodies))
+        self.assertNotIn("threadId", turn_bodies[0])
+        self.assertTrue(all(body["threadId"] == "thread-batch" for body in turn_bodies[1:]))
         self.assertIn("第 1/2 批", turn_bodies[0]["prompt"])
         self.assertIn("第 2/2 批", turn_bodies[1]["prompt"])
         self.assertTrue(all("必须返回非空 JSON" in body["prompt"] for body in turn_bodies[:2]))
         self.assertTrue(all("batch_observation" in body["prompt"] for body in turn_bodies[:2]))
         self.assertIn("综合本线程全部", turn_bodies[2]["prompt"])
+        self.assertEqual(3, paths.count("/events"))
+        self.assertEqual(1, paths.count("/agent/codex/isolated/turn"))
+        self.assertEqual(2, paths.count("/agent/codex/isolated/continue"))
+        self.assertNotIn("/agent/codex/turn", paths)
+        event_client_ids = {
+            urllib.parse.parse_qs(urllib.parse.urlparse(item[0].full_url).query)["clientId"][0]
+            for item in opener.requests
+            if urllib.parse.urlparse(item[0].full_url).path == "/events"
+        }
+        self.assertEqual(3, len(event_client_ids))
 
     def test_single_attachment_over_chunk_limit_is_rejected_before_network(self) -> None:
         calls = []
@@ -3522,15 +3957,14 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         self.assertEqual([], calls)
 
     def test_complete_json_request_body_limit_is_enforced_before_turn_post(self) -> None:
-        responses = [
-            FakeResponse(b'event: hello\ndata: {"ok":true}\n\n'),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-body-limit"}}'),
-        ]
         requests = []
 
         def opener(request, timeout):
             requests.append(request)
-            return responses.pop(0)
+            path = urllib.parse.urlparse(request.full_url).path
+            if path == "/events":
+                return FakeResponse(b'event: hello\ndata: {"ok":true}\n\n')
+            raise AssertionError(f"request body limit must precede isolated POST: {path}")
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3544,25 +3978,35 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
         self.assertEqual("response", caught.exception.code)
         self.assertNotIn(
+            "/agent/codex/isolated/turn",
+            [urllib.parse.urlparse(request.full_url).path for request in requests],
+        )
+        self.assertNotIn(
             "/agent/codex/turn",
+            [urllib.parse.urlparse(request.full_url).path for request in requests],
+        )
+        self.assertEqual(
+            ["/events"],
             [urllib.parse.urlparse(request.full_url).path for request in requests],
         )
 
     def test_empty_second_turn_detected_when_first_turn_had_multiple_assistants(self) -> None:
-        sse = b"".join(
-            b'event: agent_done\ndata: {"agent":"codex"}\n\n' for _ in range(2)
-        )
-        responses = [
-            FakeResponse(sse),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-counts"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-counts"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"user","text":"batch 1"},{"role":"assistant","text":"A1"},{"role":"assistant","text":"A2"}]}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-counts"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"user","text":"batch 1"},{"role":"assistant","text":"A1"},{"role":"assistant","text":"A2"},{"role":"user","text":"batch 2"}]}'),
-        ]
+        def dispatch(path, body):
+            if path == "/agent/codex/isolated/turn":
+                self.assertIn("第 1/2 批", body["prompt"])
+                assistant_text = "A1\nA2"
+            elif path == "/agent/codex/isolated/continue":
+                self.assertEqual("thread-counts", body["threadId"])
+                self.assertIn("第 2/2 批", body["prompt"])
+                assistant_text = ""
+            else:
+                raise AssertionError(f"unexpected route: {path}")
+            return (
+                {"ok": True, "threadId": "thread-counts"},
+                completed_sse("thread-counts", assistant_text),
+            )
 
-        def opener(_request, timeout):
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3578,6 +4022,15 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             transport.run_turn("IDENTITY_RULES", attachments)
 
         self.assertEqual("empty_response", caught.exception.code)
+        self.assertEqual(
+            [
+                "/events",
+                "/agent/codex/isolated/turn",
+                "/events",
+                "/agent/codex/isolated/continue",
+            ],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
+        )
 
     def test_non_loopback_canvas_agent_url_is_refused_before_network(self) -> None:
         calls = []
@@ -3610,11 +4063,18 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
 
     def test_thread_http_failure_is_classified_without_response_body(self) -> None:
         responses = [FakeResponse(b'event: hello\ndata: {"ok":true}\n\n')]
+        response_body = io.BytesIO(b"token=secret FULL_PRODUCT_BODY")
 
         def opener(request, timeout):
             if responses:
                 return responses.pop(0)
-            raise urllib.error.HTTPError(request.full_url, 500, "server error", {}, io.BytesIO(b"token=secret FULL_PRODUCT_BODY"))
+            raise urllib.error.HTTPError(
+                request.full_url,
+                500,
+                "server error",
+                {},
+                response_body,
+            )
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3629,17 +4089,59 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
         self.assertNotIn("FULL_PRODUCT_BODY", str(caught.exception))
         self.assertIsNone(caught.exception.__cause__)
         self.assertIsNone(caught.exception.__context__)
+        self.assertTrue(response_body.closed)
+
+    def test_isolated_route_404_and_503_are_explicit_and_do_not_fallback(self) -> None:
+        cases = {
+            404: "isolated_unavailable",
+            503: "isolated_capacity",
+        }
+        for status, expected_code in cases.items():
+            with self.subTest(status=status):
+                requests = []
+                response_body = io.BytesIO(b"token=secret PRIVATE_ROUTE_BODY")
+
+                def opener(request, timeout):
+                    requests.append(request)
+                    path = urllib.parse.urlparse(request.full_url).path
+                    if path == "/events":
+                        return FakeResponse(b'event: hello\ndata: {"ok":true}\n\n')
+                    if path == "/agent/codex/isolated/turn":
+                        raise urllib.error.HTTPError(
+                            request.full_url,
+                            status,
+                            "isolated route unavailable",
+                            {},
+                            response_body,
+                        )
+                    raise AssertionError(f"unexpected legacy fallback: {path}")
+
+                transport = CanvasAgentCodexTransport(
+                    config={"url": "http://127.0.0.1:17371", "token": "test-token"},
+                    opener=opener,
+                )
+
+                with self.assertRaises(CanvasAgentTransportError) as caught:
+                    transport.run_turn("offline prompt", ())
+
+                self.assertEqual(expected_code, caught.exception.code)
+                self.assertNotIn("secret", str(caught.exception))
+                self.assertNotIn("PRIVATE_ROUTE_BODY", str(caught.exception))
+                self.assertTrue(response_body.closed)
+                self.assertEqual(
+                    ["/events", "/agent/codex/isolated/turn"],
+                    [urllib.parse.urlparse(request.full_url).path for request in requests],
+                )
 
     def test_completed_own_turn_without_assistant_is_empty_response_error(self) -> None:
-        responses = [
-            FakeResponse(b'event: agent_done\ndata: {"agent":"codex"}\n\n'),
-            FakeResponse(b'{"ok":true,"thread":{"id":"thread-empty"}}'),
-            FakeResponse(b'{"ok":true,"threadId":"thread-empty"}'),
-            FakeResponse(b'{"ok":true,"messages":[{"role":"user","text":"batch input"}]}'),
-        ]
+        def dispatch(path, body):
+            self.assertEqual("/agent/codex/isolated/turn", path)
+            return (
+                {"ok": True, "threadId": "thread-empty"},
+                completed_sse("thread-empty", ""),
+            )
 
-        def opener(_request, timeout):
-            return responses.pop(0)
+        opener = RoutedIsolatedOpener(dispatch)
 
         transport = CanvasAgentCodexTransport(
             config={"url": "http://127.0.0.1:17371", "token": "test-token"},
@@ -3650,6 +4152,10 @@ class CanvasAgentCodexTransportTest(unittest.TestCase):
             transport.run_turn("offline prompt", ())
 
         self.assertEqual("empty_response", caught.exception.code)
+        self.assertEqual(
+            ["/events", "/agent/codex/isolated/turn"],
+            [urllib.parse.urlparse(item[0].full_url).path for item in opener.requests],
+        )
 
 
 class UnsupportedClaimsRegressionTest(CodexDevFixture):
@@ -3848,8 +4354,8 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             main_response["prompts"][0]["final_prompt"] = main_response["prompts"][0][
                 "final_prompt"
             ].replace("产品高度约 25 厘米", "整壶约 25 厘米")
-            transport = FakeTransport(
-                [
+            transport = FinalPromptIdentityTransport(
+                main=[
                     CodexTurnResult(
                         text=json.dumps(main_response, ensure_ascii=False),
                         thread_id="thread-final-main-confirmed-height-restatement",
@@ -3858,11 +4364,13 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
                         text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
                         thread_id="thread-final-main-confirmed-height-restatement",
                     ),
+                ],
+                detail=[
                     CodexTurnResult(
                         text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
                         thread_id="thread-final-detail-confirmed-height-restatement",
-                    ),
-                ]
+                    )
+                ],
             )
 
             result = CodexDevExecutor(
@@ -3881,6 +4389,7 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             self.assertEqual(1, len(transport.continuation_calls))
             thread_id, repair_prompt, attachments = transport.continuation_calls[0]
             self.assertEqual("thread-final-main-confirmed-height-restatement", thread_id)
+            self.assertEqual(["main"], transport.continuation_modes)
             self.assertEqual((), attachments)
             self.assertIn("画布比例固定为 1:1", repair_prompt)
             self.assertIn("高度约 25 厘米", repair_prompt)

@@ -17,6 +17,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
@@ -380,6 +381,13 @@ class CodexTurnResult:
     thread_id: str
 
 
+@dataclass(frozen=True)
+class _FinalPromptChainResult:
+    batch: dict[str, dict[str, str]]
+    turn: CodexTurnResult
+    correction_attempts: int
+
+
 class CodexTransport(Protocol):
     def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
         """Run one Codex turn through canvas-agent."""
@@ -404,6 +412,8 @@ class CanvasAgentTransportError(RuntimeError):
         "response": "canvas-agent 返回异常",
         "empty_response": "Codex 本轮没有返回内容",
         "timeout": "Codex 线程等待超时",
+        "isolated_unavailable": "canvas-agent 不支持 Codex 隔离会话",
+        "isolated_capacity": "canvas-agent Codex 隔离会话已达并发上限",
     }
 
     def __init__(
@@ -501,89 +511,52 @@ class CanvasAgentCodexTransport:
         config = self._load_config()
         base_url = config["url"].rstrip("/")
         token = config["token"]
-        client_id = f"codex-dev-{uuid.uuid4()}"
-        events_url = f"{base_url}/events?{urllib.parse.urlencode({'clientId': client_id})}"
-        events_request = self._request("GET", events_url, token)
+        if len(chunks) == 1:
+            return self._run_isolated_turn(
+                base_url,
+                token,
+                prompt,
+                chunks[0],
+            )
 
-        try:
-            events_response = self.opener(events_request, timeout=self.timeout)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise CanvasAgentTransportError("connection") from None
+        thread_id: str | None = None
+        total = len(chunks)
+        for index, chunk in enumerate(chunks, start=1):
+            if index == 1:
+                batch_prompt = prompt
+            else:
+                batch_prompt = "继续同一 identity 产品身份建档任务。"
+            batch_prompt += (
+                f"\n\n由于图片总量超过本地接口单次上限，这是第 {index}/{total} 批图片。"
+                "本轮只观察并记录这些图片中的产品事实、可见推断、无法确认项和禁止虚构项；"
+                "不要提前生成最终档案或其他工作流产物。"
+                "本轮必须返回非空 JSON，对象顶层键为 batch_observation，"
+                "其内容明确包含 confirmed_facts、visible_inferences、unknowns、prohibited_inventions 四个数组，"
+                "仅记录本批图片观察，不得虚构。"
+            )
+            result = self._run_isolated_turn(
+                base_url,
+                token,
+                batch_prompt,
+                chunk,
+                thread_id=thread_id,
+            )
+            thread_id = result.thread_id
 
-        try:
-            with events_response as event_stream:
-                thread_response = self._json_request(
-                    "POST",
-                    f"{base_url}/agent/codex/threads/new",
-                    token,
-                    {"model": self.model, "effort": self.effort},
-                    error_code="thread",
-                )
-                thread = thread_response.get("thread") if isinstance(thread_response, dict) else None
-                thread_id = str(thread.get("id") or "") if isinstance(thread, dict) else ""
-                if not thread_response.get("ok") or not thread_id:
-                    raise CanvasAgentTransportError("thread")
-
-                if len(chunks) == 1:
-                    self._start_turn(base_url, token, thread_id, prompt, chunks[0])
-                    final_text, _assistant_count, _user_count = self._read_new_assistant(
-                        event_stream,
-                        base_url,
-                        token,
-                        thread_id,
-                        previous_assistant_count=0,
-                        previous_user_count=0,
-                        deadline=self.monotonic() + self.turn_timeout,
-                    )
-                    return CodexTurnResult(text=final_text, thread_id=thread_id)
-
-                assistant_count = 0
-                user_count = 0
-                total = len(chunks)
-                for index, chunk in enumerate(chunks, start=1):
-                    if index == 1:
-                        batch_prompt = prompt
-                    else:
-                        batch_prompt = "继续同一 identity 产品身份建档任务。"
-                    batch_prompt += (
-                        f"\n\n由于图片总量超过本地接口单次上限，这是第 {index}/{total} 批图片。"
-                        "本轮只观察并记录这些图片中的产品事实、可见推断、无法确认项和禁止虚构项；"
-                        "不要提前生成最终档案或其他工作流产物。"
-                        "本轮必须返回非空 JSON，对象顶层键为 batch_observation，"
-                        "其内容明确包含 confirmed_facts、visible_inferences、unknowns、prohibited_inventions 四个数组，"
-                        "仅记录本批图片观察，不得虚构。"
-                    )
-                    self._start_turn(base_url, token, thread_id, batch_prompt, chunk)
-                    _text, assistant_count, user_count = self._read_new_assistant(
-                        event_stream,
-                        base_url,
-                        token,
-                        thread_id,
-                        previous_assistant_count=assistant_count,
-                        previous_user_count=user_count,
-                        deadline=self.monotonic() + self.turn_timeout,
-                    )
-
-                final_prompt = (
-                    prompt
-                    + "\n\n全部图片批次已经提供完毕。现在综合本线程全部图片观察，"
-                    "严格按上述 Skill、required reference 和 JSON 结构要求，只返回最终产品身份档案 JSON。"
-                )
-                self._start_turn(base_url, token, thread_id, final_prompt, ())
-                final_text, _assistant_count, _user_count = self._read_new_assistant(
-                    event_stream,
-                    base_url,
-                    token,
-                    thread_id,
-                    previous_assistant_count=assistant_count,
-                    previous_user_count=user_count,
-                    deadline=self.monotonic() + self.turn_timeout,
-                )
-                return CodexTurnResult(text=final_text, thread_id=thread_id)
-        except CanvasAgentTransportError:
-            raise
-        except (TimeoutError, OSError) as exc:
-            raise CanvasAgentTransportError("timeout") from None
+        if thread_id is None:
+            raise CanvasAgentTransportError("thread")
+        final_prompt = (
+            prompt
+            + "\n\n全部图片批次已经提供完毕。现在综合本线程全部图片观察，"
+            "严格按上述 Skill、required reference 和 JSON 结构要求，只返回最终产品身份档案 JSON。"
+        )
+        return self._run_isolated_turn(
+            base_url,
+            token,
+            final_prompt,
+            (),
+            thread_id=thread_id,
+        )
 
     def _continue_turn(
         self,
@@ -599,32 +572,49 @@ class CanvasAgentCodexTransport:
         config = self._load_config()
         base_url = config["url"].rstrip("/")
         token = config["token"]
+        return self._run_isolated_turn(
+            base_url,
+            token,
+            prompt,
+            chunks[0],
+            thread_id=thread_id,
+        )
+
+    def _run_isolated_turn(
+        self,
+        base_url: str,
+        token: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+        *,
+        thread_id: str | None = None,
+    ) -> CodexTurnResult:
         client_id = f"codex-dev-{uuid.uuid4()}"
         events_url = f"{base_url}/events?{urllib.parse.urlencode({'clientId': client_id})}"
         events_request = self._request("GET", events_url, token)
         try:
             events_response = self.opener(events_request, timeout=self.timeout)
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError):
+        except urllib.error.HTTPError as exc:
+            self._close_http_error(exc)
+            raise CanvasAgentTransportError("connection") from None
+        except (urllib.error.URLError, TimeoutError, OSError):
             raise CanvasAgentTransportError("connection") from None
 
         try:
             with events_response as event_stream:
-                previous_messages, previous_user_count = self._thread_message_summary(
+                returned_thread_id = self._dispatch_isolated_turn(
                     base_url,
                     token,
-                    thread_id,
+                    prompt,
+                    attachments,
+                    thread_id=thread_id,
                 )
-                self._start_turn(base_url, token, thread_id, prompt, chunks[0])
-                final_text, _assistant_count, _user_count = self._read_new_assistant(
+                final_text = self._read_new_assistant(
                     event_stream,
-                    base_url,
-                    token,
-                    thread_id,
-                    previous_assistant_count=len(previous_messages),
-                    previous_user_count=previous_user_count,
+                    returned_thread_id,
                     deadline=self.monotonic() + self.turn_timeout,
                 )
-                return CodexTurnResult(text=final_text, thread_id=thread_id)
+                return CodexTurnResult(text=final_text, thread_id=returned_thread_id)
         except CanvasAgentTransportError:
             raise
         except (TimeoutError, OSError):
@@ -664,6 +654,13 @@ class CanvasAgentCodexTransport:
             request.add_header("content-type", "application/json")
         return request
 
+    @staticmethod
+    def _close_http_error(exc: urllib.error.HTTPError) -> None:
+        try:
+            exc.close()
+        except Exception:
+            pass
+
     def _json_request(
         self,
         method: str,
@@ -673,6 +670,7 @@ class CanvasAgentCodexTransport:
         *,
         error_code: str,
         timeout: float | None = None,
+        http_error_codes: Mapping[int, str] | None = None,
     ) -> dict[str, Any]:
         request = self._request(method, url, token, payload)
         try:
@@ -681,39 +679,57 @@ class CanvasAgentCodexTransport:
                 timeout=self.timeout if timeout is None else timeout,
             ) as response:
                 result = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        except urllib.error.HTTPError as exc:
+            self._close_http_error(exc)
+            mapped_error = (http_error_codes or {}).get(exc.code)
+            raise CanvasAgentTransportError(mapped_error or error_code) from None
+        except (urllib.error.URLError, TimeoutError, OSError, UnicodeDecodeError, json.JSONDecodeError):
             raise CanvasAgentTransportError(error_code) from None
         if not isinstance(result, dict):
             raise CanvasAgentTransportError(error_code)
         return result
 
-    def _start_turn(
+    def _dispatch_isolated_turn(
         self,
         base_url: str,
         token: str,
-        thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
-    ) -> None:
+        *,
+        thread_id: str | None = None,
+    ) -> str:
         payload = {
-            "threadId": thread_id,
             "prompt": prompt,
             "attachments": [item.as_payload() for item in attachments],
             "model": self.model,
             "effort": self.effort,
         }
+        route = "turn"
+        if thread_id is not None:
+            if not thread_id:
+                raise CanvasAgentTransportError("thread")
+            payload["threadId"] = thread_id
+            route = "continue"
         body_size = len(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
         if body_size > self.max_request_body_bytes:
             raise CanvasAgentTransportError("response")
         turn_response = self._json_request(
             "POST",
-            f"{base_url}/agent/codex/turn",
+            f"{base_url}/agent/codex/isolated/{route}",
             token,
             payload,
             error_code="thread",
+            http_error_codes={
+                404: "isolated_unavailable",
+                503: "isolated_capacity",
+            },
         )
-        if not turn_response.get("ok") or str(turn_response.get("threadId") or "") != thread_id:
+        returned_thread_id = str(turn_response.get("threadId") or "")
+        if not turn_response.get("ok") or not returned_thread_id:
             raise CanvasAgentTransportError("thread")
+        if thread_id is not None and returned_thread_id != thread_id:
+            raise CanvasAgentTransportError("thread")
+        return returned_thread_id
 
     def _attachment_chunks(
         self, attachments: tuple[CodexAttachment, ...]
@@ -740,21 +756,17 @@ class CanvasAgentCodexTransport:
     def _read_new_assistant(
         self,
         stream: Any,
-        base_url: str,
-        token: str,
         thread_id: str,
         *,
-        previous_assistant_count: int,
-        previous_user_count: int,
         deadline: float,
-    ) -> tuple[str, int, int]:
+    ) -> str:
         event_name = ""
         data_lines: list[str] = []
 
         while True:
-            self._raise_if_turn_expired(base_url, token, deadline)
+            self._raise_if_turn_expired(deadline)
             raw_line = stream.readline()
-            self._raise_if_turn_expired(base_url, token, deadline)
+            self._raise_if_turn_expired(deadline)
             if not raw_line:
                 raise CanvasAgentTransportError("thread")
             line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -768,77 +780,36 @@ class CanvasAgentCodexTransport:
                 continue
 
             payload = self._event_payload(data_lines)
-            if event_name == "agent_error" and payload.get("agent") == "codex":
-                if payload.get("failureCode") == "empty_assistant_response":
-                    raise CanvasAgentTransportError("empty_response")
-                raise CanvasAgentTransportError("thread")
-            if event_name == "agent_done" and payload.get("agent") == "codex":
-                status = str(payload.get("status") or "")
-                if status and status != "completed":
-                    if payload.get("failureCode") == "empty_assistant_response":
+            if (
+                event_name == "agent_done"
+                and payload.get("agent") == "codex"
+                and payload.get("threadId") == thread_id
+            ):
+                failure_code = payload.get("failureCode")
+                if failure_code not in (None, ""):
+                    if failure_code == "empty_assistant_response":
                         raise CanvasAgentTransportError("empty_response")
                     raise CanvasAgentTransportError("thread")
-                messages, user_count = self._thread_message_summary(base_url, token, thread_id)
-                if len(messages) > previous_assistant_count:
-                    return messages[-1], len(messages), user_count
-                if user_count > previous_user_count:
+                status = str(payload.get("status") or "")
+                if status != "completed":
+                    raise CanvasAgentTransportError("thread")
+                assistant_text_value = payload.get("assistantText")
+                assistant_text = (
+                    assistant_text_value.strip()
+                    if isinstance(assistant_text_value, str)
+                    else ""
+                )
+                if not assistant_text:
                     raise CanvasAgentTransportError("empty_response")
+                return assistant_text
 
             event_name = ""
             data_lines = []
 
-    def _raise_if_turn_expired(
-        self,
-        base_url: str,
-        token: str,
-        deadline: float,
-    ) -> None:
+    def _raise_if_turn_expired(self, deadline: float) -> None:
         if self.monotonic() < deadline:
             return
-        try:
-            self._json_request(
-                "POST",
-                f"{base_url}/agent/codex/interrupt",
-                token,
-                {},
-                error_code="thread",
-                timeout=min(self.timeout, 2.0),
-            )
-        except CanvasAgentTransportError:
-            pass
         raise CanvasAgentTransportError("timeout")
-
-    def _thread_message_summary(
-        self, base_url: str, token: str, thread_id: str
-    ) -> tuple[tuple[str, ...], int]:
-        safe_thread_id = urllib.parse.quote(thread_id, safe="")
-        response = self._json_request(
-            "GET",
-            f"{base_url}/agent/codex/threads/{safe_thread_id}",
-            token,
-            None,
-            error_code="thread",
-        )
-        if not response.get("ok"):
-            raise CanvasAgentTransportError("thread")
-        thread = response.get("thread")
-        if isinstance(thread, dict) and thread.get("id") and str(thread.get("id")) != thread_id:
-            raise CanvasAgentTransportError("response")
-        messages = response.get("messages")
-        if not isinstance(messages, list):
-            raise CanvasAgentTransportError("response")
-        assistant_messages: list[str] = []
-        user_count = 0
-        for message in messages:
-            if not isinstance(message, dict):
-                continue
-            if message.get("role") == "user":
-                user_count += 1
-            if message.get("role") == "assistant":
-                text = str(message.get("text") or "").strip()
-                if text:
-                    assistant_messages.append(text)
-        return tuple(assistant_messages), user_count
 
     @staticmethod
     def _event_payload(data_lines: list[str]) -> dict[str, Any]:
@@ -1671,6 +1642,47 @@ class CodexDevExecutor:
                 continue
             return batch, turn, correction_attempts
 
+    def _run_final_prompt_pair(
+        self,
+        *,
+        main_prompt: str,
+        main_parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
+        detail_prompt: str,
+        detail_parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
+    ) -> tuple[_FinalPromptChainResult, _FinalPromptChainResult]:
+        def run_chain(
+            prompt: str,
+            parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
+        ) -> _FinalPromptChainResult:
+            turn = self._run_transport(prompt, ())
+            self._emit_turn_progress()
+            return parse_turn(turn)
+
+        results: dict[str, _FinalPromptChainResult] = {}
+        failures: dict[str, Exception] = {}
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = {
+                "main": executor.submit(
+                    run_chain,
+                    main_prompt,
+                    main_parse_turn,
+                ),
+                "detail": executor.submit(
+                    run_chain,
+                    detail_prompt,
+                    detail_parse_turn,
+                ),
+            }
+            for mode in ("main", "detail"):
+                try:
+                    results[mode] = futures[mode].result()
+                except Exception as exc:
+                    failures[mode] = exc
+
+        if failures:
+            raise failures["main"] if "main" in failures else failures["detail"]
+        return results["main"], results["detail"]
+
     def _execute_final_prompts(self, product_id: str) -> ExecutionResult:
         if self.context.manifest.get("batch_type", "single") == "set":
             return self._execute_set_final_prompts(product_id)
@@ -1743,22 +1755,6 @@ class CodexDevExecutor:
             variable_config=main_variable_config,
             requirements=requirements,
         )
-        main_turn = self._run_transport(main_prompt, ())
-        self._emit_turn_progress()
-        correction_attempts = 0
-        main_batch, main_turn, correction_attempts = (
-            self._parse_final_prompt_with_bounded_correction(
-                main_turn,
-                mode="main",
-                product_id=product_id,
-                requirements=requirements,
-                angle_inventory=angle_inventory,
-                variable_config=main_variable_config,
-                style_master_text=style_master_text,
-                correction_attempts=correction_attempts,
-            )
-        )
-
         detail_prompt = build_final_prompt_batch_prompt(
             mode="detail",
             product_id=product_id,
@@ -1769,25 +1765,56 @@ class CodexDevExecutor:
             variable_config=detail_variable_config,
             requirements=requirements,
         )
-        detail_turn = self._run_transport(detail_prompt, ())
-        self._emit_turn_progress()
-        detail_batch, detail_turn, correction_attempts = (
-            self._parse_final_prompt_with_bounded_correction(
-                detail_turn,
-                mode="detail",
-                product_id=product_id,
-                requirements=requirements,
-                angle_inventory=angle_inventory,
-                variable_config=detail_variable_config,
-                style_master_text=style_master_text,
+
+        def parse_single_turn(
+            turn: CodexTurnResult,
+            *,
+            mode: str,
+            variable_config: Mapping[str, Any],
+        ) -> _FinalPromptChainResult:
+            batch, corrected_turn, correction_attempts = (
+                self._parse_final_prompt_with_bounded_correction(
+                    turn,
+                    mode=mode,
+                    product_id=product_id,
+                    requirements=requirements,
+                    angle_inventory=angle_inventory,
+                    variable_config=variable_config,
+                    style_master_text=style_master_text,
+                    correction_attempts=0,
+                )
+            )
+            return _FinalPromptChainResult(
+                batch=batch,
+                turn=corrected_turn,
                 correction_attempts=correction_attempts,
             )
+
+        main_result, detail_result = self._run_final_prompt_pair(
+            main_prompt=main_prompt,
+            main_parse_turn=lambda turn: parse_single_turn(
+                turn,
+                mode="main",
+                variable_config=main_variable_config,
+            ),
+            detail_prompt=detail_prompt,
+            detail_parse_turn=lambda turn: parse_single_turn(
+                turn,
+                mode="detail",
+                variable_config=detail_variable_config,
+            ),
+        )
+        correction_attempts = (
+            main_result.correction_attempts + detail_result.correction_attempts
         )
 
         bundle = build_final_prompt_bundle(
             product_id=product_id,
             output_dir=output_dir,
-            prompt_batches={"main": main_batch, "detail": detail_batch},
+            prompt_batches={
+                "main": main_result.batch,
+                "detail": detail_result.batch,
+            },
             variable_configs={
                 "main": (main_variable_config, main_path),
                 "detail": (detail_variable_config, detail_path),
@@ -1809,8 +1836,8 @@ class CodexDevExecutor:
             outputs=(index_path,),
             provider=self.name,
             metadata={
-                "main_thread_id": main_turn.thread_id,
-                "detail_thread_id": detail_turn.thread_id,
+                "main_thread_id": main_result.turn.thread_id,
+                "detail_thread_id": detail_result.turn.thread_id,
                 "correction_attempts": correction_attempts,
             },
         )
@@ -1908,26 +1935,6 @@ class CodexDevExecutor:
                 style_master_text=style_master_text,
             )
 
-        main_turn = self._run_transport(main_prompt, ())
-        self._emit_turn_progress()
-        correction_attempts = 0
-        main_batch, main_turn, correction_attempts = (
-            self._parse_final_prompt_with_bounded_correction(
-                main_turn,
-                mode="main",
-                product_id=product_id,
-                requirements=requirements,
-                angle_inventory=set_layout_inventory,
-                variable_config=main_variable_config,
-                style_master_text=style_master_text,
-                correction_attempts=correction_attempts,
-                parse_response=parse_main_response,
-                repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
-                    mode="main"
-                ),
-            )
-        )
-
         detail_prompt = build_set_final_prompt_batch_prompt(
             mode="detail",
             product_id=product_id,
@@ -1956,23 +1963,53 @@ class CodexDevExecutor:
                 style_master_text=style_master_text,
             )
 
-        detail_turn = self._run_transport(detail_prompt, ())
-        self._emit_turn_progress()
-        detail_batch, detail_turn, correction_attempts = (
-            self._parse_final_prompt_with_bounded_correction(
-                detail_turn,
-                mode="detail",
-                product_id=product_id,
-                requirements=requirements,
-                angle_inventory=set_layout_inventory,
-                variable_config=detail_variable_config,
-                style_master_text=style_master_text,
-                correction_attempts=correction_attempts,
-                parse_response=parse_detail_response,
-                repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
-                    mode="detail"
-                ),
+        def parse_set_turn(
+            turn: CodexTurnResult,
+            *,
+            mode: str,
+            variable_config: Mapping[str, Any],
+            parse_response: Callable[[str], dict[str, dict[str, str]]],
+        ) -> _FinalPromptChainResult:
+            batch, corrected_turn, correction_attempts = (
+                self._parse_final_prompt_with_bounded_correction(
+                    turn,
+                    mode=mode,
+                    product_id=product_id,
+                    requirements=requirements,
+                    angle_inventory=set_layout_inventory,
+                    variable_config=variable_config,
+                    style_master_text=style_master_text,
+                    correction_attempts=0,
+                    parse_response=parse_response,
+                    repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
+                        mode=mode
+                    ),
+                )
             )
+            return _FinalPromptChainResult(
+                batch=batch,
+                turn=corrected_turn,
+                correction_attempts=correction_attempts,
+            )
+
+        main_result, detail_result = self._run_final_prompt_pair(
+            main_prompt=main_prompt,
+            main_parse_turn=lambda turn: parse_set_turn(
+                turn,
+                mode="main",
+                variable_config=main_variable_config,
+                parse_response=parse_main_response,
+            ),
+            detail_prompt=detail_prompt,
+            detail_parse_turn=lambda turn: parse_set_turn(
+                turn,
+                mode="detail",
+                variable_config=detail_variable_config,
+                parse_response=parse_detail_response,
+            ),
+        )
+        correction_attempts = (
+            main_result.correction_attempts + detail_result.correction_attempts
         )
 
         try:
@@ -1999,7 +2036,10 @@ class CodexDevExecutor:
         bundle = build_set_final_prompt_bundle(
             product_id=product_id,
             output_dir=output_dir,
-            prompt_batches={"main": main_batch, "detail": detail_batch},
+            prompt_batches={
+                "main": main_result.batch,
+                "detail": detail_result.batch,
+            },
             variable_configs={
                 "main": (main_variable_config, main_path),
                 "detail": (detail_variable_config, detail_path),
@@ -2017,8 +2057,8 @@ class CodexDevExecutor:
             outputs=(index_path,),
             provider=self.name,
             metadata={
-                "main_thread_id": main_turn.thread_id,
-                "detail_thread_id": detail_turn.thread_id,
+                "main_thread_id": main_result.turn.thread_id,
+                "detail_thread_id": detail_result.turn.thread_id,
                 "correction_attempts": correction_attempts,
             },
         )
@@ -2182,6 +2222,10 @@ class CodexDevExecutor:
             "thread": "codex-dev 的 Codex 线程执行失败",
             "response": "codex-dev 收到无效的 canvas-agent 返回",
             "timeout": "codex-dev 等待 Codex 线程超时",
+            "isolated_unavailable": (
+                "codex-dev 无法使用：canvas-agent 未提供 Codex 隔离会话路由"
+            ),
+            "isolated_capacity": "codex-dev 无法启动：Codex 隔离会话已达并发上限",
         }
         raise ExecutorExecutionError(
             _with_safe_exception_detail(

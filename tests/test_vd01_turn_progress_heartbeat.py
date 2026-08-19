@@ -91,6 +91,80 @@ class _FailOnceTransport(FakeTransport):
         return self.results.pop(0)
 
 
+class _ProgressFinalPromptTransport:
+    _INITIAL_MARKERS = {
+        "main": "编译 main 配置的最终提示词",
+        "detail": "编译 detail 配置的最终提示词",
+    }
+    _REPAIR_MARKERS = {
+        "main": "final_prompts 主图批次任务",
+        "detail": "final_prompts 详情图批次任务",
+    }
+
+    def __init__(self, responses: dict[str, list[CodexTurnResult]]) -> None:
+        self._responses = {mode: list(items) for mode, items in responses.items()}
+        self._thread_ids: dict[str, str] = {}
+        self._lock = threading.Lock()
+        self._last_return = threading.local()
+        self.calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+        self.continuation_calls: list[
+            tuple[str, str, str, tuple[CodexAttachment, ...]]
+        ] = []
+
+    @staticmethod
+    def _mode_from_prompt(prompt: str, markers: dict[str, str]) -> str:
+        matches = [mode for mode, marker in markers.items() if marker in prompt]
+        if len(matches) != 1:
+            raise AssertionError("final prompt mode could not be identified")
+        return matches[0]
+
+    def _next_result(self, mode: str) -> CodexTurnResult:
+        results = self._responses.get(mode)
+        if not results:
+            raise AssertionError(f"unexpected {mode} final prompt transport call")
+        return results.pop(0)
+
+    def run_turn(
+        self,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
+        with self._lock:
+            self.calls.append((mode, prompt, attachments))
+            result = self._next_result(mode)
+            expected_thread_id = self._thread_ids.setdefault(mode, result.thread_id)
+            if result.thread_id != expected_thread_id:
+                raise AssertionError(f"{mode} initial response changed thread identity")
+        self._last_return.identity = (mode, result.thread_id, "initial")
+        return result
+
+    def continue_turn(
+        self,
+        thread_id: str,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+    ) -> CodexTurnResult:
+        mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
+        with self._lock:
+            expected_thread_id = self._thread_ids.get(mode)
+            if thread_id != expected_thread_id:
+                raise AssertionError(f"{mode} repair used the wrong thread identity")
+            self.continuation_calls.append((mode, thread_id, prompt, attachments))
+            result = self._next_result(mode)
+            if result.thread_id != expected_thread_id:
+                raise AssertionError(f"{mode} repair response changed thread identity")
+        self._last_return.identity = (mode, result.thread_id, "correction")
+        return result
+
+    def take_return_identity(self) -> tuple[str, str, str]:
+        identity = getattr(self._last_return, "identity", None)
+        if identity is None:
+            raise AssertionError("turn progress was emitted without a transport return")
+        del self._last_return.identity
+        return identity
+
+
 class _LegacyVcExecutor:
     name = "vd01-fake"
 
@@ -238,43 +312,75 @@ class TurnProgressExecutorTest(unittest.TestCase):
             context, final_dir, _main_path, _detail_path = (
                 self.fixture.make_final_prompt_fixture(root)
             )
-            transport = FakeTransport(
-                [
-                    CodexTurnResult(
-                        text=json.dumps(
-                            _paraphrased_final_prompt_response("main"),
-                            ensure_ascii=False,
+            transport = _ProgressFinalPromptTransport(
+                {
+                    "main": [
+                        CodexTurnResult(
+                            text=json.dumps(
+                                _paraphrased_final_prompt_response("main"),
+                                ensure_ascii=False,
+                            ),
+                            thread_id="thread-vd01-final-main",
                         ),
-                        thread_id="thread-vd01-final-main",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                        thread_id="thread-vd01-final-main",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(
-                            _paraphrased_final_prompt_response("detail"),
-                            ensure_ascii=False,
+                        CodexTurnResult(
+                            text=json.dumps(
+                                valid_final_prompt_response("main"), ensure_ascii=False
+                            ),
+                            thread_id="thread-vd01-final-main",
                         ),
-                        thread_id="thread-vd01-final-detail",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-vd01-final-detail",
-                    ),
-                ]
+                    ],
+                    "detail": [
+                        CodexTurnResult(
+                            text=json.dumps(
+                                _paraphrased_final_prompt_response("detail"),
+                                ensure_ascii=False,
+                            ),
+                            thread_id="thread-vd01-final-detail",
+                        ),
+                        CodexTurnResult(
+                            text=json.dumps(
+                                valid_final_prompt_response("detail"), ensure_ascii=False
+                            ),
+                            thread_id="thread-vd01-final-detail",
+                        ),
+                    ],
+                }
             )
-            boundaries: list[int] = []
+            progress_events: list[tuple[str, str, str]] = []
+            progress_lock = threading.Lock()
+            raw_callback_count = 0
+
+            def record_progress() -> None:
+                nonlocal raw_callback_count
+                with progress_lock:
+                    raw_callback_count += 1
+                identity = transport.take_return_identity()
+                with progress_lock:
+                    progress_events.append(identity)
+
             executor = CodexDevExecutor(context, transport=transport, repository_root=root)
-            executor.set_turn_progress_callback(
-                lambda: boundaries.append(
-                    len(transport.calls) + len(transport.continuation_calls)
-                )
-            )
+            executor.set_turn_progress_callback(record_progress)
 
             executor.execute(ExecutionRequest(step="final_prompts"))
 
-            self.assertEqual([1, 2, 3, 4], boundaries)
+            expected_events = (
+                ("main", "thread-vd01-final-main", "initial"),
+                ("main", "thread-vd01-final-main", "correction"),
+                ("detail", "thread-vd01-final-detail", "initial"),
+                ("detail", "thread-vd01-final-detail", "correction"),
+            )
+            with progress_lock:
+                actual_events = tuple(progress_events)
+                actual_raw_callback_count = raw_callback_count
+            self.assertEqual(4, actual_raw_callback_count)
+            self.assertEqual(4, len(actual_events))
+            for event in expected_events:
+                self.assertEqual(1, actual_events.count(event))
+            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
+            self.assertCountEqual(
+                ("main", "detail"),
+                tuple(call[0] for call in transport.continuation_calls),
+            )
             self.assertTrue((final_dir / "final_prompt_index.json").exists())
 
     def test_callback_exception_does_not_interrupt_successful_step(self) -> None:
