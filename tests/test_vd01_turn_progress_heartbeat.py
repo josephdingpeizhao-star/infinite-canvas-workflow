@@ -128,7 +128,11 @@ class _ProgressFinalPromptTransport:
         self,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
+        if turn_timeout != 1200.0:
+            raise AssertionError("final initial turn must use the 1200-second timeout")
         mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
         with self._lock:
             self.calls.append((mode, prompt, attachments))
@@ -144,7 +148,11 @@ class _ProgressFinalPromptTransport:
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
+        if turn_timeout != 1200.0:
+            raise AssertionError("final correction turn must use the 1200-second timeout")
         mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
         with self._lock:
             expected_thread_id = self._thread_ids.get(mode)
@@ -245,33 +253,46 @@ class TurnProgressExecutorTest(unittest.TestCase):
             thread_id = "thread-vd01-detail"
             transport = FakeTransport(
                 [
-                    CodexTurnResult(text='{"chunk_index": 1', thread_id=thread_id),
+                    CodexTurnResult(
+                        text='{"chunk_index": 1',
+                        thread_id=f"{thread_id}-chunk-1",
+                    ),
                     *detail_chunk_turns(
                         [chunks[0], chunks[1], invalid_chunk, chunks[2], chunks[3]],
                         thread_id=thread_id,
                     ),
                 ]
             )
-            callback_boundaries: list[tuple[int, int]] = []
+            progress_events: list[tuple[int, str, str]] = []
+            progress_lock = threading.Lock()
             executor = CodexDevExecutor(
                 context,
                 transport=transport,
                 repository_root=root,
             )
             executor.set_content_correction_callback(lambda *_: None)
-            executor.set_turn_progress_callback(
-                lambda: callback_boundaries.append(
-                    (len(transport.calls), len(transport.continuation_calls))
-                )
-            )
+
+            def record_progress() -> None:
+                identity = transport.take_detail_return_identity()
+                with progress_lock:
+                    progress_events.append(identity)
+
+            executor.set_turn_progress_callback(record_progress)
 
             executor.execute(ExecutionRequest(step="detail_vc"))
 
-            self.assertEqual(
-                [(1, 0), (1, 1), (1, 2), (1, 3), (1, 4), (1, 5)],
-                callback_boundaries,
+            expected_events = (
+                (1, f"{thread_id}-chunk-1", "initial"),
+                (1, f"{thread_id}-chunk-1", "continuation"),
+                (2, f"{thread_id}-chunk-2", "initial"),
+                (3, f"{thread_id}-chunk-3", "initial"),
+                (3, f"{thread_id}-chunk-3", "continuation"),
+                (4, f"{thread_id}-chunk-4", "initial"),
             )
-            self.assertEqual(6, len(callback_boundaries))
+            with progress_lock:
+                actual_events = tuple(progress_events)
+            self.assertCountEqual(expected_events, actual_events)
+            self.assertEqual(6, len(actual_events))
             self.assertTrue(output_path.exists())
 
     def test_main_content_correction_reports_initial_and_corrected_returns(self) -> None:

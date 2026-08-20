@@ -100,7 +100,6 @@ class SetKeyScopeGuardTests(SetVariableConfigFixture):
                 1,
                 requirements=set_requirements(),
                 angle_inventory={},
-                prior_chunks=[],
                 set_identity=valid_set_identity(),
                 component_identities=(
                     valid_component_identity(1),

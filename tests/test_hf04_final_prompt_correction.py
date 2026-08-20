@@ -62,11 +62,19 @@ class _ModeAwareFinalPromptTransport:
             raise result
         return result
 
+    @staticmethod
+    def _require_final_timeout(turn_timeout: float) -> None:
+        if turn_timeout != 1200.0:
+            raise AssertionError("final prompt turn must use the 1200-second timeout")
+
     def run_turn(
         self,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float,
     ) -> CodexTurnResult:
+        self._require_final_timeout(turn_timeout)
         mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
         with self._lock:
             self.calls.append((mode, prompt, attachments))
@@ -81,7 +89,10 @@ class _ModeAwareFinalPromptTransport:
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float,
     ) -> CodexTurnResult:
+        self._require_final_timeout(turn_timeout)
         mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
         with self._lock:
             expected_thread_id = self._thread_ids.get(mode)

@@ -323,6 +323,12 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
             executor.execute(ExecutionRequest(step="detail_vc"))
 
             self.assertTrue(output_path.exists())
+            self.assertEqual(4, len(transport.calls))
+            self.assertEqual(1, len(transport.continuation_calls))
+            self.assertEqual(
+                "thread-detail-cat08-chunk-3",
+                transport.continuation_calls[0][0],
+            )
             correction_prompts = [
                 prompt
                 for _, prompt, _ in transport.continuation_calls
@@ -358,7 +364,7 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
             invalid_chunk = _module05_handheld_chunk(chunks[2])
             transport = FakeTransport(
                 detail_chunk_turns(
-                    [chunks[0], chunks[1], invalid_chunk, invalid_chunk],
+                    [chunks[0], chunks[1], invalid_chunk, invalid_chunk, chunks[3]],
                     thread_id="thread-detail-cat08-fail",
                 )
             )
@@ -377,7 +383,7 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
                 str(caught.exception),
             )
             self.assertFalse(output_path.exists())
-            self.assertEqual(4, len(transport.calls) + len(transport.continuation_calls))
+            self.assertEqual(5, len(transport.calls) + len(transport.continuation_calls))
             self.assertEqual(
                 1,
                 sum(
@@ -394,7 +400,10 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
             invalid_chunk = _module05_handheld_chunk(chunks[2])
             thread_id = "thread-detail-cat08-independent"
             turns = [
-                CodexTurnResult(text='{"chunk_index": 1', thread_id=thread_id),
+                CodexTurnResult(
+                    text='{"chunk_index": 1',
+                    thread_id=f"{thread_id}-chunk-1",
+                ),
                 *detail_chunk_turns(
                     [chunks[0], chunks[1], invalid_chunk, chunks[2], chunks[3]],
                     thread_id=thread_id,

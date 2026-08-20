@@ -104,7 +104,10 @@ class DetailChunkTests(unittest.TestCase):
         self.assertIn("第 2/2 段", prompt)
         self.assertIn("只包含配置 detail_03", prompt)
         self.assertIn("configs 必须按上述顺序包含一项", prompt)
-        self.assertIn("汇总完整三项配置", prompt)
+        self.assertIn("本段所有图位一律不启用手持场景", prompt)
+        self.assertIn("handheld_chunk_summary 必须是 JSON 对象", prompt)
+        self.assertIn("【本段手持配额】必须为整数 0", prompt)
+        self.assertIn("任一分段均不得返回 handheld_count_summary", prompt)
 
     def test_two_details_stay_in_one_two_item_chunk(self) -> None:
         confirmed = requirements(3, 2)

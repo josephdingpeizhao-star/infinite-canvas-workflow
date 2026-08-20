@@ -30,8 +30,8 @@
       "sha256": "0df233f1a15f12450ee61973d7a52b82452967582fb0db2521b798a88dce2bd3"
     },
     "detail_variable_config_prompt.txt": {
-      "bytes": 265781,
-      "sha256": "2eeb6611f16af819f901e40e286d8f9a5289b9000d149de7bf8833db4febf240"
+      "bytes": 265602,
+      "sha256": "66605d69d545acd35be57988d477988f7aa3b750d0109b0b077f82c0ceac8c72"
     },
     "inputs/angle_inventory/set_angle_layout_inventory.json": {
       "bytes": 15836,

@@ -3,9 +3,11 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import re
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -25,6 +27,7 @@ from batch_intake_controller import BatchIntakeRequest, ConfirmedFacts  # noqa: 
 import batch_type_gate  # noqa: E402
 from codex_dev_downstream import (  # noqa: E402
     SET_ARRANGEMENT_BASIS_LITERAL,
+    SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
     SET_DETAIL_REQUIRED_OVERRIDE_FIELDS,
     SET_HANDHELD_SUMMARY_EXPLANATION_FIELD,
     SET_MAIN_REQUIRED_OVERRIDE_FIELDS,
@@ -48,6 +51,7 @@ from executor_contract import (  # noqa: E402
     ExecutorExecutionError,
 )
 from image_count_contract import (  # noqa: E402
+    detail_handheld_chunk_quotas,
     detail_module_assignment_lines,
     detail_module_groups,
     pair_config_ids,
@@ -498,45 +502,89 @@ def valid_set_variable_response(
 def set_detail_chunks(response: dict[str, object]) -> list[dict[str, object]]:
     configs = response["configs"]
     batches = pair_config_ids("detail", len(configs))
+    handheld_target = response["handheld_count_summary"]["用户要求详情图手持数量"]
+    quotas = detail_handheld_chunk_quotas(len(configs), handheld_target)
     chunks: list[dict[str, object]] = []
     offset = 0
     for chunk_index, batch in enumerate(batches, start=1):
+        chunk_configs = copy.deepcopy(configs[offset : offset + len(batch)])
+        enabled_ids = [
+            config["config_id"]
+            for config in chunk_configs
+            if "本张图不启用手持场景"
+            not in config["per_image_overrides"]["手持交互声明"]
+        ]
+        quota = quotas[chunk_index - 1]
+        enabled = len(enabled_ids)
         chunk: dict[str, object] = {
             "chunk_index": chunk_index,
             "chunk_count": len(batches),
-            "configs": copy.deepcopy(configs[offset : offset + len(batch)]),
+            "configs": chunk_configs,
+            "handheld_chunk_summary": {
+                "本段手持配额": quota,
+                "本段实际启用数量": enabled,
+                "本段启用手持配置": enabled_ids,
+                SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD: (
+                    f"已按配额启用，实际启用 {enabled} 项。"
+                    if enabled == quota
+                    else f"实际启用 {enabled} 项，原因：档案置信度前提不足。"
+                ),
+            },
         }
         offset += len(batch)
         if chunk_index == 1:
             chunk["common_constraints"] = copy.deepcopy(response["common_constraints"])
             chunk["notes"] = response["notes"]
-        if chunk_index == len(batches):
-            chunk["handheld_count_summary"] = copy.deepcopy(response["handheld_count_summary"])
         chunks.append(chunk)
     return chunks
 
 
+def _detail_chunk_index_from_prompt(prompt: str) -> int | None:
+    match = re.search(r"本轮只返回第 (\d+)/(\d+) 段", prompt)
+    return int(match.group(1)) if match else None
+
+
 class SequenceTransport:
     def __init__(self, responses: list[dict[str, object]]) -> None:
-        self.results = [
-            CodexTurnResult(
+        self._non_chunk_results: list[CodexTurnResult] = []
+        self._chunk_results: dict[int, list[CodexTurnResult]] = {}
+        for response in responses:
+            chunk_index = response.get("chunk_index")
+            result = CodexTurnResult(
                 text=json.dumps(response, ensure_ascii=False),
-                thread_id="st03b-thread",
+                thread_id=(
+                    f"st03b-detail-chunk-{chunk_index}"
+                    if isinstance(chunk_index, int)
+                    else "st03b-thread"
+                ),
             )
-            for response in responses
-        ]
+            if isinstance(chunk_index, int):
+                self._chunk_results.setdefault(chunk_index, []).append(result)
+            else:
+                self._non_chunk_results.append(result)
+        self._lock = threading.Lock()
         self.calls: list[tuple[str, tuple[CodexAttachment, ...]]] = []
         self.continuation_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+
+    def _pop_result(self, chunk_index: int | None) -> CodexTurnResult:
+        results = (
+            self._chunk_results.get(chunk_index)
+            if chunk_index is not None
+            else self._non_chunk_results
+        )
+        if not results:
+            raise AssertionError("unexpected transport call")
+        return results.pop(0)
 
     def run_turn(
         self,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
-        self.calls.append((prompt, attachments))
-        if not self.results:
-            raise AssertionError("unexpected transport call")
-        return self.results.pop(0)
+        chunk_index = _detail_chunk_index_from_prompt(prompt)
+        with self._lock:
+            self.calls.append((prompt, attachments))
+            return self._pop_result(chunk_index)
 
     def continue_turn(
         self,
@@ -544,10 +592,16 @@ class SequenceTransport:
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
-        self.continuation_calls.append((thread_id, prompt, attachments))
-        if not self.results:
-            raise AssertionError("unexpected continuation")
-        return self.results.pop(0)
+        chunk_index = _detail_chunk_index_from_prompt(prompt)
+        if chunk_index is None:
+            match = re.fullmatch(r"st03b-detail-chunk-(\d+)", thread_id)
+            chunk_index = int(match.group(1)) if match else None
+        with self._lock:
+            self.continuation_calls.append((thread_id, prompt, attachments))
+            result = self._pop_result(chunk_index)
+            if result.thread_id != thread_id:
+                raise AssertionError("continuation used the wrong thread identity")
+            return result
 
 
 class SetVariableConfigFixture(unittest.TestCase):
@@ -723,7 +777,7 @@ class St03bSetContractTests(SetVariableConfigFixture):
             "configs": [],
             "common_constraints": {},
             "notes": "分段层测试",
-            "handheld_count_summary": {},
+            "handheld_chunk_summary": {},
             "套装编排依据": SET_ARRANGEMENT_BASIS_LITERAL,
         }
 
@@ -736,7 +790,6 @@ class St03bSetContractTests(SetVariableConfigFixture):
                 1,
                 requirements=requirements,
                 angle_inventory={},
-                prior_chunks=[],
             )
 
     def test_legal_main_and_detail_samples_cover_a_through_h(self) -> None:
@@ -952,7 +1005,7 @@ class St03bExecutorTests(SetVariableConfigFixture):
             with self.assertRaisesRegex(ExecutorExecutionError, "已存在"):
                 executor.execute(ExecutionRequest(step="main_vc"))
 
-    def test_set_detail_full_chain_reuses_chunks_and_assembles_seven_configs(self) -> None:
+    def test_set_detail_full_chain_runs_isolated_chunks_and_assembles_seven_configs(self) -> None:
         response = valid_set_variable_response("detail", count=7, handheld_target=1)
         chunks = set_detail_chunks(response)
         with tempfile.TemporaryDirectory() as temporary:
@@ -974,10 +1027,17 @@ class St03bExecutorTests(SetVariableConfigFixture):
             self.assertEqual("detail_variable_config", artifact["artifact_type"])
             self.assertEqual(7, artifact["config_count"])
             self.assertEqual(detail_variable_config_chunk_count(set_requirements()), len(chunks))
-            self.assertEqual(1, len(transport.calls))
-            self.assertEqual(len(chunks) - 1, len(transport.continuation_calls))
-            self.assertIn("common_constraints", transport.calls[0][0])
-            self.assertIn("handheld_count_summary", transport.continuation_calls[-1][1])
+            self.assertEqual(len(chunks), len(transport.calls))
+            self.assertEqual([], transport.continuation_calls)
+            prompts_by_chunk = {
+                _detail_chunk_index_from_prompt(prompt): prompt
+                for prompt, _attachments in transport.calls
+            }
+            self.assertEqual(set(range(1, len(chunks) + 1)), set(prompts_by_chunk))
+            self.assertIn("common_constraints", prompts_by_chunk[1])
+            for prompt in prompts_by_chunk.values():
+                self.assertIn("handheld_chunk_summary", prompt)
+                self.assertIn("任一分段均不得返回 handheld_count_summary", prompt)
             self.assertEqual((output,), result.outputs)
 
     def test_set_upstreams_fail_closed_before_transport(self) -> None:
@@ -1052,7 +1112,7 @@ class St03bExecutorTests(SetVariableConfigFixture):
 
 
 class St07SetHandheldSummaryContractTests(unittest.TestCase):
-    def test_set_prompt_lists_the_exact_six_handheld_summary_fields_for_each_mode(self) -> None:
+    def test_set_prompts_split_main_global_and_detail_chunk_summary_fields(self) -> None:
         expected_sentences = {
             "main": (
                 "handheld_count_summary 必须恰好包含这些字段："
@@ -1060,9 +1120,8 @@ class St07SetHandheldSummaryContractTests(unittest.TestCase):
                 "启用手持配置、是否完全满足用户数量、手持启用数量说明。"
             ),
             "detail": (
-                "handheld_count_summary 必须恰好包含这些字段："
-                "用户要求详情图手持数量、实际启用手持数量、未启用手持数量、"
-                "启用手持配置、是否完全满足用户数量、手持启用数量说明。"
+                "每段必须返回 handheld_chunk_summary，且恰好包含这些字段："
+                "本段手持配额、本段实际启用数量、本段启用手持配置、本段手持启用说明。"
             ),
         }
         for mode, expected in expected_sentences.items():
@@ -1090,6 +1149,12 @@ class St07SetHandheldSummaryContractTests(unittest.TestCase):
                     ),
                 )
                 self.assertIn(expected, prompt)
+                if mode == "detail":
+                    self.assertIn("手持全局目标为 1 项", prompt)
+                    self.assertNotIn(
+                        "handheld_count_summary 必须恰好包含这些字段",
+                        prompt,
+                    )
 
     def test_set_handheld_summary_validator_uses_the_shared_six_field_contract(self) -> None:
         from codex_dev_downstream import (  # noqa: PLC0415
@@ -1203,7 +1268,7 @@ class St08SetHandheldSummaryAlignmentTests(unittest.TestCase):
             config_id="main_01",
         )
 
-    def test_g1_main_and_detail_prompts_include_the_shared_value_rules(self) -> None:
+    def test_g1_main_keeps_global_rules_and_detail_uses_chunk_rules(self) -> None:
         from codex_dev_downstream import (  # noqa: PLC0415
             SET_HANDHELD_SUMMARY_VALUE_RULES,
         )
@@ -1215,31 +1280,40 @@ class St08SetHandheldSummaryAlignmentTests(unittest.TestCase):
             "完全满足时含「已按目标启用」，未满足时含「原因」。"
         )
         self.assertEqual(hardcoded_rule, SET_HANDHELD_SUMMARY_VALUE_RULES)
+        prompts = {}
         for mode in ("main", "detail"):
-            with self.subTest(mode=mode):
-                prompt = build_set_variable_config_prompt(
-                    mode=mode,
-                    product_id=PRODUCT_ID,
-                    repository_root=ROOT,
-                    set_identity=valid_set_identity(),
-                    component_identities=(
-                        valid_component_identity(1),
-                        valid_component_identity(2),
-                    ),
-                    style_master=valid_style_master(),
-                    set_angle_layout_inventory=valid_set_layout_inventory(),
-                    requirements=set_requirements(),
-                    set_skill_text="SET_SKILL_MARKER",
-                    set_variable_config_supplement="SET_VARIABLE_SUPPLEMENT_MARKER",
-                    set_workflow_supplement="SET_WORKFLOW_SUPPLEMENT_MARKER",
-                    set_layout_rules="SET_LAYOUT_RULES_MARKER",
-                    main_variable_config=(
-                        valid_set_variable_response("main", count=2, handheld_target=1)
-                        if mode == "detail"
-                        else None
-                    ),
-                )
-                self.assertIn(SET_HANDHELD_SUMMARY_VALUE_RULES, prompt)
+            prompts[mode] = build_set_variable_config_prompt(
+                mode=mode,
+                product_id=PRODUCT_ID,
+                repository_root=ROOT,
+                set_identity=valid_set_identity(),
+                component_identities=(
+                    valid_component_identity(1),
+                    valid_component_identity(2),
+                ),
+                style_master=valid_style_master(),
+                set_angle_layout_inventory=valid_set_layout_inventory(),
+                requirements=set_requirements(),
+                set_skill_text="SET_SKILL_MARKER",
+                set_variable_config_supplement="SET_VARIABLE_SUPPLEMENT_MARKER",
+                set_workflow_supplement="SET_WORKFLOW_SUPPLEMENT_MARKER",
+                set_layout_rules="SET_LAYOUT_RULES_MARKER",
+                main_variable_config=(
+                    valid_set_variable_response("main", count=2, handheld_target=1)
+                    if mode == "detail"
+                    else None
+                ),
+            )
+        self.assertIn(SET_HANDHELD_SUMMARY_VALUE_RULES, prompts["main"])
+        self.assertNotIn(SET_HANDHELD_SUMMARY_VALUE_RULES, prompts["detail"])
+        self.assertIn(
+            "本段手持启用说明】在实际等于配额时必须包含“已按配额启用”",
+            prompts["detail"],
+        )
+        self.assertIn(
+            "少于配额时必须包含实际启用数量的数字与“原因”",
+            prompts["detail"],
+        )
 
     def test_g2_real_rollout_boolean_true_summary_is_accepted(self) -> None:
         summary = {
@@ -1407,8 +1481,11 @@ class St08SetHandheldSummaryAlignmentTests(unittest.TestCase):
         )
         self.assertEqual("handheld_summary", caught.exception.code)
 
-    def test_set_prompt_requires_all_four_top_level_keys_for_each_mode(self) -> None:
-        expected = "顶层四个键必须全部出现，缺一不可。"
+    def test_set_prompts_split_main_global_and_detail_chunk_top_level_keys(self) -> None:
+        expected_by_mode = {
+            "main": "顶层四个键必须全部出现，缺一不可。",
+            "detail": "本轮段指令列出的顶层键必须全部出现，缺一不可。",
+        }
         for mode in ("main", "detail"):
             with self.subTest(mode=mode):
                 prompt = build_set_variable_config_prompt(
@@ -1433,7 +1510,9 @@ class St08SetHandheldSummaryAlignmentTests(unittest.TestCase):
                         else None
                     ),
                 )
-                self.assertIn(expected, prompt)
+                self.assertIn(expected_by_mode[mode], prompt)
+                if mode == "detail":
+                    self.assertNotIn("顶层四个键必须全部出现，缺一不可。", prompt)
 
 
 if __name__ == "__main__":

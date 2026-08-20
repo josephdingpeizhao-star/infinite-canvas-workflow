@@ -79,6 +79,9 @@ DEFAULT_CONFIG_PATH = Path.home() / ".infinite-canvas" / "canvas-agent.json"
 PRODUCTION_CODEX_MODEL = "gpt-5.5"
 PRODUCTION_CODEX_REASONING_EFFORT = "xhigh"
 FINAL_PROMPT_CORRECTION_LIMIT = 2
+FINAL_PROMPT_TURN_TIMEOUT_SECONDS = 1200.0
+# Keep this aligned with canvas-agent's MAX_ISOLATED_SESSIONS.
+DETAIL_CHUNK_MAX_CONCURRENCY = 4
 SAFE_EXCEPTION_DETAIL_LIMIT = 160
 REDACTED_EXCEPTION_SUMMARY = "异常摘要已脱敏"
 _SENSITIVE_EXCEPTION_DETAIL_PATTERN = re.compile(
@@ -388,8 +391,22 @@ class _FinalPromptChainResult:
     correction_attempts: int
 
 
+@dataclass(frozen=True)
+class _DetailChunkChainResult:
+    chunk: Mapping[str, Any]
+    thread_id: str
+    recovery_attempts: int
+    structure_correction_attempts: int
+
+
 class CodexTransport(Protocol):
-    def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+    def run_turn(
+        self,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
+    ) -> CodexTurnResult:
         """Run one Codex turn through canvas-agent."""
 
     def continue_turn(
@@ -397,6 +414,8 @@ class CodexTransport(Protocol):
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         """Continue an existing dedicated canvas-agent Codex thread."""
 
@@ -451,29 +470,34 @@ class CanvasAgentCodexTransport:
         max_attachment_payload_bytes: int = 20 * 1024 * 1024,
         max_request_body_bytes: int = 28 * 1024 * 1024,
     ) -> None:
-        if (
-            isinstance(turn_timeout, bool)
-            or not isinstance(turn_timeout, (int, float))
-            or not math.isfinite(float(turn_timeout))
-            or turn_timeout <= 0
-        ):
-            raise ValueError("turn_timeout must be a finite positive number")
         self.config_path = config_path or DEFAULT_CONFIG_PATH
         self.config = dict(config) if config is not None else None
         self.opener = opener or urllib.request.build_opener(urllib.request.ProxyHandler({})).open
         self.timeout = timeout
-        self.turn_timeout = float(turn_timeout)
+        self.turn_timeout = self._validated_turn_timeout(turn_timeout)
         self.monotonic = monotonic
         self.model = PRODUCTION_CODEX_MODEL
         self.effort = PRODUCTION_CODEX_REASONING_EFFORT
         self.max_attachment_payload_bytes = max_attachment_payload_bytes
         self.max_request_body_bytes = max_request_body_bytes
 
-    def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+    def run_turn(
+        self,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
+    ) -> CodexTurnResult:
         error_code = ""
         safe_detail = ""
         try:
-            return self._run_turn(prompt, attachments)
+            if turn_timeout is None:
+                return self._run_turn(prompt, attachments)
+            return self._run_turn(
+                prompt,
+                attachments,
+                turn_timeout=self._validated_turn_timeout(turn_timeout),
+            )
         except CanvasAgentTransportError as exc:
             error_code = exc.code
             safe_detail = exc.safe_detail
@@ -490,11 +514,20 @@ class CanvasAgentCodexTransport:
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         error_code = ""
         safe_detail = ""
         try:
-            return self._continue_turn(thread_id, prompt, attachments)
+            if turn_timeout is None:
+                return self._continue_turn(thread_id, prompt, attachments)
+            return self._continue_turn(
+                thread_id,
+                prompt,
+                attachments,
+                turn_timeout=self._validated_turn_timeout(turn_timeout),
+            )
         except CanvasAgentTransportError as exc:
             error_code = exc.code
             safe_detail = exc.safe_detail
@@ -506,7 +539,24 @@ class CanvasAgentCodexTransport:
             safe_detail=safe_detail,
         )
 
-    def _run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
+    @staticmethod
+    def _validated_turn_timeout(turn_timeout: float) -> float:
+        if (
+            isinstance(turn_timeout, bool)
+            or not isinstance(turn_timeout, (int, float))
+            or not math.isfinite(float(turn_timeout))
+            or turn_timeout <= 0
+        ):
+            raise ValueError("turn_timeout must be a finite positive number")
+        return float(turn_timeout)
+
+    def _run_turn(
+        self,
+        prompt: str,
+        attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
+    ) -> CodexTurnResult:
         chunks = self._attachment_chunks(attachments)
         config = self._load_config()
         base_url = config["url"].rstrip("/")
@@ -517,6 +567,7 @@ class CanvasAgentCodexTransport:
                 token,
                 prompt,
                 chunks[0],
+                turn_timeout=turn_timeout,
             )
 
         thread_id: str | None = None
@@ -540,6 +591,7 @@ class CanvasAgentCodexTransport:
                 batch_prompt,
                 chunk,
                 thread_id=thread_id,
+                turn_timeout=turn_timeout,
             )
             thread_id = result.thread_id
 
@@ -556,6 +608,7 @@ class CanvasAgentCodexTransport:
             final_prompt,
             (),
             thread_id=thread_id,
+            turn_timeout=turn_timeout,
         )
 
     def _continue_turn(
@@ -563,6 +616,8 @@ class CanvasAgentCodexTransport:
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         if not thread_id:
             raise CanvasAgentTransportError("thread")
@@ -578,6 +633,7 @@ class CanvasAgentCodexTransport:
             prompt,
             chunks[0],
             thread_id=thread_id,
+            turn_timeout=turn_timeout,
         )
 
     def _run_isolated_turn(
@@ -588,6 +644,7 @@ class CanvasAgentCodexTransport:
         attachments: tuple[CodexAttachment, ...],
         *,
         thread_id: str | None = None,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         client_id = f"codex-dev-{uuid.uuid4()}"
         events_url = f"{base_url}/events?{urllib.parse.urlencode({'clientId': client_id})}"
@@ -612,7 +669,8 @@ class CanvasAgentCodexTransport:
                 final_text = self._read_new_assistant(
                     event_stream,
                     returned_thread_id,
-                    deadline=self.monotonic() + self.turn_timeout,
+                    deadline=self.monotonic()
+                    + (self.turn_timeout if turn_timeout is None else turn_timeout),
                 )
                 return CodexTurnResult(text=final_text, thread_id=returned_thread_id)
         except CanvasAgentTransportError:
@@ -1433,29 +1491,22 @@ class CodexDevExecutor:
                 "angle_inventory": angle_path,
                 "main_variable_configs": main_path,
             }
-        chunks: list[Mapping[str, Any]] = []
-        recovery_attempts = 0
-        structure_correction_attempts = 0
-        content_correction_chunks: set[int] = set()
-        thread_id = ""
         chunk_count = detail_variable_config_chunk_count(requirements)
-        for chunk_index in range(1, chunk_count + 1):
+
+        def run_chunk_chain(chunk_index: int) -> _DetailChunkChainResult:
+            recovery_attempts = 0
+            structure_correction_attempts = 0
+            content_correction_attempted = False
             expected_business_fingerprint = ""
             prompt = build_detail_variable_config_chunk_prompt(
                 base_prompt,
                 chunk_index,
                 requirements=requirements,
+                is_set=is_set,
             )
-            turn = (
-                self._run_transport(prompt, ())
-                if chunk_index == 1
-                else self._continue_transport(thread_id, prompt, ())
-            )
+            turn = self._run_transport(prompt, ())
             self._emit_turn_progress()
-            if chunk_index == 1:
-                thread_id = turn.thread_id
-            elif turn.thread_id != thread_id:
-                raise ExecutorExecutionError("codex-dev 收到无效的详情图变量配置线程返回")
+            thread_id = turn.thread_id
 
             while True:
                 try:
@@ -1464,7 +1515,6 @@ class CodexDevExecutor:
                         chunk_index,
                         requirements=requirements,
                         angle_inventory=chunk_angle_inventory,
-                        prior_chunks=chunks,
                         **chunk_set_kwargs,
                     )
                     if (
@@ -1486,6 +1536,7 @@ class CodexDevExecutor:
                         base_prompt,
                         chunk_index,
                         requirements=requirements,
+                        is_set=is_set,
                         repair=True,
                     )
                     turn = self._continue_transport(thread_id, repair_prompt, ())
@@ -1505,6 +1556,7 @@ class CodexDevExecutor:
                         base_prompt,
                         chunk_index,
                         requirements=requirements,
+                        is_set=is_set,
                         structure_correction=True,
                     )
                     turn = self._continue_transport(thread_id, correction_prompt, ())
@@ -1516,15 +1568,16 @@ class CodexDevExecutor:
                 except ContentPredicateViolation as error:
                     if self._content_correction_callback is None:
                         raise
-                    if chunk_index in content_correction_chunks:
+                    if content_correction_attempted:
                         raise
-                    content_correction_chunks.add(chunk_index)
+                    content_correction_attempted = True
                     expected_business_fingerprint = ""
                     self._emit_content_correction(chunk_index, error)
                     correction_prompt = build_detail_variable_config_chunk_prompt(
                         base_prompt,
                         chunk_index,
                         requirements=requirements,
+                        is_set=is_set,
                         correction=error,
                     )
                     turn = self._continue_transport(
@@ -1537,11 +1590,48 @@ class CodexDevExecutor:
                         raise ExecutorExecutionError(
                             "codex-dev 收到无效的详情图变量配置线程返回"
                         )
-            chunks.append(chunk)
+            return _DetailChunkChainResult(
+                chunk=chunk,
+                thread_id=thread_id,
+                recovery_attempts=recovery_attempts,
+                structure_correction_attempts=structure_correction_attempts,
+            )
+
+        chunk_results: dict[int, _DetailChunkChainResult] = {}
+        failures: dict[int, Exception] = {}
+        with ThreadPoolExecutor(
+            max_workers=min(chunk_count, DETAIL_CHUNK_MAX_CONCURRENCY)
+        ) as executor:
+            futures = {
+                chunk_index: executor.submit(run_chunk_chain, chunk_index)
+                for chunk_index in range(1, chunk_count + 1)
+            }
+            for chunk_index in range(1, chunk_count + 1):
+                try:
+                    chunk_results[chunk_index] = futures[chunk_index].result()
+                except Exception as exc:
+                    failures[chunk_index] = exc
+
+        if failures:
+            raise failures[min(failures)]
+
+        ordered_results = tuple(
+            chunk_results[chunk_index]
+            for chunk_index in range(1, chunk_count + 1)
+        )
+        chunks = [result.chunk for result in ordered_results]
+        recovery_attempts = sum(
+            result.recovery_attempts for result in ordered_results
+        )
+        structure_correction_attempts = sum(
+            result.structure_correction_attempts for result in ordered_results
+        )
+        thread_ids = tuple(result.thread_id for result in ordered_results)
 
         assembled_response = assemble_detail_variable_config_chunks(
             chunks,
             requirements=requirements,
+            is_set=is_set,
         )
         if is_set:
             artifact = parse_set_variable_config_response(
@@ -1577,7 +1667,7 @@ class CodexDevExecutor:
             outputs=(output_path,),
             provider=self.name,
             metadata={
-                "thread_id": thread_id,
+                "thread_ids": thread_ids,
                 "recovery_attempts": recovery_attempts,
                 "structure_correction_attempts": structure_correction_attempts,
             },
@@ -1633,6 +1723,7 @@ class CodexDevExecutor:
                         )
                     ),
                     (),
+                    turn_timeout=FINAL_PROMPT_TURN_TIMEOUT_SECONDS,
                 )
                 self._emit_turn_progress()
                 if turn.thread_id != thread_id:
@@ -1654,7 +1745,11 @@ class CodexDevExecutor:
             prompt: str,
             parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
         ) -> _FinalPromptChainResult:
-            turn = self._run_transport(prompt, ())
+            turn = self._run_transport(
+                prompt,
+                (),
+                turn_timeout=FINAL_PROMPT_TURN_TIMEOUT_SECONDS,
+            )
             self._emit_turn_progress()
             return parse_turn(turn)
 
@@ -2174,11 +2269,19 @@ class CodexDevExecutor:
         self,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         error_code = ""
         safe_detail = ""
         try:
-            return self.transport.run_turn(prompt, attachments)
+            if turn_timeout is None:
+                return self.transport.run_turn(prompt, attachments)
+            return self.transport.run_turn(
+                prompt,
+                attachments,
+                turn_timeout=turn_timeout,
+            )
         except CanvasAgentTransportError as exc:
             error_code = exc.code
             safe_detail = exc.safe_detail
@@ -2192,11 +2295,20 @@ class CodexDevExecutor:
         thread_id: str,
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
+        *,
+        turn_timeout: float | None = None,
     ) -> CodexTurnResult:
         error_code = ""
         safe_detail = ""
         try:
-            return self.transport.continue_turn(thread_id, prompt, attachments)
+            if turn_timeout is None:
+                return self.transport.continue_turn(thread_id, prompt, attachments)
+            return self.transport.continue_turn(
+                thread_id,
+                prompt,
+                attachments,
+                turn_timeout=turn_timeout,
+            )
         except CanvasAgentTransportError as exc:
             error_code = exc.code
             safe_detail = exc.safe_detail

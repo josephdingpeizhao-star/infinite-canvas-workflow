@@ -38,6 +38,7 @@ from image_count_contract import (
 from image_count_contract import (
     chinese_image_count,
     config_ids,
+    detail_handheld_chunk_quotas,
     detail_module_assignment_lines,
     detail_module_groups,
     pair_config_ids,
@@ -123,6 +124,16 @@ SET_DETAIL_REQUIRED_OVERRIDE_FIELDS = (
     "套装尺寸标注信息",
 )
 SET_HANDHELD_SUMMARY_EXPLANATION_FIELD = "手持启用数量说明"
+DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS = (
+    "本段手持配额",
+    "本段实际启用数量",
+    "本段启用手持配置",
+)
+SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD = "本段手持启用说明"
+SET_DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS = (
+    *DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS,
+    SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
+)
 SET_HANDHELD_SATISFIED_VALUES = frozenset({"是", True})
 SET_HANDHELD_UNSATISFIED_VALUES = frozenset({"否", False})
 SET_HANDHELD_SUMMARY_VALUE_RULES = (
@@ -280,6 +291,8 @@ _CONTROL_VALUE_FIELDS = frozenset(
         "未启用手持数量",
         "启用手持配置",
         "是否完全满足用户数量",
+        *DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS,
+        SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
     }
 )
 _SEMANTIC_FIELD_CONTEXTS = {
@@ -987,7 +1000,7 @@ def _walk_string_contexts(value: Any, path: tuple[str, ...] = ()):
 
 
 def _semantic_context_for_path(path: tuple[str, ...]) -> str:
-    if "handheld_count_summary" in path:
+    if "handheld_count_summary" in path or "handheld_chunk_summary" in path:
         return _SEMANTIC_CONTEXT_NON_SEMANTIC
     for part in reversed(path):
         if part in _SEMANTIC_FIELD_CONTEXTS:
@@ -1035,6 +1048,7 @@ _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
         "common_constraints",
         "configs",
         "handheld_count_summary",
+        "handheld_chunk_summary",
         "notes",
         "config_id",
         "per_image_overrides",
@@ -1053,6 +1067,8 @@ _SAFE_UNSUPPORTED_CLAIM_PATH_SEGMENTS = frozenset(
         "未启用手持数量",
         "启用手持配置",
         "是否完全满足用户数量",
+        *DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS,
+        SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
         *MAIN_REQUIRED_OVERRIDE_FIELDS,
         *DETAIL_REQUIRED_OVERRIDE_FIELDS,
         *SET_MAIN_REQUIRED_OVERRIDE_FIELDS,
@@ -2088,6 +2104,37 @@ def build_set_variable_config_prompt(
         if mode == "main"
         else ""
     )
+    if mode == "main":
+        response_contract = "\n".join(
+            (
+                f"手持目标为 {target_handheld} 项，实际启用允许少于或等于目标；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。",
+                "handheld_count_summary 必须恰好包含这些字段："
+                f"{'、'.join(set_handheld_summary_required_fields(mode))}。",
+                SET_HANDHELD_SUMMARY_VALUE_RULES,
+                "handheld_count_summary 必须恒含"
+                f"【{SET_HANDHELD_SUMMARY_EXPLANATION_FIELD}】：完全满足时写明“已按目标启用”，"
+                "少于目标时写明实际启用数量与原因，不得静默全部不启用。",
+                "标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。",
+                "顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。",
+                "顶层四个键必须全部出现，缺一不可。",
+            )
+        )
+    else:
+        response_contract = "\n".join(
+            (
+                f"手持全局目标为 {target_handheld} 项，完整配置实际启用允许少于或等于目标；"
+                "具体每段的执行上限以本轮段指令分派的手持配额为准；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。",
+                "每段必须返回 handheld_chunk_summary，且恰好包含这些字段："
+                f"{'、'.join(SET_DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS)}。",
+                "handheld_chunk_summary 必须逐项对应本段配额、本段实际启用数量及启用图位；"
+                f"【{SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD}】在实际等于配额时必须包含“已按配额启用”，"
+                "少于配额时必须包含实际启用数量的数字与“原因”。",
+                "完整配置的 handheld_count_summary 由代码在所有分段通过后合成，任一分段均不得返回该键。",
+                "标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。",
+                "分段返回时，顶层键必须恰好服从本轮段指令；每项只允许 config_id、per_image_overrides、notes。",
+                "本轮段指令列出的顶层键必须全部出现，缺一不可。",
+            )
+        )
     main_context = (
         "\n【正式主图变量配置】\n"
         + json.dumps(main_variable_config, ensure_ascii=False, sort_keys=True)
@@ -2103,13 +2150,7 @@ def build_set_variable_config_prompt(
 【套装编排依据】与【套装产品颜色依据】必须逐字使用套装教学中的固定文案。
 【套装尺寸比例锁定】必须非空并逐字包含“置信度”，尺寸只来自套装档案及各单件档案。
 {all_appear_rule}
-手持目标为 {target_handheld} 项，实际启用允许少于或等于目标；启用时只允许“持握套装中某一主体单件、其余单件作为静物陈列”。
-handheld_count_summary 必须恰好包含这些字段：{'、'.join(set_handheld_summary_required_fields(mode))}。
-{SET_HANDHELD_SUMMARY_VALUE_RULES}
-handheld_count_summary 必须恒含【{SET_HANDHELD_SUMMARY_EXPLANATION_FIELD}】：完全满足时写明“已按目标启用”，少于目标时写明实际启用数量与原因，不得静默全部不启用。
-标准模块归属包含模块05的详情图不得启用手持；【套装尺寸标注信息】仅在模块05按教学结构填写，其他图位逐字写“非尺寸标注图，不启用”。
-顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
-顶层四个键必须全部出现，缺一不可。
+{response_contract}
 {category_prompt}
 只返回一个 JSON 对象，不要 Markdown 或额外说明。不要返回 product_id、artifact_type、config_count、upstream_artifacts、output_type、哈希、最终提示词、图片或 QC。该禁令适用于任何层级，包括 common_constraints 内部。
 
@@ -2273,14 +2314,14 @@ handheld_count_summary 使用业务字段：用户要求主图手持数量、实
         )
     return f"""你正在为单品批次 {product_id} 生成详情图变量配置，且只处理 detail_vc。
 这是结构化配置阶段，不生成图片、不生成最终提示词、不生成 ComfyUI 作业、不执行 QC，也不处理套装。
-必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项；{module_clause}；输出画布比例全部为 3:4；恰好 {requirements.handheld_detail} 项启用手持。标准模块归属包含模块05的项必须不启用手持，且不得调用动态手持样式参考图；这一硬约束优先于手持名额分配，手持名额只在标准模块归属不包含模块05的图位之间分配；建批已将详情图手持上限限制为 {handheld_count_maximum("detail", image_count)} 项，因此两者不构成冲突。
+必须生成且只生成 {identifiers[0]} 至 {identifiers[-1]} {count_word}项；{module_clause}；输出画布比例全部为 3:4；用户要求详情图手持总数为 {requirements.handheld_detail} 项，分段执行时各段必须严格服从本轮段指令分派的手持配额。标准模块归属包含模块05的项必须不启用手持，且不得调用动态手持样式参考图；这一硬约束优先于手持名额分配，手持名额只在标准模块归属不包含模块05的图位之间分配；建批已将详情图手持上限限制为 {handheld_count_maximum("detail", image_count)} 项，因此两者不构成冲突。
 每项只允许绑定下面列出的合格 A/B/C 源图中的一张，禁止 D、缺失槽位和所有被拒绝源图。
 每项“绑定角度槽位”字段必须同时写出唯一合格源图编号，并原样包含“X 槽位”或“槽位 X”字样；X 必须是该源图实际对应的 A/B/C 槽位。
 每项 per_image_overrides 必须恰好包含这些字段：{json.dumps(DETAIL_REQUIRED_OVERRIDE_FIELDS, ensure_ascii=False)}
 详情图每项“辅助参考图调用”中的“对应产品”必须只原样填写本批 product_id：{product_id}；不得填写产品外观、材质、品类昵称或其他描述性名称。
 {prompt_values["product_material_term_rule"]}
-顶层只允许 common_constraints、configs、handheld_count_summary、notes；每项只允许 config_id、per_image_overrides、notes。
-handheld_count_summary 使用业务字段：用户要求详情图手持数量、实际启用手持数量、未启用手持数量、启用手持配置、是否完全满足用户数量。
+分段返回时，顶层键必须恰好服从本轮段指令；每项只允许 config_id、per_image_overrides、notes。
+每段必须返回 handheld_chunk_summary，并使用业务字段：本段手持配额、本段实际启用数量、本段启用手持配置。完整配置的 handheld_count_summary 由代码在所有分段通过后合成，任一分段均不得返回该键。
 动态手持样式参考图调用必须服从 canonical 值：不手持写“无”；静态握持写“无，仅动态拿起场景可调用”；动态拿起因未提供专用参考图写“未提供，不调用”。
 {category_prompt}
 模块01须承接正式主图配置中的已支持核心承诺，但不得复制或新增任何未确认说法。
@@ -2347,15 +2388,17 @@ def build_detail_variable_config_chunk_prompt(
     chunk_index: int,
     *,
     requirements: UserConfirmedRequirements,
+    is_set: bool = False,
     repair: bool = False,
     structure_correction: bool = False,
     correction: ContentPredicateViolation | None = None,
 ) -> str:
-    """Request one bounded detail-config chunk from the same Codex thread."""
+    """Request one bounded detail-config chunk in its isolated Codex thread."""
 
+    detail_count = _mode_image_count(requirements, "detail")
     batches = pair_config_ids(
         "detail",
-        _mode_image_count(requirements, "detail"),
+        detail_count,
     )
     chunk_count = len(batches)
     if not 1 <= chunk_index <= chunk_count:
@@ -2366,8 +2409,26 @@ def build_detail_variable_config_chunk_prompt(
     allowed_keys = ["chunk_index", "chunk_count", "configs"]
     if chunk_index == 1:
         allowed_keys.extend(("common_constraints", "notes"))
-    if chunk_index == chunk_count:
-        allowed_keys.append("handheld_count_summary")
+    allowed_keys.append("handheld_chunk_summary")
+    handheld_quota = detail_handheld_chunk_quotas(
+        detail_count,
+        requirements.handheld_detail,
+    )[chunk_index - 1]
+    if is_set:
+        quota_instruction = f"本段手持上限 {handheld_quota} 项，允许少于。"
+        summary_fields = SET_DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+        summary_explanation = (
+            f"【{SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD}】在本段实际启用数量等于配额时"
+            "必须包含“已按配额启用”；少于配额时必须包含“原因”与本段实际启用数量的数字。"
+        )
+    else:
+        quota_instruction = (
+            "本段所有图位一律不启用手持场景。"
+            if handheld_quota == 0
+            else f"本段必须恰好启用 {handheld_quota} 项手持。"
+        )
+        summary_fields = DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+        summary_explanation = ""
 
     if correction is not None:
         opening = (
@@ -2385,16 +2446,15 @@ def build_detail_variable_config_chunk_prompt(
             f"继续同一 detail_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过传输完整性门禁；"
             f"请完整重发第 {chunk_index}/{chunk_count} 段。不得修补、引用或解释损坏正文。"
         )
-    elif chunk_index == 1:
-        opening = base_prompt + "\n\n"
     else:
-        opening = "继续同一 detail_vc 任务。"
+        opening = base_prompt + "\n\n"
 
     return (
         opening
         + f"\n本轮只返回第 {chunk_index}/{chunk_count} 段，且只包含配置 "
         + "、".join(expected_ids)
         + "。"
+        + quota_instruction
         + f"顶层键必须恰好为：{json.dumps(allowed_keys, ensure_ascii=False)}。"
         + f"chunk_index 必须为 {chunk_index}，chunk_count 必须为 {chunk_count}。"
         + (
@@ -2408,12 +2468,14 @@ def build_detail_variable_config_chunk_prompt(
             if chunk_index == 1
             else ""
         )
-        + (
-            "handheld_count_summary 必须是 JSON 对象，只在本段返回，并汇总完整"
-            f"{chinese_image_count(_mode_image_count(requirements, 'detail'))}项配置。"
-            if chunk_index == chunk_count
-            else ""
-        )
+        + "handheld_chunk_summary 必须是 JSON 对象，且必须恰好包含这些字段："
+        + "、".join(summary_fields)
+        + "。"
+        + f"【本段手持配额】必须为整数 {handheld_quota}；"
+        + "【本段实际启用数量】必须等于本段 configs 中实际启用手持的数量；"
+        + "【本段启用手持配置】必须是按 configs 顺序列出的实际启用 config_id JSON 数组。"
+        + summary_explanation
+        + "任一分段均不得返回 handheld_count_summary。"
         + "只返回一个完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
     )
 
@@ -2497,7 +2559,6 @@ def parse_detail_variable_config_chunk(
     *,
     requirements: UserConfirmedRequirements,
     angle_inventory: Mapping[str, Any],
-    prior_chunks: Sequence[Mapping[str, Any]],
     set_identity: Mapping[str, Any] | None = None,
     component_identities: Sequence[Mapping[str, Any]] = (),
     set_angle_layout_inventory: Mapping[str, Any] | None = None,
@@ -2563,7 +2624,6 @@ def parse_detail_variable_config_chunk(
             chunk_index=chunk_index,
             requirements=requirements,
             angle_inventory=angle_inventory,
-            prior_chunks=prior_chunks,
         )
     else:
         if not component_identities or set_angle_layout_inventory is None:
@@ -2575,14 +2635,16 @@ def parse_detail_variable_config_chunk(
             set_identity=set_identity,
             component_identities=component_identities,
             set_angle_layout_inventory=set_angle_layout_inventory,
-            prior_chunks=prior_chunks,
         )
 
-    expected_keys = {"chunk_index", "chunk_count", "configs"}
+    expected_keys = {
+        "chunk_index",
+        "chunk_count",
+        "configs",
+        "handheld_chunk_summary",
+    }
     if chunk_index == 1:
         expected_keys.update(("common_constraints", "notes"))
-    if chunk_index == chunk_count:
-        expected_keys.add("handheld_count_summary")
     if set(value) != expected_keys:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段结构异常")
 
@@ -2598,21 +2660,70 @@ def assemble_detail_variable_config_chunks(
     chunks: list[Mapping[str, Any]],
     *,
     requirements: UserConfirmedRequirements,
+    is_set: bool = False,
 ) -> dict[str, Any]:
     """Rebuild the original full response in memory after every chunk passes."""
 
-    expected_ids = list(
-        config_ids("detail", _mode_image_count(requirements, "detail"))
-    )
-    if len(chunks) != len(pair_config_ids("detail", len(expected_ids))):
+    detail_count = _mode_image_count(requirements, "detail")
+    batches = pair_config_ids("detail", detail_count)
+    expected_ids = list(config_ids("detail", detail_count))
+    if len(chunks) != len(batches):
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段数量异常")
+    for chunk_index, (chunk, expected_chunk_ids) in enumerate(
+        zip(chunks, batches, strict=True),
+        start=1,
+    ):
+        if (
+            chunk.get("chunk_index") != chunk_index
+            or chunk.get("chunk_count") != len(batches)
+            or [
+                str(config.get("config_id") or "")
+                for config in chunk.get("configs", ())
+            ]
+            != list(expected_chunk_ids)
+        ):
+            raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段覆盖异常")
     configs = [config for chunk in chunks for config in chunk["configs"]]
     if [str(config.get("config_id") or "") for config in configs] != expected_ids:
         raise ExecutorExecutionError("codex-dev 收到的详情图变量配置分段覆盖异常")
+    enabled_ids = [
+        str(config.get("config_id") or "")
+        for config in configs
+        if "本张图不启用手持场景"
+        not in config["per_image_overrides"]["手持交互声明"]
+    ]
+    target = requirements.handheld_detail
+    if (not is_set and len(enabled_ids) != target) or (
+        is_set and len(enabled_ids) > target
+    ):
+        raise ExecutorExecutionError("codex-dev 收到的详情图变量配置手持数量异常")
+
+    handheld_summary: dict[str, Any] = {
+        "用户要求详情图手持数量": target,
+        "实际启用手持数量": len(enabled_ids),
+        "未启用手持数量": detail_count - len(enabled_ids),
+        "启用手持配置": enabled_ids,
+        "是否完全满足用户数量": "是" if len(enabled_ids) == target else "否",
+    }
+    if is_set:
+        if len(enabled_ids) == target:
+            explanation = f"已按目标启用，实际启用 {len(enabled_ids)} 项。"
+        else:
+            chunk_explanations = [
+                str(chunk["handheld_chunk_summary"][
+                    SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD
+                ]).strip()
+                for chunk in chunks
+            ]
+            explanation = (
+                f"实际启用 {len(enabled_ids)} 项，原因："
+                + "；".join(chunk_explanations)
+            )
+        handheld_summary[SET_HANDHELD_SUMMARY_EXPLANATION_FIELD] = explanation
     return {
         "common_constraints": dict(chunks[0]["common_constraints"]),
         "configs": [dict(config) for config in configs],
-        "handheld_count_summary": dict(chunks[-1]["handheld_count_summary"]),
+        "handheld_count_summary": handheld_summary,
         "notes": str(chunks[0]["notes"]),
     }
 
@@ -2689,13 +2800,76 @@ def _resolve_bound_angle_literal(
     return asset_id, slot
 
 
+def _validate_detail_handheld_chunk_summary(
+    value: Mapping[str, Any],
+    *,
+    quota: int,
+    enabled_ids: list[str],
+    is_set: bool,
+    label: str,
+    config_id: str,
+) -> None:
+    """Validate the self-contained handheld statement for one detail chunk."""
+
+    summary = value.get("handheld_chunk_summary")
+    required_fields = (
+        SET_DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+        if is_set
+        else DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+    )
+
+    def fail(field: str, expected: str) -> None:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}本段手持数量说明异常",
+            code="handheld_summary",
+            config_id=config_id,
+            field=field,
+            expected=expected,
+        )
+
+    if not isinstance(summary, Mapping):
+        fail("handheld_chunk_summary", "必须是与本段实际手持结果一致的 JSON 对象")
+    if set(summary) != set(required_fields):
+        fail(
+            "handheld_chunk_summary",
+            f"必须恰好包含这些字段：{'、'.join(required_fields)}",
+        )
+    if type(summary.get("本段手持配额")) is not int or summary.get("本段手持配额") != quota:
+        fail("本段手持配额", f"必须是整数 {quota}")
+    enabled = len(enabled_ids)
+    if (
+        type(summary.get("本段实际启用数量")) is not int
+        or summary.get("本段实际启用数量") != enabled
+    ):
+        fail("本段实际启用数量", f"必须是整数 {enabled}")
+    if summary.get("本段启用手持配置") != enabled_ids:
+        fail("本段启用手持配置", f"必须等于本段实际启用图位列表 {enabled_ids}")
+    if not is_set:
+        return
+
+    explanation = summary.get(SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD)
+    if not isinstance(explanation, str) or not explanation.strip():
+        fail(SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD, "必须是非空字符串")
+    if enabled == quota and "已按配额启用" not in explanation:
+        fail(
+            SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
+            "实际等于配额时必须包含「已按配额启用」",
+        )
+    if enabled < quota and (
+        "原因" not in explanation or str(enabled) not in explanation
+    ):
+        fail(
+            SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
+            f"少于配额时必须包含「原因」与数字 {enabled}",
+        )
+
+
 def _validate_detail_chunk_business_content(
     value: Mapping[str, Any],
     *,
     chunk_index: int,
     requirements: UserConfirmedRequirements,
     angle_inventory: Mapping[str, Any],
-    prior_chunks: Sequence[Mapping[str, Any]],
 ) -> None:
     """Prove config content is safe before granting one envelope correction."""
 
@@ -2729,8 +2903,8 @@ def _validate_detail_chunk_business_content(
             expected="必须是非空 JSON 对象",
         )
     qualified = qualified_angle_assets(angle_inventory)
-    enabled_handheld = 0
-    start_index = sum(len(chunk["configs"]) for chunk in prior_chunks)
+    enabled_ids: list[str] = []
+    start_index = 2 * (chunk_index - 1)
     detail_count = _mode_image_count(requirements, "detail")
     groups = detail_module_groups(detail_count)
     for offset, raw in enumerate(value["configs"]):
@@ -2780,7 +2954,8 @@ def _validate_detail_chunk_business_content(
 
         handheld_declaration = overrides["手持交互声明"]
         handheld = "本张图不启用手持场景" not in handheld_declaration
-        enabled_handheld += int(handheld)
+        if handheld:
+            enabled_ids.append(config_id)
         dynamic_reference = overrides["动态手持样式参考图调用"].strip()
         if not handheld and dynamic_reference != "无":
             raise ContentPredicateViolation(
@@ -2880,62 +3055,26 @@ def _validate_detail_chunk_business_content(
                 expected="非模块05两栏必须逐字写非尺寸标注图",
             )
 
-    if enabled_handheld > requirements.handheld_detail:
+    quota = detail_handheld_chunk_quotas(
+        detail_count,
+        requirements.handheld_detail,
+    )[chunk_index - 1]
+    if len(enabled_ids) != quota:
         raise ContentPredicateViolation(
             f"codex-dev 收到的{label}手持数量异常",
             code="handheld_count",
             config_id=str(value["configs"][-1].get("config_id") or ""),
             field="手持交互声明",
-            expected=f"完整详情图只能恰好 {requirements.handheld_detail} 项启用手持",
+            expected=f"本段必须恰好 {quota} 项启用手持",
         )
-
-    chunk_count = len(pair_config_ids("detail", detail_count))
-    if chunk_index == chunk_count:
-        all_configs = [
-            raw
-            for chunk in (*prior_chunks, value)
-            for raw in chunk["configs"]
-        ]
-        if len(all_configs) != detail_count:
-            raise ContentPredicateViolation(
-                f"codex-dev 收到的{label}分段覆盖异常",
-                code="chunk_coverage",
-                config_id=chunk_config_id,
-                field="configs",
-                expected=f"全部分段必须完整覆盖 detail_01 至 detail_{detail_count:02d}",
-            )
-        enabled_ids = [
-            str(raw.get("config_id") or "")
-            for raw in all_configs
-            if "本张图不启用手持场景"
-            not in raw["per_image_overrides"]["手持交互声明"]
-        ]
-        if len(enabled_ids) != requirements.handheld_detail:
-            raise ContentPredicateViolation(
-                f"codex-dev 收到的{label}手持数量异常",
-                code="handheld_count",
-                config_id=chunk_config_id,
-                field="手持交互声明",
-                expected=f"完整详情图必须恰好 {requirements.handheld_detail} 项启用手持",
-            )
-        summary = value.get("handheld_count_summary")
-        if not isinstance(summary, dict):
-            raise ContentPredicateViolation(
-                f"codex-dev 收到的{label}手持数量说明异常",
-                code="handheld_summary",
-                config_id=chunk_config_id,
-                field="handheld_count_summary",
-                expected="必须是与完整配置实际手持结果一致的 JSON 对象",
-            )
-        _validate_handheld_summary(
-            summary,
-            mode="detail",
-            expected_handheld=requirements.handheld_detail,
-            expected_count=detail_count,
-            enabled_ids=enabled_ids,
-            label=label,
-            correction_config_id=chunk_config_id,
-        )
+    _validate_detail_handheld_chunk_summary(
+        value,
+        quota=quota,
+        enabled_ids=enabled_ids,
+        is_set=False,
+        label=label,
+        config_id=chunk_config_id,
+    )
 
 
 def detail_chunk_business_fingerprint(
@@ -2944,11 +3083,12 @@ def detail_chunk_business_fingerprint(
 ) -> str:
     """Fingerprint business-bearing fields while excluding the wrapper-only notes field."""
 
-    payload: dict[str, Any] = {"configs": value["configs"]}
+    payload: dict[str, Any] = {
+        "configs": value["configs"],
+        "handheld_chunk_summary": value["handheld_chunk_summary"],
+    }
     if chunk_index == 1:
         payload["common_constraints"] = value["common_constraints"]
-    if "handheld_count_summary" in value:
-        payload["handheld_count_summary"] = value["handheld_count_summary"]
     return stable_json_sha256(payload)
 
 
@@ -3344,7 +3484,6 @@ def _validate_set_detail_chunk_business_content(
     set_identity: Mapping[str, Any],
     component_identities: Sequence[Mapping[str, Any]],
     set_angle_layout_inventory: Mapping[str, Any],
-    prior_chunks: Sequence[Mapping[str, Any]],
 ) -> None:
     label = "套装详情图变量配置"
     confirmed_dimensions = _set_dimension_values(
@@ -3381,7 +3520,7 @@ def _validate_set_detail_chunk_business_content(
             field="common_constraints",
             expected="必须是非空 JSON 对象",
         )
-    start_index = sum(len(chunk["configs"]) for chunk in prior_chunks)
+    start_index = 2 * (chunk_index - 1)
     current_enabled, _all_appear = _validate_set_config_items(
         value["configs"],
         mode="detail",
@@ -3389,62 +3528,27 @@ def _validate_set_detail_chunk_business_content(
         requirements=requirements,
         set_angle_layout_inventory=set_angle_layout_inventory,
     )
-    target = requirements.handheld_detail
-    prior_enabled = [
-        str(raw.get("config_id") or "")
-        for chunk in prior_chunks
-        for raw in chunk["configs"]
-        if "本张图不启用手持场景"
-        not in raw["per_image_overrides"]["手持交互声明"]
-    ]
-    if len(prior_enabled) + len(current_enabled) > target:
+    detail_count = _mode_image_count(requirements, "detail")
+    quota = detail_handheld_chunk_quotas(
+        detail_count,
+        requirements.handheld_detail,
+    )[chunk_index - 1]
+    if len(current_enabled) > quota:
         raise ContentPredicateViolation(
             f"codex-dev 收到的{label}手持数量异常",
             code="handheld_count",
             config_id=first_config_id,
             field="手持交互声明",
-            expected=f"实际启用数量不得超过目标 {target}",
+            expected=f"本段实际启用数量不得超过配额 {quota}",
         )
-    chunk_count = detail_variable_config_chunk_count(requirements)
-    if chunk_index == chunk_count:
-        all_configs = [
-            raw
-            for chunk in (*prior_chunks, value)
-            for raw in chunk["configs"]
-        ]
-        expected_count = _mode_image_count(requirements, "detail")
-        if len(all_configs) != expected_count:
-            raise ContentPredicateViolation(
-                f"codex-dev 收到的{label}分段覆盖异常",
-                code="chunk_coverage",
-                config_id=first_config_id,
-                field="configs",
-                expected=f"全部分段必须完整覆盖 detail_01 至 detail_{expected_count:02d}",
-            )
-        enabled_ids = [
-            str(raw.get("config_id") or "")
-            for raw in all_configs
-            if "本张图不启用手持场景"
-            not in raw["per_image_overrides"]["手持交互声明"]
-        ]
-        summary = value.get("handheld_count_summary")
-        if not isinstance(summary, Mapping):
-            raise ContentPredicateViolation(
-                f"codex-dev 收到的{label}手持数量说明异常",
-                code="handheld_summary",
-                config_id=first_config_id,
-                field="handheld_count_summary",
-                expected="末段必须返回套装手持数量说明对象",
-            )
-        _validate_set_handheld_summary(
-            summary,
-            mode="detail",
-            target=target,
-            expected_count=expected_count,
-            enabled_ids=enabled_ids,
-            label=label,
-            config_id=first_config_id,
-        )
+    _validate_detail_handheld_chunk_summary(
+        value,
+        quota=quota,
+        enabled_ids=current_enabled,
+        is_set=True,
+        label=label,
+        config_id=first_config_id,
+    )
 
 
 def parse_set_variable_config_response(

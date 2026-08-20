@@ -262,8 +262,19 @@ class Cat09PublicExecutionPathTest(CodexDevFixture):
                         artifact["configs"][0]["per_image_overrides"]["绑定角度槽位"],
                     )
                     self.assertEqual("详情图变量配置已生成", result.detail)
-                    self.assertEqual(1, len(transport.calls))
-                    self.assertEqual(3, len(transport.continuation_calls))
+                    self.assertEqual(4, len(transport.calls))
+                    self.assertEqual(
+                        {1, 2, 3, 4},
+                        {
+                            index
+                            for index in range(1, 5)
+                            if any(
+                                f"第 {index}/4 段" in prompt
+                                for prompt, _attachments in transport.calls
+                            )
+                        },
+                    )
+                    self.assertEqual([], transport.continuation_calls)
 
     def test_true_d_source_fails_through_fake_transport_without_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -295,7 +306,18 @@ class Cat09PublicExecutionPathTest(CodexDevFixture):
                 ).execute(ExecutionRequest(step="detail_vc"))
 
             self.assertFalse(output_path.exists())
-            self.assertEqual(1, len(transport.calls))
+            self.assertEqual(4, len(transport.calls))
+            self.assertEqual(
+                {1, 2, 3, 4},
+                {
+                    index
+                    for index in range(1, 5)
+                    if any(
+                        f"第 {index}/4 段" in prompt
+                        for prompt, _attachments in transport.calls
+                    )
+                },
+            )
             self.assertEqual(0, len(transport.continuation_calls))
 
 

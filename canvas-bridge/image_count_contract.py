@@ -161,6 +161,45 @@ def detail_module_groups(count: int) -> tuple[tuple[int, ...], ...]:
     return first_eight + extras
 
 
+def detail_handheld_chunk_quotas(
+    detail_count: int,
+    handheld_target: int,
+) -> tuple[int, ...]:
+    """Distribute the detail handheld target across two-config chunks.
+
+    A detail slot is eligible only when its assigned module group omits module05.
+    Quotas are filled one item at a time in ascending chunk order, wrapping until
+    the requested target is exhausted.  This keeps the result deterministic while
+    respecting every chunk's eligible-slot capacity.
+    """
+
+    groups = detail_module_groups(detail_count)
+    if type(handheld_target) is not int or handheld_target < 0:
+        raise ImageCountContractError("详情图手持目标必须是非负整数")
+
+    capacities = tuple(
+        sum(
+            DIMENSION_MODULE not in modules
+            for modules in groups[index : index + 2]
+        )
+        for index in range(0, len(groups), 2)
+    )
+    if handheld_target > sum(capacities):
+        raise ImageCountContractError("详情图手持目标超过可用图位容量")
+
+    quotas = [0] * len(capacities)
+    remaining = handheld_target
+    while remaining:
+        for index, capacity in enumerate(capacities):
+            if quotas[index] >= capacity:
+                continue
+            quotas[index] += 1
+            remaining -= 1
+            if remaining == 0:
+                break
+    return tuple(quotas)
+
+
 def detail_module_assignment_lines(count: int) -> tuple[str, ...]:
     """Render the canonical detail-slot/module mapping for prompts and reports."""
 

@@ -523,11 +523,19 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
                 raise AssertionError(f"unexpected {mode} set final prompt transport call")
             return results.pop(0)
 
+        @staticmethod
+        def _require_final_timeout(turn_timeout: float) -> None:
+            if turn_timeout != 1200.0:
+                raise AssertionError("set final prompt turn must use the 1200-second timeout")
+
         def run_turn(
             self,
             prompt: str,
             attachments: tuple[CodexAttachment, ...],
+            *,
+            turn_timeout: float,
         ) -> CodexTurnResult:
+            self._require_final_timeout(turn_timeout)
             mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
             with self._lock:
                 self.calls.append((prompt, attachments))
@@ -541,7 +549,10 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
             thread_id: str,
             prompt: str,
             attachments: tuple[CodexAttachment, ...],
+            *,
+            turn_timeout: float,
         ) -> CodexTurnResult:
+            self._require_final_timeout(turn_timeout)
             mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
             with self._lock:
                 if thread_id != self._THREAD_IDS[mode]:
@@ -696,8 +707,8 @@ class St03cSetFinalPromptCompilerTests(St03cSetFinalPromptFixture):
                 set(final_prompt_bundle_targets(final_dir, requirements=requirements)),
                 {path for path in final_dir.iterdir()},
             )
-            self.assertEqual(2, prepared["final_transport_calls_before"])
-            self.assertEqual(3, prepared["final_continuations_before"])
+            self.assertEqual(5, prepared["final_transport_calls_before"])
+            self.assertEqual(0, prepared["final_continuations_before"])
             self.assertEqual(
                 2,
                 len(prepared["transport"].calls)

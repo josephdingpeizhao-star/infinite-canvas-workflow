@@ -169,6 +169,11 @@ HANDHELD_SUMMARY_COMMON_KEYS = (
     "启用手持配置",
     "是否完全满足用户数量",
 )
+DETAIL_HANDHELD_CHUNK_SUMMARY_KEYS = (
+    "本段手持配额",
+    "本段实际启用数量",
+    "本段启用手持配置",
+)
 
 # 源码内联位置：canvas-bridge/codex_dev_downstream.py:2421。
 FINAL_BATCH_TOP_LEVEL_FIELDS = frozenset({"prompts"})
@@ -924,11 +929,16 @@ class CategoryExecutorContentContractTest(unittest.TestCase):
             for mode, scope in (("main", "主图"), ("detail", "详情图")):
                 with self.subTest(category=category_key, mode=mode):
                     prompt = _variable_config_stage_prompt(recipe, mode)
-                    expected_keys = (
-                        f"用户要求{scope}手持数量",
-                        *HANDHELD_SUMMARY_COMMON_KEYS,
-                    )
-                    self.assertIn("handheld_count_summary", prompt)
+                    if mode == "main":
+                        summary_key = "handheld_count_summary"
+                        expected_keys = (
+                            f"用户要求{scope}手持数量",
+                            *HANDHELD_SUMMARY_COMMON_KEYS,
+                        )
+                    else:
+                        summary_key = "handheld_chunk_summary"
+                        expected_keys = DETAIL_HANDHELD_CHUNK_SUMMARY_KEYS
+                    self.assertIn(summary_key, prompt)
                     for key in expected_keys:
                         self.assertIn(
                             key,

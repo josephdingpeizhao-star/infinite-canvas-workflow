@@ -40,14 +40,16 @@ def fixture_json(path: Path) -> dict[str, object]:
     return json.loads(fixture_text(path))
 
 
-def confirmed_requirements() -> downstream.UserConfirmedRequirements:
+def confirmed_requirements(
+    *, handheld_detail: int = 1
+) -> downstream.UserConfirmedRequirements:
     return downstream.parse_user_confirmed_requirements(
         {
             "user_confirmed_facts": {
                 "product_type": "杯子",
                 "height_cm": 8,
                 "handheld_main": 2,
-                "handheld_detail": 1,
+                "handheld_detail": handheld_detail,
                 "allow_clear_water": False,
                 "forbid_pouring_and_heating": True,
                 "missing_d_no_retake": True,
@@ -130,20 +132,17 @@ class CodexDevSceneNegationScopeTest(unittest.TestCase):
         )
 
     def test_real_detail_vc_chunk2_passes_chunk_validation(self) -> None:
-        first = downstream.parse_detail_variable_config_chunk(
-            fixture_text(CHUNK1_FIXTURE),
-            1,
-            requirements=confirmed_requirements(),
-            angle_inventory=angle_inventory(),
-            prior_chunks=[],
-        )
-
+        chunk = fixture_json(CHUNK2_FIXTURE)
+        chunk["handheld_chunk_summary"] = {
+            "本段手持配额": 1,
+            "本段实际启用数量": 1,
+            "本段启用手持配置": ["detail_03"],
+        }
         second = downstream.parse_detail_variable_config_chunk(
-            fixture_text(CHUNK2_FIXTURE),
+            json.dumps(chunk, ensure_ascii=False),
             2,
-            requirements=confirmed_requirements(),
+            requirements=confirmed_requirements(handheld_detail=2),
             angle_inventory=angle_inventory(),
-            prior_chunks=[first],
         )
 
         self.assertEqual(

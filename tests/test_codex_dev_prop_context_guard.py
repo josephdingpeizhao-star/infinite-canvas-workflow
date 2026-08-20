@@ -35,14 +35,16 @@ NEW_PROP_CONTEXT_FIELDS = (
 STYLE_MASTER_PROP_TEXT = "背景绿植或空玻璃花器虚化，远处可有玻璃器皿。"
 
 
-def confirmed_requirements() -> downstream.UserConfirmedRequirements:
+def confirmed_requirements(
+    *, handheld_detail: int = 1
+) -> downstream.UserConfirmedRequirements:
     return downstream.parse_user_confirmed_requirements(
         {
             "user_confirmed_facts": {
                 "product_type": "杯子",
                 "height_cm": 8,
                 "handheld_main": 2,
-                "handheld_detail": 1,
+                "handheld_detail": handheld_detail,
                 "allow_clear_water": False,
                 "forbid_pouring_and_heating": True,
                 "missing_d_no_retake": True,
@@ -171,12 +173,17 @@ class CodexDevPropContextGuardTest(unittest.TestCase):
         )
 
     def test_real_detail_vc_chunk1_accepts_non_product_material_by_contract(self) -> None:
+        chunk = fixture_chunk()
+        chunk["handheld_chunk_summary"] = {
+            "本段手持配额": 0,
+            "本段实际启用数量": 0,
+            "本段启用手持配置": [],
+        }
         parsed = downstream.parse_detail_variable_config_chunk(
-            fixture_text(),
+            json.dumps(chunk, ensure_ascii=False),
             1,
-            requirements=confirmed_requirements(),
+            requirements=confirmed_requirements(handheld_detail=0),
             angle_inventory=angle_inventory(),
-            prior_chunks=[],
         )
 
         self.assertEqual(["detail_01", "detail_02"], [item["config_id"] for item in parsed["configs"]])
