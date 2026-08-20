@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import random
 import subprocess
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -32,6 +34,14 @@ ROOT = Path(__file__).resolve().parents[1]
 RENDER_MAX_CONCURRENCY_ENV = "RENDER_MAX_CONCURRENCY"
 MIN_RENDER_MAX_CONCURRENCY = 1
 MAX_RENDER_MAX_CONCURRENCY = 60  # image_count_contract: 30 main + 30 detail images per batch.
+RENDER_TRANSIENT_HTTP_STATUSES = frozenset({429, 502, 503, 504, 524})
+RENDER_TRANSIENT_FAILURE_CODES = frozenset(
+    {"render_timeout", "render_network_error"}
+)
+RENDER_TRANSIENT_RETRY_LIMIT = 2
+RENDER_RETRY_BACKOFF_SECONDS = (5.0, 15.0)
+RENDER_RETRY_JITTER_MAX_SECONDS = 3.0
+RENDER_RETRY_AFTER_CAP_SECONDS = 60
 _RENDER_FAILURE_FIELDS = (
     "code",
     "http_status",
@@ -44,7 +54,22 @@ _RENDER_FAILURE_FIELDS = (
     "remaining_count",
     "response_top_keys",
     "response_data0_keys",
+    "transient_retry_attempts",
 )
+
+
+def _is_transient_render_failure(exc: BaseException) -> bool:
+    code = getattr(exc, "code", None)
+    if type(code) is not str:
+        return False
+    if code in RENDER_TRANSIENT_FAILURE_CODES:
+        return True
+    http_status = getattr(exc, "http_status", None)
+    return (
+        code == "render_http_error"
+        and type(http_status) is int
+        and http_status in RENDER_TRANSIENT_HTTP_STATUSES
+    )
 
 
 def _first_path(value: Any, label: str) -> Path:
@@ -96,6 +121,9 @@ class ImageProductionExecutor:
         integrity_script: Path | None = None,
         task_assembler: Callable[[Mapping[str, Any], Path], RenderTaskPlan] | None = None,
         on_task_success: Callable[[Any, ExecutionResult], None] | None = None,
+        on_task_retry: Callable[[Any, int, str, int | None, float], None] | None = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        jitter_fn: Callable[[float, float], float] = random.uniform,
     ) -> None:
         self.context = context
         self.manifest = context.manifest
@@ -106,6 +134,46 @@ class ImageProductionExecutor:
         self.integrity_script = integrity_script or ROOT / "scripts" / "validate_final_prompt_integrity.py"
         self.task_assembler = task_assembler or assemble_render_tasks
         self.on_task_success = on_task_success
+        self.on_task_retry = on_task_retry
+        self.sleep_fn = sleep_fn
+        self.jitter_fn = jitter_fn
+
+    def _retry_delay_seconds(self, exc: BaseException, retry_attempt: int) -> float:
+        backoff = RENDER_RETRY_BACKOFF_SECONDS[retry_attempt - 1]
+        jitter = float(self.jitter_fn(0.0, RENDER_RETRY_JITTER_MAX_SECONDS))
+        jitter = max(0.0, min(RENDER_RETRY_JITTER_MAX_SECONDS, jitter))
+        retry_after = getattr(exc, "retry_after_seconds", None)
+        if (
+            getattr(exc, "code", None) == "render_http_error"
+            and getattr(exc, "http_status", None) == 429
+            and type(retry_after) is int
+            and 1 <= retry_after <= 600
+        ):
+            return min(
+                float(RENDER_RETRY_AFTER_CAP_SECONDS),
+                max(backoff, float(retry_after)) + jitter,
+            )
+        return backoff + jitter
+
+    def _emit_task_retry(
+        self,
+        task: Any,
+        retry_attempt: int,
+        exc: BaseException,
+        delay_seconds: float,
+    ) -> None:
+        if self.on_task_retry is None:
+            return
+        try:
+            self.on_task_retry(
+                task,
+                retry_attempt,
+                str(getattr(exc, "code", "")),
+                getattr(exc, "http_status", None),
+                delay_seconds,
+            )
+        except Exception:
+            pass
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         if request.step not in {"integrity", "renders"}:
@@ -247,9 +315,44 @@ class ImageProductionExecutor:
             if stop_starting.is_set():
                 return not_started
             try:
-                return image_executor.execute(
-                    ExecutionRequest(step="renders", payload=task, metadata=request.metadata)
-                )
+                last_failure: Exception | None = None
+                for attempt in range(RENDER_TRANSIENT_RETRY_LIMIT + 1):
+                    if attempt:
+                        if stop_starting.is_set():
+                            assert last_failure is not None
+                            if attempt > 1:
+                                last_failure.transient_retry_attempts = attempt - 1
+                            raise last_failure
+                        delay_seconds = self._retry_delay_seconds(last_failure, attempt)
+                        self._emit_task_retry(
+                            task,
+                            attempt,
+                            last_failure,
+                            delay_seconds,
+                        )
+                        self.sleep_fn(delay_seconds)
+                        if stop_starting.is_set():
+                            if attempt > 1:
+                                last_failure.transient_retry_attempts = attempt - 1
+                            raise last_failure
+                    try:
+                        return image_executor.execute(
+                            ExecutionRequest(
+                                step="renders",
+                                payload=task,
+                                metadata=request.metadata,
+                            )
+                        )
+                    except Exception as exc:
+                        if not _is_transient_render_failure(exc):
+                            if attempt:
+                                exc.transient_retry_attempts = attempt
+                            raise
+                        if attempt >= RENDER_TRANSIENT_RETRY_LIMIT:
+                            exc.transient_retry_attempts = attempt
+                            raise
+                        last_failure = exc
+                raise AssertionError("render retry loop exhausted without result")
             except Exception:
                 stop_starting.set()
                 raise

@@ -108,6 +108,19 @@ def _response_header(headers: Mapping[str, str], name: str) -> str:
     )
 
 
+def _parse_retry_after_seconds(response: HttpResponse) -> int | None:
+    if response.status != 429:
+        return None
+    raw = _response_header(response.headers, "retry-after").strip()
+    if re.fullmatch(r"[0-9]+", raw) is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if 1 <= value <= 600 else None
+
+
 def _extract_upstream_failure(response: HttpResponse) -> dict[str, object]:
     """Extract only fixed-shape fields that are safe to surface to users."""
 
@@ -132,12 +145,16 @@ def _extract_upstream_failure(response: HttpResponse) -> dict[str, object]:
             if match is not None:
                 provider_request_id = _safe_upstream_token(match.group(1))
 
-    return {
+    fields: dict[str, object] = {
         "http_status": http_status,
         "provider_error_type": provider_error_type,
         "provider_error_code": provider_error_code,
         "provider_request_id": provider_request_id,
     }
+    retry_after_seconds = _parse_retry_after_seconds(response)
+    if retry_after_seconds is not None:
+        fields["retry_after_seconds"] = retry_after_seconds
+    return fields
 
 
 def _attach_render_failure(

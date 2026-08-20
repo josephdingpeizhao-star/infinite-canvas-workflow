@@ -243,6 +243,8 @@ class Er01bProjectionFailureDisclosureTest(unittest.TestCase):
                     task_assembler=lambda _manifest, _index: self._render_plan(
                         bundle.renders_dir
                     ),
+                    sleep_fn=lambda _delay: None,
+                    jitter_fn=lambda _minimum, _maximum: 0.0,
                 )
 
             service = WorkflowProductionService(
@@ -289,6 +291,8 @@ class Er01bProjectionFailureDisclosureTest(unittest.TestCase):
                 task_assembler=lambda _manifest, _index: self._render_plan(
                     bundle.renders_dir
                 ),
+                sleep_fn=lambda _delay: None,
+                jitter_fn=lambda _minimum, _maximum: 0.0,
             )
             with self.assertRaises(ExecutorExecutionError) as caught:
                 executor.execute(ExecutionRequest(step="renders"))
@@ -463,13 +467,13 @@ class Er01bProjectionFailureDisclosureTest(unittest.TestCase):
             (
                 timeout,
                 "图片服务等待超时（90 秒）。本轮成功 0 张、计划 3 张、跳过 0 张。"
-                "机器已停下，未自动重试，已完成的成果都保留了。",
+                "已自动重试 2 次仍失败，机器已停下，已完成的成果都保留了。",
                 "渲染失败：图片服务等待超时 90 秒；成功 0/计划 3/跳过 0",
             ),
             (
                 network,
                 "无法连接图片服务。本轮成功 0 张、计划 3 张、跳过 0 张。"
-                "机器已停下，未自动重试，已完成的成果都保留了。",
+                "已自动重试 2 次仍失败，机器已停下，已完成的成果都保留了。",
                 "渲染失败：无法连接图片服务；成功 0/计划 3/跳过 0",
             ),
         )

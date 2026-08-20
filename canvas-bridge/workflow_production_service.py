@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import os
 import queue
 import re
@@ -88,6 +89,7 @@ _RENDER_FAILURE_INTEGER_RANGES = {
     "planned_count": (0, 9_999),
     "skipped_count": (0, 9_999),
     "timeout_seconds": (1, 9_999),
+    "transient_retry_attempts": (1, 9),
 }
 _RENDER_FAILURE_TOKEN_FIELDS = (
     "provider_error_type",
@@ -107,6 +109,9 @@ _IMAGE_SERVICE_FAILURE_CODES = frozenset(
         "render_network_error",
         "render_image_download_failed",
     }
+)
+_RENDER_RETRY_FAILURE_CODES = frozenset(
+    {"render_http_error", "render_timeout", "render_network_error"}
 )
 _PERSISTENCE_TIMEOUT_DETAIL = "真实图片没有在规定时间内完成浏览器持久化"
 _QC_HEARTBEAT_HTTP_TIMEOUT_SECONDS = 1.0
@@ -1054,6 +1059,7 @@ class WorkflowProductionService:
 
             raw = OpenAIImageExecutor(context)
             batch_id = str(manifest.get("product_id") or "")
+            journal = self._journal_path(manifest_path, batch_id)
 
             def on_task_success(_task: Any, result: ExecutionResult) -> None:
                 for path in result.outputs:
@@ -1061,10 +1067,27 @@ class WorkflowProductionService:
                         raise ExecutorExecutionError("渲染结果不在当前批次登记图位中。")
                     on_output(artifact_from_path(batch_id, path))
 
+            def on_task_retry(
+                task: Any,
+                attempt: int,
+                failure_code: str,
+                http_status: int | None,
+                delay_seconds: float,
+            ) -> None:
+                self._record_render_retry(
+                    journal,
+                    task,
+                    attempt,
+                    failure_code,
+                    http_status,
+                    delay_seconds,
+                )
+
             return ImageProductionExecutor(
                 context,
                 image_executor_factory=lambda _inner_context: raw,
                 on_task_success=on_task_success,
+                on_task_retry=on_task_retry,
             )
         raise ProductionGateError(_M2C_BOUNDARY_MESSAGE)
 
@@ -1086,6 +1109,45 @@ class WorkflowProductionService:
             code=code,
             config_id=config_id,
         )
+
+    @staticmethod
+    def _record_render_retry(
+        journal: Path,
+        task: Any,
+        attempt: int,
+        failure_code: str,
+        http_status: int | None,
+        delay_seconds: float,
+    ) -> None:
+        output_path = getattr(task, "output_path", None)
+        config_id = output_path.stem if isinstance(output_path, Path) else ""
+        if (
+            type(config_id) is not str
+            or _SAFE_RENDER_FAILURE_TOKEN_PATTERN.fullmatch(config_id) is None
+            or _UNSAFE_FAILURE_DETAIL_PATTERN.search(config_id)
+            or is_sensitive_identifier(config_id)
+            or type(attempt) is not int
+            or not 1 <= attempt <= 2
+            or type(failure_code) is not str
+            or failure_code not in _RENDER_RETRY_FAILURE_CODES
+            or type(delay_seconds) not in (int, float)
+            or not math.isfinite(float(delay_seconds))
+            or not 0 <= float(delay_seconds) <= 600
+        ):
+            return
+        if http_status is not None and (
+            type(http_status) is not int or not 100 <= http_status <= 599
+        ):
+            return
+        fields: dict[str, object] = {
+            "config_id": config_id,
+            "attempt": attempt,
+            "failure_code": failure_code,
+            "delay_seconds": int(round(float(delay_seconds))),
+        }
+        if http_status is not None:
+            fields["http_status"] = http_status
+        run_controller.append_event(journal, "render_retry", **fields)
 
     @staticmethod
     def _controlled_failure(exc: BaseException) -> tuple[str, str] | None:
@@ -1175,6 +1237,17 @@ class WorkflowProductionService:
         fields: dict[str, object] = {"code": code}
         if reason:
             fields["reason"] = reason
+        retry_attempts = getattr(exc, "transient_retry_attempts", None)
+        if retry_attempts is not None:
+            minimum, maximum = _RENDER_FAILURE_INTEGER_RANGES[
+                "transient_retry_attempts"
+            ]
+            if (
+                type(retry_attempts) is not int
+                or not minimum <= retry_attempts <= maximum
+            ):
+                return None
+            fields["transient_retry_attempts"] = retry_attempts
         if code == "render_inputs_unavailable":
             if getattr(exc, "missing_files", None) not in (None, (), []):
                 return None
@@ -1338,7 +1411,12 @@ class WorkflowProductionService:
             if name in fields
         ]
         count_sentence = f"本轮{'、'.join(workbench_counts)}。" if workbench_counts else ""
-        stop_sentence = "机器已停下，未自动重试，已完成的成果都保留了。"
+        stop_sentence = (
+            f"已自动重试 {fields['transient_retry_attempts']} 次仍失败，"
+            "机器已停下，已完成的成果都保留了。"
+            if "transient_retry_attempts" in fields
+            else "机器已停下，未自动重试，已完成的成果都保留了。"
+        )
 
         if code == "render_pipeline_error":
             reason = str(fields["reason"])
