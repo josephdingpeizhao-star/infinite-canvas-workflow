@@ -26,6 +26,7 @@ from batch_recycle_state import (
     BatchLifecycleReadError,
     read_batch_lifecycle,
 )
+from manifest_relocation import relocate_manifest_if_moved
 
 
 CANVAS_UNAVAILABLE_MESSAGE = (
@@ -117,6 +118,7 @@ class BatchRecycleService:
         manifest_path = (
             self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
         )
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except FileNotFoundError:

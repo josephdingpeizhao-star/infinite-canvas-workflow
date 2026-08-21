@@ -18,6 +18,7 @@ from batch_recycle_lock import (
     BatchOperationLock,
     BatchOperationLockUnavailable,
 )
+from manifest_relocation import relocate_manifest_if_moved
 from windows_recycle_bin import RecycleBinError, WindowsRecycleBinExecutor
 
 
@@ -314,6 +315,7 @@ class ProjectDeletionService:
         if not _present(path):
             return path, None, ""
         self._safe_file(path, self.manifests_root, batch_id=batch_id)
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         value = self._read_json(path, batch_id=batch_id, code="manifest_invalid")
         if value.get("product_id") != batch_id:
             raise ProjectDeletionError(

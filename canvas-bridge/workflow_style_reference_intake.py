@@ -18,6 +18,7 @@ from batch_recycle_state import (
     read_batch_lifecycle,
 )
 import ic_client
+from manifest_relocation import relocate_manifest_if_moved
 import run_controller
 
 
@@ -220,6 +221,7 @@ def resolve_style_reference_manifest_path(
     ):
         raise StyleReferenceIntakeError(f"{action_label}的批次号无效。")
     path = repository_root.resolve() / "manifests" / f"{batch_id}.batch_manifest.json"
+    relocate_manifest_if_moved(repository_root, batch_id)
     manifest = _read_json(path, "批次清单")
     if manifest.get("product_id") != batch_id:
         raise StyleReferenceIntakeError(f"{action_label}的批次与清单不一致。")

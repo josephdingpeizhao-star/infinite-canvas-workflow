@@ -36,6 +36,7 @@ import run_controller
 import state_reader
 from executor_contract import Executor, ExecutorContext, ExecutorExecutionError, ExecutionResult
 from image_production_executor import ImageProductionExecutor
+from manifest_relocation import relocate_manifest_if_moved
 from openai_image_executor import OpenAIImageExecutor
 from workflow_production_controller import (
     ProductionGateError,
@@ -476,6 +477,7 @@ class WorkflowProductionService:
         return path
 
     def _load_manifest(self, path: Path, batch_id: str) -> dict[str, Any]:
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         try:
             manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as exc:

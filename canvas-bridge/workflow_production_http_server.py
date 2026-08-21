@@ -28,6 +28,7 @@ from category_recipes import (
 )
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
+from manifest_relocation import relocate_manifest_if_moved
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
@@ -198,6 +199,7 @@ class WorkflowProductionHttpApplication:
         if not batch_id or Path(batch_id).name != batch_id or any(char in batch_id for char in ("/", "\\", "\0")):
             raise ProductionHttpError(400, "invalid batch")
         path = self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         try:
             value = json.loads(path.read_text(encoding="utf-8"))
         except FileNotFoundError:

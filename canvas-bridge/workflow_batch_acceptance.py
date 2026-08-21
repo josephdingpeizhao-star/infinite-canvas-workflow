@@ -16,6 +16,7 @@ from batch_recycle_state import (
 )
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
+from manifest_relocation import relocate_manifest_if_moved
 from workflow_production_projection import artifact_from_path
 
 
@@ -81,6 +82,7 @@ class BatchAcceptanceService:
         manifest_path = (
             self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
         )
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         if not manifest_path.is_file():
             raise AcceptanceRejected(404, "找不到这个批次。")
         return manifest_path, run_controller.journal_path(manifest_path, batch_id)
@@ -124,6 +126,7 @@ class BatchAcceptanceService:
         manifest_path = (
             self.repository_root / "manifests" / f"{batch_id}.batch_manifest.json"
         )
+        relocate_manifest_if_moved(self.repository_root, batch_id)
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
