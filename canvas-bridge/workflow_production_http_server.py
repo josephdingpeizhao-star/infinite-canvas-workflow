@@ -29,6 +29,7 @@ from category_recipes import (
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
 from manifest_relocation import relocate_manifest_if_moved
+from workflow_batch_status import WorkflowBatchStatusError, build_workflow_batch_status
 from workflow_production_projection import artifact_from_path
 from workflow_qc_summary import QcSummaryInvalid, QcSummaryNotFound, build_qc_summary
 from workflow_batch_acceptance import AcceptanceRejected, BatchAcceptanceService
@@ -194,6 +195,12 @@ class WorkflowProductionHttpApplication:
             "contractHash": contract_hash,
             "categories": list(categories),
         }
+
+    def batch_status(self, batch_id: str) -> dict[str, Any]:
+        try:
+            return build_workflow_batch_status(self.repository_root, batch_id)
+        except WorkflowBatchStatusError as exc:
+            raise ProductionHttpError(exc.http_status, str(exc)) from None
 
     def _manifest(self, batch_id: str) -> tuple[dict[str, Any], Path, Path]:
         if not batch_id or Path(batch_id).name != batch_id or any(char in batch_id for char in ("/", "\\", "\0")):
@@ -773,6 +780,13 @@ class WorkflowProductionHttpServer:
                             self._assistant_error(exc, origin=origin)
                             return
                         self._assistant_response(200, snapshot, origin=origin)
+                        return
+                    if len(segments) == 3 and segments[0] == "workflow-production" and segments[2] == "status":
+                        self._assistant_response(
+                            200,
+                            application.batch_status(segments[1]),
+                            origin=origin,
+                        )
                         return
                     if len(segments) == 3 and segments[0] == "workflow-production" and segments[2] == "quote":
                         payload = json.dumps(application.quote(segments[1]), ensure_ascii=False).encode("utf-8")
