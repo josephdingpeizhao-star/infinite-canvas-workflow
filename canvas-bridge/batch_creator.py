@@ -36,6 +36,7 @@ from batch_recycle_lock import (
     BatchOperationLockUnavailable,
 )
 from codex_dev_downstream import ExecutorExecutionError, parse_user_confirmed_requirements
+import runtime_roots
 import windows_desktop
 
 
@@ -406,6 +407,7 @@ class BatchCreator:
         repo_root: Path | None = None,
         state_root: Path | None = None,
         *,
+        program_root: Path = runtime_roots.PROGRAM_ROOT,
         test_root: Path | None = None,
         now: Callable[[], datetime] = datetime.now,
         desktop_locator: Callable[[], Path] | None = None,
@@ -415,10 +417,13 @@ class BatchCreator:
         batch_lock_root: Path | None = None,
     ) -> None:
         self.repo_root = _assert_directory_unlinked(
-            repo_root or Path(__file__).resolve().parents[1],
+            repo_root
+            if repo_root is not None
+            else runtime_roots.repository_root(),
             code="invalid_repository",
             message="项目目录不可用，已停止登记。",
         )
+        self.program_root = Path(program_root).resolve()
         default_state = Path.home() / ".infinite-canvas" / "batch-intake"
         self.state_root = prepare_state_root(state_root or default_state)
         self._now = now
@@ -681,7 +686,7 @@ class BatchCreator:
         facts = request.facts
         command = [
             sys.executable,
-            str(self.repo_root / "scripts" / "build_batch_manifest.py"),
+            str(self.program_root / "scripts" / "build_batch_manifest.py"),
             "--product-id",
             product_id,
             "--product-type",
@@ -704,6 +709,8 @@ class BatchCreator:
             str(facts.missing_d_no_retake).lower(),
             "--workspace-root",
             str(target),
+            "--data-repo-root",
+            str(self.repo_root),
             "--dry-run",
         ]
         if facts.length_cm is not None:
@@ -735,7 +742,7 @@ class BatchCreator:
         if not isinstance(manifest, dict) or not isinstance(directory_values, list):
             raise BatchCreationError("planning_failed", "批次结构预检结果无效，未创建任何批次文件。")
         try:
-            parsed = parse_user_confirmed_requirements(manifest, self.repo_root)
+            parsed = parse_user_confirmed_requirements(manifest, self.program_root)
         except ExecutorExecutionError:
             raise BatchCreationError("planning_failed", "批次商品信息预检没有通过，未创建任何批次文件。") from None
         planned_facts = ConfirmedFacts(
@@ -856,7 +863,7 @@ class BatchCreator:
             )
 
         asset_manifest = json.loads(
-            (self.repo_root / "manifests" / "asset_manifest.template.json").read_text(encoding="utf-8")
+            (self.program_root / "manifests" / "asset_manifest.template.json").read_text(encoding="utf-8")
         )
         asset_manifest["assets"] = asset_manifest_entries
         receipt = {

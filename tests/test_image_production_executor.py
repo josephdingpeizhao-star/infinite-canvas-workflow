@@ -791,7 +791,11 @@ class ImageProductionExecutorTest(unittest.TestCase):
                 status="fail",
                 returncode=1,
             )
-            executor = ImageProductionExecutor(self._context(bundle), subprocess_runner=runner)
+            executor = ImageProductionExecutor(
+                self._context(bundle),
+                subprocess_runner=runner,
+                repo_report_dir=Path(tmp) / "reports",
+            )
 
             with self.assertRaises(ExecutorExecutionError) as ctx:
                 executor.execute(ExecutionRequest(step="integrity"))
@@ -807,7 +811,11 @@ class ImageProductionExecutorTest(unittest.TestCase):
                 status="missing",
                 returncode=2,
             )
-            executor = ImageProductionExecutor(self._context(bundle), subprocess_runner=runner)
+            executor = ImageProductionExecutor(
+                self._context(bundle),
+                subprocess_runner=runner,
+                repo_report_dir=Path(tmp) / "reports",
+            )
 
             with self.assertRaises(ExecutorExecutionError) as ctx:
                 executor.execute(ExecutionRequest(step="integrity"))

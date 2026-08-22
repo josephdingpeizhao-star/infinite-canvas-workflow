@@ -17,6 +17,7 @@ from batch_recycle_state import (
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
 from manifest_relocation import relocate_manifest_if_moved
+import runtime_roots
 from workflow_production_projection import artifact_from_path
 
 
@@ -67,8 +68,10 @@ class BatchAcceptanceService:
         repository_root: Path,
         *,
         batch_lock_root: Path | None = None,
+        program_root: Path = runtime_roots.PROGRAM_ROOT,
     ) -> None:
         self.repository_root = repository_root.resolve()
+        self.program_root = program_root.resolve()
         self._close_lock = threading.Lock()
         self.batch_lock_root = batch_lock_root
 
@@ -95,7 +98,7 @@ class BatchAcceptanceService:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             if not isinstance(manifest, dict):
                 raise ValueError
-            return manifest_config_ids(manifest, self.repository_root)
+            return manifest_config_ids(manifest, self.program_root)
         except (OSError, UnicodeError, json.JSONDecodeError, ValueError, ExecutorExecutionError):
             raise AcceptanceRejected(409, "批次图片张数或编号清单无效。") from None
 

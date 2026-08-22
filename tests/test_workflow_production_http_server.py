@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import sys
@@ -9,6 +10,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,6 +35,16 @@ class ProductionHttpServerTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
+        self.data_root = self.root / "data-root"
+        self.data_root_environment = mock.patch.dict(
+            os.environ,
+            {
+                production_http.runtime_roots.DATA_ROOT_ENV: str(self.data_root),
+            },
+        )
+        self.data_root_environment.start()
+        self.addCleanup(self._restore_data_root_environment)
+        production_http.runtime_roots.reset_data_root_cache_for_tests()
         self.repo = self.root / "repo"
         self.workspace = self.root / "workspace"
         (self.repo / "manifests").mkdir(parents=True)
@@ -76,8 +88,15 @@ class ProductionHttpServerTest(unittest.TestCase):
         self.base = f"http://127.0.0.1:{self.server.bound_port}"
 
     def tearDown(self) -> None:
-        self.server.stop()
-        self.temp.cleanup()
+        try:
+            self.server.stop()
+        finally:
+            self.temp.cleanup()
+
+    def _restore_data_root_environment(self) -> None:
+        production_http.runtime_roots.reset_data_root_cache_for_tests()
+        self.data_root_environment.stop()
+        production_http.runtime_roots.reset_data_root_cache_for_tests()
 
     def _get(self, path: str, *, token: str | None = "canvas-token"):
         request = urllib.request.Request(self.base + path)
@@ -99,7 +118,8 @@ class ProductionHttpServerTest(unittest.TestCase):
         with self._get("/workbench-health") as response:
             payload = json.loads(response.read().decode("utf-8"))
         self.assertEqual(200, response.status)
-        self.assertEqual({"workers"}, set(payload))
+        self.assertEqual({"workers", "dataRoot"}, set(payload))
+        self.assertEqual(str(self.data_root.resolve()), payload["dataRoot"])
         self.assertEqual({"status", "lastStatusAt"}, set(payload["workers"]["batch_intake"]))
 
         self.health_workers["style_reference_intake"] = {
@@ -113,7 +133,8 @@ class ProductionHttpServerTest(unittest.TestCase):
             self._get("/workbench-health")
         self.assertEqual(503, ctx.exception.code)
         failed = json.loads(ctx.exception.read().decode("utf-8"))
-        self.assertEqual({"workers"}, set(failed))
+        self.assertEqual({"workers", "dataRoot"}, set(failed))
+        self.assertEqual(str(self.data_root.resolve()), failed["dataRoot"])
         self.assertEqual(
             {"status": "stopped", "lastStatusAt": 2_000},
             failed["workers"]["style_reference_intake"],

@@ -28,6 +28,8 @@ class RenderCoverageRoutingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.workspace = Path(self.temp.name)
+        self.repository = self.workspace / "repository"
+        self.repository.mkdir()
         self.manifest_path = self.workspace / "manifests" / "coverage.batch_manifest.json"
         self.renders = self.workspace / "outputs" / "renders"
         self.repaired = self.workspace / "outputs" / "repaired"
@@ -106,13 +108,17 @@ class RenderCoverageRoutingTest(unittest.TestCase):
             (directory / f"{config_id}.png").write_bytes(b"png")
 
     def _route(self) -> dict:
-        return state_reader.route_manifest(self.manifest, self.manifest_path)
+        return state_reader.route_manifest(
+            self.manifest,
+            self.manifest_path,
+            repository_root=self.repository,
+        )
 
     def _direct_route(self) -> dict:
         def section(name: str, defaults: dict[str, str]) -> dict:
             return {
                 key: detect_current_state.summarize_path_values(
-                    ROOT,
+                    self.repository,
                     detect_current_state.values_from_manifest_or_default(
                         self.manifest,
                         name,

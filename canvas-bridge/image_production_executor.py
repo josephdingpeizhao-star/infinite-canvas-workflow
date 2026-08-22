@@ -28,9 +28,9 @@ from render_task_assembler import (
     assemble_render_tasks,
     resolve_final_prompt_index_path,
 )
+import runtime_roots
 
 
-ROOT = Path(__file__).resolve().parents[1]
 RENDER_MAX_CONCURRENCY_ENV = "RENDER_MAX_CONCURRENCY"
 MIN_RENDER_MAX_CONCURRENCY = 1
 MAX_RENDER_MAX_CONCURRENCY = 60  # image_count_contract: 30 main + 30 detail images per batch.
@@ -130,8 +130,14 @@ class ImageProductionExecutor:
         self.environment = context.environment
         self.subprocess_runner = subprocess_runner or subprocess.run
         self.image_executor_factory = image_executor_factory or OpenAIImageExecutor
-        self.repo_report_dir = repo_report_dir or ROOT / "reports"
-        self.integrity_script = integrity_script or ROOT / "scripts" / "validate_final_prompt_integrity.py"
+        self.repo_report_dir = repo_report_dir
+        self.integrity_script = (
+            integrity_script
+            if integrity_script is not None
+            else runtime_roots.PROGRAM_ROOT
+            / "scripts"
+            / "validate_final_prompt_integrity.py"
+        )
         self.task_assembler = task_assembler or assemble_render_tasks
         self.on_task_success = on_task_success
         self.on_task_retry = on_task_retry
@@ -193,6 +199,9 @@ class ImageProductionExecutor:
         if manifest_path is None:
             raise ExecutorExecutionError("image-production integrity 缺少 batch manifest 路径")
         report_path = self._external_report_path()
+        repo_report_dir = self.repo_report_dir
+        if repo_report_dir is None:
+            repo_report_dir = runtime_roots.repository_root() / "reports"
         command = [
             sys.executable,
             str(self.integrity_script),
@@ -200,7 +209,7 @@ class ImageProductionExecutor:
             "--batch-manifest",
             str(manifest_path),
             "--repo-report-dir",
-            str(self.repo_report_dir),
+            str(repo_report_dir),
         ]
         try:
             completed = self.subprocess_runner(

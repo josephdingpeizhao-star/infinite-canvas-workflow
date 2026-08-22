@@ -13,9 +13,7 @@ from batch_recycle_service import (
     BatchRecycleResult,
     BatchRecycleService,
 )
-
-
-ROOT = Path(__file__).resolve().parents[1]
+import runtime_roots
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -44,13 +42,13 @@ def run_cli(
     *,
     output: TextIO | None = None,
     service_factory: Callable[..., BatchRecycleService] = BatchRecycleService,
-    repository_root: Path = ROOT,
+    repository_root: Path | None = None,
     lock_root: Path | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
     output = output or sys.stdout
     service = service_factory(
-        repository_root,
+        repository_root if repository_root is not None else runtime_roots.repository_root(),
         lock_root=lock_root,
     )
     try:

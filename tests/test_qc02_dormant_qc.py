@@ -49,7 +49,11 @@ class RouteFixture:
     qc_reports: Path
 
     def route(self) -> dict[str, Any]:
-        return state_reader.route_manifest(self.manifest, self.manifest_path)
+        return state_reader.route_manifest(
+            self.manifest,
+            self.manifest_path,
+            repository_root=self.repo,
+        )
 
     def save(self) -> None:
         self.manifest_path.write_text(

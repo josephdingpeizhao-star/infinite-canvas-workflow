@@ -2,8 +2,8 @@
 
 Layout is pure UI state, keyed by workflow graph node id so it survives full
 re-projection. Default location is ``manifests/<product_id>.canvas_layout.json``
-in the repository (git-tracked, diff-friendly); an explicit path may override,
-e.g. for demo workspaces.
+in the per-user data repository; an explicit path may override it, e.g. for
+demo workspaces.
 """
 
 from __future__ import annotations
@@ -13,12 +13,14 @@ import time
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
+import runtime_roots
+
+
 LAYOUT_VERSION = 1
 
 
 def default_layout_path(product_id: str) -> Path:
-    return ROOT / "manifests" / f"{product_id}.canvas_layout.json"
+    return runtime_roots.repository_root() / "manifests" / f"{product_id}.canvas_layout.json"
 
 
 def build_layout(

@@ -33,6 +33,7 @@ from failure_text_safety import (
 )
 import ic_client
 import run_controller
+import runtime_roots
 import state_reader
 from executor_contract import Executor, ExecutorContext, ExecutorExecutionError, ExecutionResult
 from image_production_executor import ImageProductionExecutor
@@ -229,7 +230,9 @@ def discover_source_artifacts(
         expected_ids = frozenset(
             manifest_config_ids(
                 manifest,
-                repository_root or Path(__file__).resolve().parent.parent,
+                repository_root
+                if repository_root is not None
+                else runtime_roots.PROGRAM_ROOT,
             )
         )
     except ExecutorExecutionError:
@@ -385,8 +388,8 @@ class WorkflowProductionService:
         *,
         client: Any = ic_client,
         executor_builder: Callable[[str, Mapping[str, Any], Path, Callable[[WorkflowProductionArtifact], None]], Executor] | None = None,
-        route_reader: Callable[[Path], dict[str, Any]] = state_reader.read_batch_route,
-        integrity_reader: Callable[[dict[str, Any]], dict[str, Any]] = state_reader.integrity_report_status,
+        route_reader: Callable[[Path], dict[str, Any]] | None = None,
+        integrity_reader: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
         artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         render_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
         repaired_artifact_reader: Callable[[Mapping[str, Any]], tuple[WorkflowProductionArtifact, ...]] | None = None,
@@ -399,6 +402,7 @@ class WorkflowProductionService:
         diagnostic_recorder: Callable[[str, str], None] | None = None,
         batch_lock_root: Path | None = None,
         step_auto_retry_limit: int = DEFAULT_STEP_AUTO_RETRY_LIMIT,
+        program_root: Path = runtime_roots.PROGRAM_ROOT,
     ) -> None:
         if (
             type(step_auto_retry_limit) is not int
@@ -409,29 +413,40 @@ class WorkflowProductionService:
                 f"{MAX_STEP_AUTO_RETRY_LIMIT}"
             )
         self.repository_root = repository_root.resolve()
+        self.program_root = program_root.resolve()
         self.client = client
         self._uses_default_executor_builder = executor_builder is None
         self.executor_builder = executor_builder or self._build_executor
-        self.route_reader = route_reader
-        self.integrity_reader = integrity_reader
+        self.route_reader = route_reader or (
+            lambda manifest_path: state_reader.read_batch_route(
+                manifest_path,
+                repository_root=self.repository_root,
+            )
+        )
+        self.integrity_reader = integrity_reader or (
+            lambda route: state_reader.integrity_report_status(
+                route,
+                repository_root=self.repository_root,
+            )
+        )
         self.artifact_reader = artifact_reader or (
             lambda manifest: discover_accepted_artifacts(
                 manifest,
-                self.repository_root,
+                self.program_root,
             )
         )
         self.render_artifact_reader = render_artifact_reader or (
             lambda manifest: discover_source_artifacts(
                 manifest,
                 "renders",
-                self.repository_root,
+                self.program_root,
             )
         )
         self.repaired_artifact_reader = repaired_artifact_reader or (
             lambda manifest: discover_source_artifacts(
                 manifest,
                 "repaired",
-                self.repository_root,
+                self.program_root,
             )
         )
         self.clock_ms = clock_ms or (lambda: int(time.time() * 1000))
@@ -485,7 +500,7 @@ class WorkflowProductionService:
         if not isinstance(manifest, dict) or manifest.get("product_id") != batch_id:
             raise ProductionGateError("批次清单与信息卡不一致，真实制作没有开始。")
         try:
-            load_manifest_category(self.repository_root, manifest)
+            load_manifest_category(self.program_root, manifest)
             self._expected_ids(manifest)
         except CategoryRecipeError as exc:
             raise ProductionGateError(
@@ -505,7 +520,7 @@ class WorkflowProductionService:
 
     def _expected_ids(self, manifest: Mapping[str, Any]) -> tuple[str, ...]:
         try:
-            return manifest_config_ids(manifest, self.repository_root)
+            return manifest_config_ids(manifest, self.program_root)
         except ExecutorExecutionError:
             raise ProductionGateError(
                 "批次图片张数无效，真实制作没有开始。"
@@ -1050,7 +1065,11 @@ class WorkflowProductionService:
             return executor_factory.build_executor("codex-dev", manifest, manifest_path)
         context = ExecutorContext(manifest=manifest, manifest_path=manifest_path, environment=self.environment)
         if step == "integrity":
-            return ImageProductionExecutor(context)
+            return ImageProductionExecutor(
+                context,
+                repo_report_dir=self.repository_root / "reports",
+                integrity_script=self.program_root / "scripts" / "validate_final_prompt_integrity.py",
+            )
         if step == "renders":
             expected_ids = self._expected_ids(manifest)
             workspace = Path(str((manifest.get("workspace") or {}).get("root") or ""))
@@ -1088,6 +1107,8 @@ class WorkflowProductionService:
             return ImageProductionExecutor(
                 context,
                 image_executor_factory=lambda _inner_context: raw,
+                repo_report_dir=self.repository_root / "reports",
+                integrity_script=self.program_root / "scripts" / "validate_final_prompt_integrity.py",
                 on_task_success=on_task_success,
                 on_task_retry=on_task_retry,
             )

@@ -17,6 +17,7 @@ import batch_editor
 import run_controller
 from category_recipes import DEFAULT_CATEGORY_KEY, load_category_recipe
 from image_count_contract import default_image_counts
+import runtime_roots
 
 
 PRODUCTION_REQUESTED_OUTPUTS = ("main", "detail", "final_prompts")
@@ -36,7 +37,7 @@ class ProductionSelection:
 
 def _default_total_images() -> int:
     recipe = load_category_recipe(
-        Path(__file__).resolve().parent.parent,
+        runtime_roots.PROGRAM_ROOT,
         DEFAULT_CATEGORY_KEY,
     )
     return sum(default_image_counts(recipe.form))

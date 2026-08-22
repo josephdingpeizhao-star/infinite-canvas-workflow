@@ -17,8 +17,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-GRAPH_PATH = ROOT / "manifests" / "workflow_graph.template.json"
+import runtime_roots
+
+GRAPH_PATH = runtime_roots.PROGRAM_ROOT / "manifests" / "workflow_graph.template.json"
 
 NODE_ID_PREFIX = "wf"
 

@@ -73,6 +73,7 @@ from codex_dev_qc import (
     write_qc_report_exclusive,
 )
 from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext, ExecutorExecutionError
+import runtime_roots
 
 
 DEFAULT_CONFIG_PATH = Path.home() / ".infinite-canvas" / "canvas-agent.json"
@@ -894,7 +895,11 @@ class CodexDevExecutor:
     ) -> None:
         self.context = context
         self.transport = transport or CanvasAgentCodexTransport()
-        self.repository_root = repository_root or self._default_repository_root(context.manifest_path)
+        self.repository_root = (
+            repository_root
+            if repository_root is not None
+            else self._default_repository_root(context.manifest_path)
+        )
         self._qc_progress_callback: Callable[[int, int], None] | None = None
         self._turn_progress_callback: Callable[[], None] | None = None
         self._content_correction_callback: (
@@ -2347,10 +2352,8 @@ class CodexDevExecutor:
         )
 
     @staticmethod
-    def _default_repository_root(manifest_path: Path | None) -> Path:
-        if manifest_path is not None and manifest_path.parent.name == "manifests":
-            return manifest_path.parent.parent
-        return Path(__file__).resolve().parent.parent
+    def _default_repository_root(_manifest_path: Path | None) -> Path:
+        return runtime_roots.PROGRAM_ROOT
 
     def _load_required_rules(self) -> tuple[str, str]:
         skill_root = self.repository_root / ".agents" / "skills" / "product-identity-archive"

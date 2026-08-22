@@ -22,9 +22,6 @@ from qc_repair import prepare_repair_plan
 from qc_repair_executor import QcRepairExecutor
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="执行一次受门禁保护的 QC 单图返修")
     parser.add_argument("--batch-manifest", type=Path, required=True)
@@ -125,7 +122,7 @@ def _run_active_repair(
     prepared = prepare_repair_plan(
         manifest,
         args.batch_manifest,
-        repo_reports_dir=repo_reports_dir or ROOT / "reports",
+        repo_reports_dir=repo_reports_dir,
     )
     try:
         route = route_reader(args.batch_manifest)

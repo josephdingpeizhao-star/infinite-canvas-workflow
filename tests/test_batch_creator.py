@@ -68,6 +68,7 @@ class BatchCreatorTests(unittest.TestCase):
         prepare_state_root(self.state_root)
         self.creator = BatchCreator(
             repo_root=self.repo,
+            program_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
             now=lambda: datetime(2026, 7, 18, 12, 34, 56),
@@ -87,6 +88,10 @@ class BatchCreatorTests(unittest.TestCase):
         )
         shutil.copy2(
             ROOT / "canvas-bridge" / "image_count_contract.py",
+            self.repo / "canvas-bridge",
+        )
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "runtime_roots.py",
             self.repo / "canvas-bridge",
         )
         shutil.copytree(ROOT / "categories", self.repo / "categories")
@@ -321,6 +326,7 @@ class BatchCreatorTests(unittest.TestCase):
     def test_production_mode_derives_only_approved_parent_from_frozen_manifest(self) -> None:
         creator = BatchCreator(
             repo_root=self.repo,
+            program_root=self.repo,
             state_root=self.state_root,
             now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
@@ -339,7 +345,12 @@ class BatchCreatorTests(unittest.TestCase):
         unmarked = self.base / "unmarked-test"
         unmarked.mkdir()
         with self.assertRaises(BatchCreationError) as caught:
-            BatchCreator(repo_root=self.repo, state_root=self.state_root, test_root=unmarked)
+            BatchCreator(
+                repo_root=self.repo,
+                program_root=self.repo,
+                state_root=self.state_root,
+                test_root=unmarked,
+            )
         self.assertEqual("unsafe_test_root", caught.exception.code)
 
         link = self.base / "linked-test"
@@ -348,12 +359,18 @@ class BatchCreatorTests(unittest.TestCase):
         except OSError:
             return
         with self.assertRaises(BatchCreationError) as caught:
-            BatchCreator(repo_root=self.repo, state_root=self.state_root, test_root=link)
+            BatchCreator(
+                repo_root=self.repo,
+                program_root=self.repo,
+                state_root=self.state_root,
+                test_root=link,
+            )
         self.assertEqual("reparse_point", caught.exception.code)
 
     def test_frozen_batch_id_existing_target_and_existing_manifest_are_never_overwritten(self) -> None:
         frozen_creator = BatchCreator(
             repo_root=self.repo,
+            program_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
             now=lambda: datetime(2026, 7, 12, 12, 34, 56),
@@ -503,6 +520,20 @@ class BatchCreatorTests(unittest.TestCase):
         self.assertFalse((self.test_root / "餐具_20260718_123456").exists())
         self.assertFalse((self.repo / "manifests" / "餐具_20260718_123456.batch_manifest.json").exists())
 
+    def test_builder_uses_program_assets_and_receives_explicit_data_repository_root(self) -> None:
+        import batch_creator as module
+
+        with mock.patch.object(module.subprocess, "run", wraps=module.subprocess.run) as run:
+            self.creator.create(self.request(), [self.upload(self.request())])
+
+        command = run.call_args.args[0]
+        self.assertEqual(
+            str(self.repo / "scripts" / "build_batch_manifest.py"),
+            command[1],
+        )
+        data_root_flag = command.index("--data-repo-root")
+        self.assertEqual(str(self.repo), command[data_root_flag + 1])
+
     def test_failure_before_repository_manifest_compensates_only_owned_workspace(self) -> None:
         request = self.request()
         upload = self.upload(request)
@@ -601,12 +632,14 @@ class BatchCreatorTests(unittest.TestCase):
         second_upload = replace(first_upload, path=second_path)
         first_creator = BatchCreator(
             repo_root=self.repo,
+            program_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
             now=lambda: datetime(2026, 7, 18, 12, 34, 56),
         )
         second_creator = BatchCreator(
             repo_root=self.repo,
+            program_root=self.repo,
             state_root=self.state_root,
             test_root=self.test_root,
             now=lambda: datetime(2026, 7, 18, 12, 34, 56),

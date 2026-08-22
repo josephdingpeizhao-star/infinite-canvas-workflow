@@ -22,6 +22,7 @@ from codex_dev_downstream import (
 )
 from executor_contract import ExecutorExecutionError
 from image_count_contract import default_image_counts
+import runtime_roots
 
 
 COMMON_ASSET_CHECK_ITEMS = (
@@ -128,7 +129,7 @@ class QcTransportCorruption(Exception):
 def _default_qc_chunk_count() -> int:
     try:
         recipe = load_category_recipe(
-            Path(__file__).resolve().parent.parent,
+            runtime_roots.PROGRAM_ROOT,
             DEFAULT_CATEGORY_KEY,
         )
         main_count, detail_count = default_image_counts(recipe.form)

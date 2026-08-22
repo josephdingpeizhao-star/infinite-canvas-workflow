@@ -29,6 +29,7 @@ class CategoryMetadataEndpointTest(unittest.TestCase):
         self.application = WorkflowProductionHttpApplication(
             self.repo,
             "temporary-test-token",
+            program_root=self.repo,
         )
 
     def tearDown(self) -> None:

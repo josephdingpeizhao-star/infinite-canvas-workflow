@@ -12,6 +12,7 @@ from typing import Any
 
 from category_recipes import DEFAULT_CATEGORY_KEY, load_category_recipe
 from image_count_contract import default_image_counts
+import runtime_roots
 
 
 OUTPUT_NODE_PREFIX = "wfprod-output:"
@@ -171,7 +172,7 @@ def _output_proof(
 ) -> dict[str, Any]:
     if main_count is None:
         recipe = load_category_recipe(
-            Path(__file__).resolve().parent.parent,
+            runtime_roots.PROGRAM_ROOT,
             DEFAULT_CATEGORY_KEY,
         )
         main_count = default_image_counts(recipe.form)[0]

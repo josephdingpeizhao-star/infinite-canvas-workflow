@@ -10,6 +10,7 @@ from typing import Any
 
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
+import runtime_roots
 
 
 
@@ -39,7 +40,12 @@ def _asset_config_id(
     return path.stem if path.stem in expected_id_set else None
 
 
-def build_qc_summary(repository_root: Path, batch_id: str) -> dict[str, Any]:
+def build_qc_summary(
+    repository_root: Path,
+    batch_id: str,
+    *,
+    program_root: Path = runtime_roots.PROGRAM_ROOT,
+) -> dict[str, Any]:
     if not _safe_batch_id(batch_id):
         raise QcSummaryInvalid("QC 批次标识无效")
     repository_root = repository_root.resolve()
@@ -48,7 +54,7 @@ def build_qc_summary(repository_root: Path, batch_id: str) -> dict[str, Any]:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(manifest, dict) or manifest.get("product_id") != batch_id:
             raise ValueError
-        expected_ids = manifest_config_ids(manifest, repository_root)
+        expected_ids = manifest_config_ids(manifest, program_root.resolve())
     except FileNotFoundError:
         raise QcSummaryNotFound("QC 摘要不存在") from None
     except (

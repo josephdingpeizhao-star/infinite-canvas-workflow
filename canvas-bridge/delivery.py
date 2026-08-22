@@ -19,6 +19,7 @@ from batch_recycle_state import (
 )
 from codex_dev_downstream import manifest_config_ids
 from executor_contract import ExecutorExecutionError
+import runtime_roots
 from workflow_production_projection import WorkflowProductionArtifact, artifact_from_path
 
 
@@ -415,6 +416,7 @@ def _guard_delivery_operation(method):
         journal_path,
         request_id,
         packaged_at,
+        program_root=runtime_roots.PROGRAM_ROOT,
         batch_lock_root=None,
     ):
         batch_id = _safe_identifier(
@@ -447,6 +449,7 @@ def _guard_delivery_operation(method):
                     journal_path=journal_path,
                     request_id=request_id,
                     packaged_at=packaged_at,
+                    program_root=program_root,
                 )
         except BatchOperationBusy:
             raise DeliveryRejected(
@@ -465,6 +468,7 @@ def package_delivery(
     journal_path: Path,
     request_id: str,
     packaged_at: str,
+    program_root: Path = runtime_roots.PROGRAM_ROOT,
 ) -> DeliveryResult:
     """Create one immutable delivery directory, ZIP, and SHA sidecar."""
 
@@ -482,7 +486,7 @@ def package_delivery(
     try:
         expected_ids = manifest_config_ids(
             manifest,
-            manifest_path.resolve().parent.parent,
+            program_root.resolve(),
         )
     except ExecutorExecutionError:
         raise DeliveryRejected(

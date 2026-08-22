@@ -12,33 +12,49 @@ import sys
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = ROOT / "scripts"
+import runtime_roots
+
+
+SCRIPTS = runtime_roots.PROGRAM_ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import detect_current_state  # noqa: E402
 
 
-def read_batch_route(manifest_path: Path) -> dict[str, Any]:
+def read_batch_route(
+    manifest_path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> dict[str, Any]:
     """Load a batch manifest from an arbitrary path and route it exactly like
     detect_current_state.inspect_batch(). Returns the route_batch result,
     which embeds the inputs/drafts/artifacts/outputs summaries."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if not isinstance(manifest, dict):
         raise ValueError(f"batch manifest is not an object: {manifest_path}")
-    return route_manifest(manifest, manifest_path)
+    return route_manifest(manifest, manifest_path, repository_root=repository_root)
 
 
-def route_manifest(manifest: dict[str, Any], manifest_path: Path) -> dict[str, Any]:
+def route_manifest(
+    manifest: dict[str, Any],
+    manifest_path: Path,
+    *,
+    repository_root: Path | None = None,
+) -> dict[str, Any]:
     """Route an in-memory manifest dict (used both for reads and for the
     pre-write dry run of canvas edits)."""
     product_id = str(manifest.get("product_id") or manifest_path.stem)
+    data_repository_root = (
+        repository_root.resolve()
+        if repository_root is not None
+        else runtime_roots.repository_root()
+    )
 
     def section(name: str, defaults: dict[str, str]) -> dict[str, Any]:
         return {
             key: detect_current_state.summarize_path_values(
-                ROOT,
+                data_repository_root,
                 detect_current_state.values_from_manifest_or_default(manifest, name, key, product_id),
             )
             for key in defaults
@@ -53,9 +69,18 @@ def route_manifest(manifest: dict[str, Any], manifest_path: Path) -> dict[str, A
     return route
 
 
-def integrity_report_status(route: dict[str, Any]) -> dict[str, Any]:
+def integrity_report_status(
+    route: dict[str, Any],
+    *,
+    repository_root: Path | None = None,
+) -> dict[str, Any]:
     """Locate the final prompt integrity report the same way rendering does:
     manifest-declared qc_reports folder first, then repo reports/."""
+    data_repository_root = (
+        repository_root.resolve()
+        if repository_root is not None
+        else runtime_roots.repository_root()
+    )
     candidates: list[Path] = []
     qc_summary = (route.get("artifacts") or {}).get("qc_reports") or {}
     for entry in qc_summary.get("paths") or []:
@@ -64,10 +89,10 @@ def integrity_report_status(route: dict[str, Any]) -> dict[str, Any]:
             candidates.append(Path(resolved) / "final_prompt_integrity_report.json")
     product_id = route.get("product_id")
     if product_id:
-        candidates.append(ROOT / "reports" / f"{product_id}_final_prompt_integrity_report.json")
+        candidates.append(data_repository_root / "reports" / f"{product_id}_final_prompt_integrity_report.json")
 
     for candidate in candidates:
-        target = candidate if candidate.is_absolute() else ROOT / candidate
+        target = candidate if candidate.is_absolute() else data_repository_root / candidate
         if not target.is_file():
             continue
         try:

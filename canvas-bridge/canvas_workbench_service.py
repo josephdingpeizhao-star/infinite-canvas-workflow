@@ -23,9 +23,9 @@ import workflow_style_reference_intake
 import workflow_style_reference_removal
 import canvas_readonly_assistant
 import canvas_command_assistant
+import runtime_roots
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_STATE_ROOT = Path.home() / ".infinite-canvas" / "batch-intake"
 WORKBENCH_EVENT_NAME = "canvas_workbench.events.jsonl"
 CRITICAL_COMPONENTS = frozenset({"batch_intake", "workflow_production", "style_reference_intake"})
@@ -380,16 +380,20 @@ def cmd_serve_canvas_workbench(
     *,
     test_workspace_root: Path | None = None,
 ) -> None:
+    runtime_roots.ensure_data_layout()
+    runtime_roots.write_pointer_file()
+    repo_root = runtime_roots.repository_root()
     manifest_path = manifest_path.resolve()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     demo_root = Path(str((manifest.get("workspace") or {}).get("root") or ""))
     state_root = batch_creator.prepare_state_root(DEFAULT_STATE_ROOT)
     token = _load_existing_local_agent_token()
     creator = batch_creator.BatchCreator(
-        REPO_ROOT,
+        repo_root,
         state_root,
         test_root=test_workspace_root,
         batch_lock_factory=BatchOperationLock,
+        program_root=runtime_roots.PROGRAM_ROOT,
     )
 
     with (
@@ -398,7 +402,7 @@ def cmd_serve_canvas_workbench(
     ):
         demo_service = workflow_demo_service.WorkflowDemoService(manifest_path, interval=interval)
         intake_service = workflow_batch_intake_service.WorkflowBatchIntakeService(
-            REPO_ROOT,
+            repo_root,
             state_root,
             creator=creator,
             interval=interval,
@@ -412,41 +416,43 @@ def cmd_serve_canvas_workbench(
         )
         event_ledger = WorkbenchEventLedger(state_root)
         deletion_service = project_deletion_service.ProjectDeletionService(
-            REPO_ROOT,
+            repo_root,
             workspace_parent=creator.workspace_parent,
             state_root=state_root,
             audit_ledger=event_ledger,
         )
-        assistant_service = canvas_readonly_assistant.CanvasReadonlyAssistant(REPO_ROOT)
+        assistant_service = canvas_readonly_assistant.CanvasReadonlyAssistant(repo_root)
         command_assistant_service = canvas_command_assistant.CanvasCommandAssistant(
-            REPO_ROOT
+            repo_root
         )
         production_service = workflow_production_service.WorkflowProductionService(
-            REPO_ROOT,
+            repo_root,
             interval=interval,
+            program_root=runtime_roots.PROGRAM_ROOT,
             diagnostic_recorder=lambda step, code: event_ledger.record_execution_failure(
                 "workflow_production", step, code
             ),
         )
         style_removal_handler = (
             workflow_style_reference_removal.WorkflowStyleReferenceRemovalHandler(
-                REPO_ROOT,
+                repo_root,
                 client=ic_client,
             )
         )
         style_service = workflow_style_reference_intake.WorkflowStyleReferenceService(
-            REPO_ROOT,
+            repo_root,
             client=ic_client,
             interval=interval,
             upload_port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,
             removal_handler=style_removal_handler,
         )
         recycle_service = batch_recycle_service.BatchRecycleService(
-            REPO_ROOT,
+            repo_root,
             client=ic_client,
         )
         production_http = workflow_production_http_server.WorkflowProductionHttpServer(
-            repository_root=REPO_ROOT,
+            repository_root=repo_root,
+            program_root=runtime_roots.PROGRAM_ROOT,
             token=token,
             host=workflow_production_http_server.DEFAULT_PRODUCTION_HOST,
             port=workflow_production_http_server.DEFAULT_PRODUCTION_PORT,

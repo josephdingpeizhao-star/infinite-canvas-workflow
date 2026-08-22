@@ -43,6 +43,7 @@ from image_count_contract import (
     detail_module_groups,
     pair_config_ids,
 )
+import runtime_roots
 
 
 MAIN_REQUIRED_OVERRIDE_FIELDS = (
@@ -602,7 +603,11 @@ def parse_user_confirmed_requirements(
     """Read structured user facts, with notes retained only for legacy manifests."""
 
     try:
-        root = repository_root or Path(__file__).resolve().parent.parent
+        root = (
+            repository_root
+            if repository_root is not None
+            else runtime_roots.PROGRAM_ROOT
+        )
         recipe = load_manifest_category(root, manifest)
         explicit_category = "category" in manifest
         batch_type = manifest.get("batch_type", "single")
@@ -639,7 +644,7 @@ def _requirements_recipe(requirements: UserConfirmedRequirements) -> CategoryRec
         return requirements.recipe
     try:
         return load_category_recipe(
-            Path(__file__).resolve().parent.parent,
+            runtime_roots.PROGRAM_ROOT,
             requirements.category,
         )
     except CategoryRecipeError:
@@ -707,7 +712,11 @@ def manifest_config_ids(
         except (KeyError, TypeError, ValueError):
             raise ExecutorExecutionError("codex-dev 缺少有效的图片张数") from None
     try:
-        root = repository_root or Path(__file__).resolve().parent.parent
+        root = (
+            repository_root
+            if repository_root is not None
+            else runtime_roots.PROGRAM_ROOT
+        )
         recipe = load_manifest_category(root, manifest)
         main_count, detail_count = default_image_counts(recipe.form)
         return config_ids("main", main_count) + config_ids(
@@ -1389,7 +1398,7 @@ def _reject_unsupported_claims(
     if lexicons is None:
         try:
             lexicons = load_category_recipe(
-                Path(__file__).resolve().parent.parent,
+                runtime_roots.PROGRAM_ROOT,
                 DEFAULT_CATEGORY_KEY,
             ).lexicons
         except CategoryRecipeError:

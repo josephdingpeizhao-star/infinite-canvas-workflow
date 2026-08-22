@@ -19,9 +19,9 @@ from render_task_assembler import (
     _reference_image,
     resolve_final_prompt_index_path,
 )
+import runtime_roots
 
 
-ROOT = Path(__file__).resolve().parents[1]
 ACTIONABLE_SEVERITIES = {"critical", "major"}
 KNOWN_SEVERITIES = ACTIONABLE_SEVERITIES | {"needs_review"}
 CONFIG_ID_PATTERN = re.compile(r"(?:main|detail)_[0-9]{2}")
@@ -351,7 +351,9 @@ def prepare_repair_plan(
     report_path, report_bytes, selection_error = _read_selected_report(
         manifest,
         product_id,
-        repo_reports_dir or ROOT / "reports",
+        repo_reports_dir
+        if repo_reports_dir is not None
+        else runtime_roots.repository_root() / "reports",
     )
     if selection_error:
         return RepairPreparation(

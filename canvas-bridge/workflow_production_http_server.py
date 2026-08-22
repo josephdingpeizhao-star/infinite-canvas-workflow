@@ -44,6 +44,7 @@ from canvas_command_assistant import (
 )
 from project_deletion_service import ProjectDeletionError
 import run_controller
+import runtime_roots
 from white_bg_recovery import (
     WhiteBgRecoveryError,
     archive_recompute_artifacts,
@@ -139,8 +140,10 @@ class WorkflowProductionHttpApplication:
         batch_recycle_service: Any | None = None,
         project_deletion_service: Any | None = None,
         batch_lock_root: Path | None = None,
+        program_root: Path = runtime_roots.PROGRAM_ROOT,
     ):
         self.repository_root = repository_root.resolve()
+        self.program_root = program_root.resolve()
         self.token = token
         self.style_acceptor = style_acceptor
         self.health_provider = health_provider
@@ -149,7 +152,10 @@ class WorkflowProductionHttpApplication:
         self.batch_recycle_service = batch_recycle_service
         self.project_deletion_service = project_deletion_service
         self.batch_lock_root = batch_lock_root
-        self.acceptance = BatchAcceptanceService(self.repository_root)
+        self.acceptance = BatchAcceptanceService(
+            self.repository_root,
+            program_root=self.program_root,
+        )
         if not token:
             raise ValueError("真实图片端点缺少本机令牌")
 
@@ -182,12 +188,15 @@ class WorkflowProductionHttpApplication:
             workers.get(name, {}).get("status") == "running"
             for name in WORKBENCH_CRITICAL_WORKERS
         )
-        return bool(healthy) and critical_running, {"workers": workers}
+        return bool(healthy) and critical_running, {
+            "workers": workers,
+            "dataRoot": str(runtime_roots.resolve_data_root()),
+        }
 
     def batch_categories(self) -> dict[str, Any]:
         try:
-            categories = installed_category_metadata(self.repository_root)
-            contract_hash = batch_intake_contract_sha256(self.repository_root)
+            categories = installed_category_metadata(self.program_root)
+            contract_hash = batch_intake_contract_sha256(self.program_root)
         except (CategoryRecipeError, BatchIntakeContractError):
             raise ProductionHttpError(503, "batch categories unavailable") from None
         return {
@@ -216,7 +225,7 @@ class WorkflowProductionHttpApplication:
         if not isinstance(value, dict) or value.get("product_id") != batch_id:
             raise ProductionHttpError(409, "batch mismatch")
         try:
-            load_manifest_category(self.repository_root, value)
+            load_manifest_category(self.program_root, value)
         except CategoryRecipeError:
             raise ProductionHttpError(409, "category recipe unavailable") from None
         workspace_value = (value.get("workspace") or {}).get("root") if isinstance(value.get("workspace"), dict) else None
@@ -236,7 +245,7 @@ class WorkflowProductionHttpApplication:
             raise ProductionHttpError(404, "output not found")
         manifest, _manifest_path, workspace = self._manifest(batch_id)
         try:
-            expected_ids = manifest_config_ids(manifest, self.repository_root)
+            expected_ids = manifest_config_ids(manifest, self.program_root)
         except ExecutorExecutionError:
             raise ProductionHttpError(409, "batch image counts invalid") from None
         if config_id not in expected_ids:
@@ -265,7 +274,7 @@ class WorkflowProductionHttpApplication:
     def quote(self, batch_id: str) -> dict[str, Any]:
         manifest, _manifest_path, workspace = self._manifest(batch_id)
         try:
-            expected_ids = manifest_config_ids(manifest, self.repository_root)
+            expected_ids = manifest_config_ids(manifest, self.program_root)
         except ExecutorExecutionError:
             raise ProductionHttpError(409, "batch image counts invalid") from None
         outputs = manifest.get("outputs") if isinstance(manifest.get("outputs"), dict) else {}
@@ -450,7 +459,11 @@ class WorkflowProductionHttpApplication:
 
     def qc_summary(self, batch_id: str) -> dict[str, Any]:
         try:
-            return build_qc_summary(self.repository_root, batch_id)
+            return build_qc_summary(
+                self.repository_root,
+                batch_id,
+                program_root=self.program_root,
+            )
         except QcSummaryNotFound:
             raise ProductionHttpError(404, "qc summary not found") from None
         except QcSummaryInvalid:
@@ -581,6 +594,7 @@ class WorkflowProductionHttpServer:
         batch_recycle_service: Any | None = None,
         project_deletion_service: Any | None = None,
         batch_lock_root: Path | None = None,
+        program_root: Path = runtime_roots.PROGRAM_ROOT,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("真实图片端点只允许本机回环地址")
@@ -596,6 +610,7 @@ class WorkflowProductionHttpServer:
             batch_recycle_service=batch_recycle_service,
             project_deletion_service=project_deletion_service,
             batch_lock_root=batch_lock_root,
+            program_root=program_root,
         )
         self.host = host
         self.port = port

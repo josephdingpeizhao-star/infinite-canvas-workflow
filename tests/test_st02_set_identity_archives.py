@@ -1179,6 +1179,10 @@ class St02RoutingAndBuilderTests(ExecutorFixture):
             ROOT / "canvas-bridge" / "image_count_contract.py",
             root / "canvas-bridge",
         )
+        shutil.copy2(
+            ROOT / "canvas-bridge" / "runtime_roots.py",
+            root / "canvas-bridge",
+        )
         shutil.copytree(ROOT / "categories", root / "categories")
         shutil.copy2(
             ROOT / "manifests" / "batch_manifest.template.json",

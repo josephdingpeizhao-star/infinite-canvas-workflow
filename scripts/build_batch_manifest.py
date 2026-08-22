@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from image_count_contract import (  # noqa: E402
     image_count_spec,
     validate_image_count,
 )
+import runtime_roots  # noqa: E402
 
 ARTIFACT_DIRS = [
     "identity",
@@ -94,6 +96,23 @@ def strict_boolean(raw: str) -> bool:
     if normalized == "false":
         return False
     raise argparse.ArgumentTypeError("must be true or false")
+
+
+def absolute_path(raw: str) -> Path:
+    if not raw.strip():
+        raise argparse.ArgumentTypeError("must be a non-empty absolute path")
+    path = Path(raw)
+    if not path.is_absolute():
+        raise argparse.ArgumentTypeError("must be an absolute path")
+    return path.resolve(strict=False)
+
+
+def data_repository_root(explicit_root: Path | None, program_root: Path) -> Path:
+    if explicit_root is not None:
+        return explicit_root
+    if runtime_roots.DATA_ROOT_ENV in os.environ:
+        return runtime_roots.repository_root()
+    return program_root
 
 
 def ensure_dirs(paths: list[Path], *, dry_run: bool) -> None:
@@ -233,10 +252,20 @@ def main() -> int:
         "--workspace-root",
         help="Optional external run folder. When provided, all batch inputs and outputs are scaffolded there.",
     )
+    parser.add_argument(
+        "--data-repo-root",
+        type=absolute_path,
+        help="Repository root used only for checking an existing batch ledger.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print the planned manifest and directories without writing files.")
     args = parser.parse_args()
 
     root = project_root()
+    try:
+        collision_root = data_repository_root(args.data_repo_root, root)
+    except (OSError, ValueError) as exc:
+        print(f"数据目录不可用：{exc}")
+        return 2
     product_id = args.product_id.strip()
     if not product_id:
         print("product-id must not be empty")
@@ -340,10 +369,11 @@ def main() -> int:
         workspace_manifest_path = root / "manifests" / f"{product_id}.batch_manifest.json"
         asset_manifest_path = root / "manifests" / f"{product_id}.asset_manifest.json"
 
-    manifest_path = root / "manifests" / f"{product_id}.batch_manifest.json"
-    if manifest_path.exists():
-        print(f"manifest already exists, not overwriting: {manifest_path}")
+    collision_manifest_path = collision_root / "manifests" / f"{product_id}.batch_manifest.json"
+    if collision_manifest_path.exists():
+        print(f"manifest already exists, not overwriting: {collision_manifest_path}")
         return 1
+    manifest_path = root / "manifests" / f"{product_id}.batch_manifest.json"
     if args.workspace_root and workspace_manifest_path.exists():
         print(f"workspace manifest already exists, not overwriting: {workspace_manifest_path}")
         return 1
