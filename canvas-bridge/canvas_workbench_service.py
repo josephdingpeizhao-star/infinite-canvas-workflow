@@ -15,6 +15,7 @@ import batch_recycle_service
 from batch_recycle_lock import BatchOperationLock
 import ic_client
 import project_deletion_service
+import production_orphan_recovery
 import workflow_batch_intake_service
 import workflow_demo_service
 import workflow_production_http_server
@@ -400,6 +401,7 @@ def cmd_serve_canvas_workbench(
         workflow_demo_service.WorkflowDemoServiceLock(demo_root),
         workflow_batch_intake_service.BatchIntakeServiceLock(state_root),
     ):
+        production_orphan_recovery.recover_orphaned_productions(repo_root)
         demo_service = workflow_demo_service.WorkflowDemoService(manifest_path, interval=interval)
         intake_service = workflow_batch_intake_service.WorkflowBatchIntakeService(
             repo_root,

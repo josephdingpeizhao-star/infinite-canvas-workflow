@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 
 
 _TIMESTAMP_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
@@ -147,6 +147,30 @@ def _validate_batch_id(batch_id: str) -> None:
         raise WorkflowBatchStatusError(400, "批次号无效，无法确认制作状态。")
 
 
+def _validate_event_record(
+    value: Mapping[str, Any],
+    line_number: int,
+    previous_recorded_at: datetime | None,
+) -> datetime:
+    event = value.get("event")
+    timestamp = value.get("ts")
+    recorded_at: datetime | None = None
+    if type(timestamp) is str and _TIMESTAMP_PATTERN.fullmatch(timestamp) is not None:
+        try:
+            recorded_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
+        except ValueError:
+            pass
+    if type(event) is not str or not event or recorded_at is None:
+        raise _unavailable(
+            f"批次状态账本第 {line_number} 行损坏，无法确认制作状态。"
+        )
+    if previous_recorded_at is not None and recorded_at < previous_recorded_at:
+        raise _unavailable(
+            f"批次状态账本第 {line_number} 行时间倒序，无法确认制作状态。"
+        )
+    return recorded_at
+
+
 def _load_events(repository_root: Path, batch_id: str) -> list[dict[str, Any]]:
     _validate_batch_id(batch_id)
     raw_repository_root = Path(repository_root)
@@ -173,9 +197,6 @@ def _load_events(repository_root: Path, batch_id: str) -> list[dict[str, Any]]:
         lines = ledger_resolved.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeError):
         raise _unavailable("批次状态账本无法读取，无法确认制作状态。") from None
-    if not lines:
-        raise _unavailable("批次状态账本为空，无法确认制作状态。")
-
     events: list[dict[str, Any]] = []
     previous_recorded_at: datetime | None = None
     for line_number, line in enumerate(lines, start=1):
@@ -193,27 +214,11 @@ def _load_events(repository_root: Path, batch_id: str) -> list[dict[str, Any]]:
             raise _unavailable(
                 f"批次状态账本第 {line_number} 行损坏，无法确认制作状态。"
             )
-        event = value.get("event")
-        timestamp = value.get("ts")
-        recorded_at: datetime | None = None
-        if type(timestamp) is str and _TIMESTAMP_PATTERN.fullmatch(timestamp) is not None:
-            try:
-                recorded_at = datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%S")
-            except ValueError:
-                pass
-        if (
-            type(event) is not str
-            or not event
-            or recorded_at is None
-        ):
-            raise _unavailable(
-                f"批次状态账本第 {line_number} 行损坏，无法确认制作状态。"
-            )
-        if previous_recorded_at is not None and recorded_at < previous_recorded_at:
-            raise _unavailable(
-                f"批次状态账本第 {line_number} 行时间倒序，无法确认制作状态。"
-            )
-        previous_recorded_at = recorded_at
+        previous_recorded_at = _validate_event_record(
+            value,
+            line_number,
+            previous_recorded_at,
+        )
         events.append(value)
     return events
 
@@ -1151,14 +1156,88 @@ def _derive_lifecycle(events: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def build_workflow_batch_status(repository_root: Path, batch_id: str) -> dict[str, Any]:
-    """Return a read-only status summary without loading the batch manifest."""
+def _validate_native_json_shape(value: Any) -> None:
+    stack: list[tuple[Any, bool]] = [(value, False)]
+    active_containers: set[int] = set()
+    while stack:
+        current, exiting = stack.pop()
+        if exiting:
+            active_containers.remove(id(current))
+            continue
+        if current is None or type(current) in {bool, int, float, str}:
+            continue
+        if type(current) not in {list, dict}:
+            raise TypeError("value is not a native JSON type")
+        identity = id(current)
+        if identity in active_containers:
+            raise ValueError("circular JSON value")
+        active_containers.add(identity)
+        stack.append((current, True))
+        if type(current) is list:
+            stack.extend((item, False) for item in reversed(current))
+            continue
+        for key in current:
+            if type(key) is not str:
+                raise TypeError("JSON object key must be text")
+        stack.extend((item, False) for item in reversed(tuple(current.values())))
 
-    events = _production_events(_load_events(repository_root, batch_id))
+
+def build_workflow_batch_status_from_events(
+    batch_id: str,
+    events: Iterable[object],
+) -> dict[str, Any]:
+    """Return a status summary from Python-JSON-compatible events in memory.
+
+    Constructed dictionaries cannot represent duplicate keys; disk-backed calls
+    retain their duplicate-key rejection while parsing before reaching this seam.
+    """
+
+    _validate_batch_id(batch_id)
+    try:
+        supplied_events = list(events)
+    except Exception:
+        raise _unavailable("批次状态账本损坏，无法确认制作状态。") from None
+    if not supplied_events:
+        raise _unavailable("批次状态账本为空，无法确认制作状态。")
+
+    validated_events: list[Mapping[str, Any]] = []
+    previous_recorded_at: datetime | None = None
+    for line_number, supplied_value in enumerate(supplied_events, start=1):
+        if type(supplied_value) is not dict:
+            raise _unavailable(
+                f"批次状态账本第 {line_number} 行损坏，无法确认制作状态。"
+            )
+        try:
+            _validate_native_json_shape(supplied_value)
+            value = json.loads(
+                json.dumps(supplied_value),
+                object_pairs_hook=_object_with_unique_keys,
+            )
+        except (TypeError, ValueError, OverflowError, RecursionError):
+            raise _unavailable(
+                f"批次状态账本第 {line_number} 行损坏，无法确认制作状态。"
+            ) from None
+        previous_recorded_at = _validate_event_record(
+            value,
+            line_number,
+            previous_recorded_at,
+        )
+        validated_events.append(value)
+
+    production_events = _production_events(validated_events)
     summary: dict[str, Any] = {
         "ok": True,
         "batchId": batch_id,
-        **_derive_lifecycle(events),
-        "renders": _derive_render_progress(events),
+        **_derive_lifecycle(production_events),
+        "renders": _derive_render_progress(production_events),
     }
     return summary
+
+
+def build_workflow_batch_status(repository_root: Path, batch_id: str) -> dict[str, Any]:
+    """Return a read-only status summary without loading the batch manifest."""
+
+    return build_workflow_batch_status_from_events(
+        batch_id,
+        _load_events(repository_root, batch_id),
+    )
