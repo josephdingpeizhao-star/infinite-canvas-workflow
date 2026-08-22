@@ -41,6 +41,7 @@ from image_count_contract import (
     detail_handheld_chunk_quotas,
     detail_module_assignment_lines,
     detail_module_groups,
+    main_handheld_chunk_quotas,
     pair_config_ids,
 )
 import runtime_roots
@@ -394,6 +395,18 @@ _LEGACY_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS = (
     "allow_clear_water",
     *_COUNTED_CATEGORY_USER_CONFIRMED_FACT_KEYS[-2:],
 )
+
+
+class MainChunkTransportCorruption(ExecutorExecutionError):
+    """A main chunk was damaged in transport and may be resent in full."""
+
+
+class MainChunkEnvelopeCorrection(ExecutorExecutionError):
+    """A safe main chunk has the right identity but needs one envelope correction."""
+
+    def __init__(self, business_fingerprint: str):
+        super().__init__("main chunk envelope needs correction")
+        self.business_fingerprint = business_fingerprint
 
 
 class DetailChunkTransportCorruption(ExecutorExecutionError):
@@ -2392,6 +2405,111 @@ def build_variable_config_correction_prompt(
     )
 
 
+def build_main_variable_config_chunk_prompt(
+    base_prompt: str,
+    chunk_index: int,
+    *,
+    requirements: UserConfirmedRequirements,
+    is_set: bool = False,
+    repair: bool = False,
+    structure_correction: bool = False,
+    correction: ContentPredicateViolation | None = None,
+) -> str:
+    """Request one bounded main-config chunk in its isolated Codex thread."""
+
+    main_count = _mode_image_count(requirements, "main")
+    batches = pair_config_ids("main", main_count)
+    chunk_count = len(batches)
+    if not 1 <= chunk_index <= chunk_count:
+        raise ExecutorExecutionError("codex-dev 收到无效的主图变量配置分段编号")
+    if sum((repair, structure_correction, correction is not None)) > 1:
+        raise ExecutorExecutionError("codex-dev 收到冲突的主图变量配置恢复请求")
+    expected_ids = batches[chunk_index - 1]
+    allowed_keys = ["chunk_index", "chunk_count", "configs"]
+    if chunk_index == 1:
+        allowed_keys.extend(("common_constraints", "notes"))
+    allowed_keys.append("handheld_chunk_summary")
+    handheld_quota = main_handheld_chunk_quotas(
+        main_count,
+        requirements.handheld_main,
+    )[chunk_index - 1]
+    if is_set:
+        quota_instruction = f"本段手持上限 {handheld_quota} 项，允许少于。"
+        summary_fields = SET_DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+        summary_explanation = (
+            f"【{SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD}】在本段实际启用数量等于配额时"
+            "必须包含“已按配额启用”；少于配额时必须包含“原因”与本段实际启用数量的数字。"
+        )
+    else:
+        quota_instruction = (
+            "本段所有图位一律不启用手持场景。"
+            if handheld_quota == 0
+            else f"本段必须恰好启用 {handheld_quota} 项手持。"
+        )
+        summary_fields = DETAIL_HANDHELD_CHUNK_SUMMARY_FIELDS
+        summary_explanation = ""
+
+    if correction is not None:
+        opening = (
+            "继续同一 main_vc 任务。"
+            + build_content_correction_instruction(correction)
+        )
+    elif structure_correction:
+        opening = (
+            f"继续同一 main_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过包装格式门禁；"
+            f"请完整重发第 {chunk_index}/{chunk_count} 段。不得引用、解释或局部修补上一段正文，"
+            "不得改变配置内容、段号、配置编号或增加商品事实。"
+        )
+    elif repair:
+        opening = (
+            f"继续同一 main_vc 任务。上一个第 {chunk_index}/{chunk_count} 段未通过传输完整性门禁；"
+            f"请完整重发第 {chunk_index}/{chunk_count} 段。不得修补、引用或解释损坏正文。"
+        )
+    else:
+        opening = base_prompt + "\n\n"
+
+    return (
+        opening
+        + f"\n本轮只返回第 {chunk_index}/{chunk_count} 段，且只包含配置 "
+        + "、".join(expected_ids)
+        + "。"
+        + quota_instruction
+        + f"顶层键必须恰好为：{json.dumps(allowed_keys, ensure_ascii=False)}。"
+        + f"chunk_index 必须为 {chunk_index}，chunk_count 必须为 {chunk_count}。"
+        + (
+            "configs 必须按上述顺序包含"
+            f"{chinese_image_count(len(expected_ids))}项，每项只包含 "
+            "config_id、per_image_overrides、notes。"
+        )
+        + (
+            "common_constraints 必须是非空 JSON 对象；notes 必须是 JSON 字符串，不能是对象或数组，"
+            "也不能把 handheld_count_summary 放入 notes；两者只在本段返回。"
+            if chunk_index == 1
+            else ""
+        )
+        + "handheld_chunk_summary 必须是 JSON 对象，且必须恰好包含这些字段："
+        + "、".join(summary_fields)
+        + "。"
+        + f"【本段手持配额】必须为整数 {handheld_quota}；"
+        + "【本段实际启用数量】必须等于本段 configs 中实际启用手持的数量；"
+        + "【本段启用手持配置】必须是按 configs 顺序列出的实际启用 config_id JSON 数组。"
+        + summary_explanation
+        + "任一分段均不得返回 handheld_count_summary。"
+        + "只返回一个完整 JSON 对象，不要 Markdown、代码围栏或额外说明。"
+    )
+
+
+def main_variable_config_chunk_count(
+    requirements: UserConfirmedRequirements,
+) -> int:
+    return len(
+        pair_config_ids(
+            "main",
+            _mode_image_count(requirements, "main"),
+        )
+    )
+
+
 def build_detail_variable_config_chunk_prompt(
     base_prompt: str,
     chunk_index: int,
@@ -2560,6 +2678,180 @@ def _is_probable_json_truncation(text: str, error: json.JSONDecodeError) -> bool
     if any(literal.startswith(tail) and tail != literal for literal in ("true", "false", "null")):
         return True
     return re.fullmatch(r"(?:-|\d+\.|\d+(?:\.\d+)?[eE][+-]?)", tail) is not None
+
+
+def parse_main_variable_config_chunk(
+    text: str,
+    chunk_index: int,
+    *,
+    requirements: UserConfirmedRequirements,
+    angle_inventory: Mapping[str, Any],
+    set_identity: Mapping[str, Any] | None = None,
+    component_identities: Sequence[Mapping[str, Any]] = (),
+    set_angle_layout_inventory: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate one main chunk before bounded transport or envelope recovery."""
+
+    batches = pair_config_ids(
+        "main",
+        _mode_image_count(requirements, "main"),
+    )
+    chunk_count = len(batches)
+    if not 1 <= chunk_index <= chunk_count:
+        raise ExecutorExecutionError("codex-dev 收到无效的主图变量配置分段编号")
+    candidate = text.strip()
+    if "\ufffd" in candidate:
+        raise MainChunkTransportCorruption("main chunk contains replacement character")
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", candidate, flags=re.DOTALL | re.IGNORECASE)
+    if fenced:
+        candidate = fenced.group(1).strip()
+    try:
+        value = json.loads(candidate)
+    except json.JSONDecodeError as error:
+        if _is_probable_json_truncation(candidate, error):
+            raise MainChunkTransportCorruption("main chunk is not complete JSON") from None
+        raise ExecutorExecutionError(
+            "codex-dev 收到的主图变量配置分段不是有效 JSON"
+        ) from None
+    if not isinstance(value, dict):
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段结构异常")
+    if any(isinstance(item, str) and "\ufffd" in item for item in _walk_values(value)):
+        raise MainChunkTransportCorruption("main chunk contains replacement character")
+
+    _reject_unicode_damage_or_forbidden_keys(
+        value,
+        "主图变量配置分段",
+        allowed_set_keys=(
+            SET_VARIABLE_CONFIG_ALLOWED_SET_KEYS
+            if set_identity is not None
+            else frozenset()
+        ),
+    )
+
+    if value.get("chunk_index") != chunk_index or value.get("chunk_count") != chunk_count:
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段编号异常")
+
+    configs = value.get("configs")
+    expected_ids = list(batches[chunk_index - 1])
+    if not isinstance(configs, list) or len(configs) != len(expected_ids):
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段覆盖异常")
+    actual_ids: list[str] = []
+    for raw in configs:
+        if not isinstance(raw, dict) or set(raw) != _VARIABLE_ALLOWED_CONFIG_FIELDS:
+            raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段单项结构异常")
+        if not isinstance(raw.get("per_image_overrides"), dict):
+            raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段单项结构异常")
+        actual_ids.append(str(raw.get("config_id") or ""))
+    if actual_ids != expected_ids:
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段覆盖异常")
+
+    if set_identity is None:
+        _validate_main_chunk_business_content(
+            value,
+            chunk_index=chunk_index,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+        )
+    else:
+        if not component_identities or set_angle_layout_inventory is None:
+            raise ExecutorExecutionError("codex-dev 缺少套装主图变量配置校验上下文")
+        _validate_set_main_chunk_business_content(
+            value,
+            chunk_index=chunk_index,
+            requirements=requirements,
+            set_identity=set_identity,
+            component_identities=component_identities,
+            set_angle_layout_inventory=set_angle_layout_inventory,
+        )
+
+    expected_keys = {
+        "chunk_index",
+        "chunk_count",
+        "configs",
+        "handheld_chunk_summary",
+    }
+    if chunk_index == 1:
+        expected_keys.update(("common_constraints", "notes"))
+    if set(value) != expected_keys:
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段结构异常")
+
+    if chunk_index == 1 and not isinstance(value.get("notes"), str):
+        raise MainChunkEnvelopeCorrection(
+            main_chunk_business_fingerprint(value, chunk_index)
+        )
+    return value
+
+
+def assemble_main_variable_config_chunks(
+    chunks: list[Mapping[str, Any]],
+    *,
+    requirements: UserConfirmedRequirements,
+    is_set: bool = False,
+) -> dict[str, Any]:
+    """Rebuild the original full main response after every chunk passes."""
+
+    main_count = _mode_image_count(requirements, "main")
+    batches = pair_config_ids("main", main_count)
+    expected_ids = list(config_ids("main", main_count))
+    if len(chunks) != len(batches):
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段数量异常")
+    for chunk_index, (chunk, expected_chunk_ids) in enumerate(
+        zip(chunks, batches, strict=True),
+        start=1,
+    ):
+        if (
+            chunk.get("chunk_index") != chunk_index
+            or chunk.get("chunk_count") != len(batches)
+            or [
+                str(config.get("config_id") or "")
+                for config in chunk.get("configs", ())
+            ]
+            != list(expected_chunk_ids)
+        ):
+            raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段覆盖异常")
+    configs = [config for chunk in chunks for config in chunk["configs"]]
+    if [str(config.get("config_id") or "") for config in configs] != expected_ids:
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置分段覆盖异常")
+    enabled_ids = [
+        str(config.get("config_id") or "")
+        for config in configs
+        if "本张图不启用手持场景"
+        not in config["per_image_overrides"]["手持交互声明"]
+    ]
+    target = requirements.handheld_main
+    if (not is_set and len(enabled_ids) != target) or (
+        is_set and len(enabled_ids) > target
+    ):
+        raise ExecutorExecutionError("codex-dev 收到的主图变量配置手持数量异常")
+
+    handheld_summary: dict[str, Any] = {
+        "用户要求主图手持数量": target,
+        "实际启用手持数量": len(enabled_ids),
+        "未启用手持数量": main_count - len(enabled_ids),
+        "启用手持配置": enabled_ids,
+        "是否完全满足用户数量": "是" if len(enabled_ids) == target else "否",
+    }
+    if is_set:
+        if len(enabled_ids) == target:
+            explanation = f"已按目标启用，实际启用 {len(enabled_ids)} 项。"
+        else:
+            chunk_explanations = [
+                str(chunk["handheld_chunk_summary"][
+                    SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD
+                ]).strip()
+                for chunk in chunks
+            ]
+            explanation = (
+                f"实际启用 {len(enabled_ids)} 项，原因："
+                + "；".join(chunk_explanations)
+            )
+        handheld_summary[SET_HANDHELD_SUMMARY_EXPLANATION_FIELD] = explanation
+    return {
+        "common_constraints": dict(chunks[0]["common_constraints"]),
+        "configs": [dict(config) for config in configs],
+        "handheld_count_summary": handheld_summary,
+        "notes": str(chunks[0]["notes"]),
+    }
 
 
 def parse_detail_variable_config_chunk(
@@ -2871,6 +3163,167 @@ def _validate_detail_handheld_chunk_summary(
             SET_DETAIL_HANDHELD_CHUNK_EXPLANATION_FIELD,
             f"少于配额时必须包含「原因」与数字 {enabled}",
         )
+
+
+def _validate_main_chunk_business_content(
+    value: Mapping[str, Any],
+    *,
+    chunk_index: int,
+    requirements: UserConfirmedRequirements,
+    angle_inventory: Mapping[str, Any],
+) -> None:
+    """Prove main config content is safe before one envelope correction."""
+
+    label = "主图变量配置"
+    _reject_unsupported_claims(
+        value,
+        requirements.height_cm,
+        label,
+        product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=_confirmed_dimensions(requirements),
+        defer_style_master_prop_materials=True,
+        content_correction=True,
+    )
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
+    chunk_config_id = str(value["configs"][0].get("config_id") or "")
+    if chunk_index == 1 and (
+        not isinstance(value.get("common_constraints"), dict)
+        or not value["common_constraints"]
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}数量或结构异常",
+            code="common_constraints",
+            config_id=chunk_config_id,
+            field="common_constraints",
+            expected="必须是非空 JSON 对象",
+        )
+    qualified = qualified_angle_assets(angle_inventory)
+    enabled_ids: list[str] = []
+    for raw in value["configs"]:
+        config_id = str(raw.get("config_id") or "")
+        overrides = raw["per_image_overrides"]
+        if set(overrides) != set(MAIN_REQUIRED_OVERRIDE_FIELDS):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少规范字段",
+                code="required_fields",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="必须恰好包含 main_vc 全部规范字段",
+            )
+        if any(
+            not isinstance(overrides[field], str) or not overrides[field].strip()
+            for field in MAIN_REQUIRED_OVERRIDE_FIELDS
+        ):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}字段内容异常",
+                code="field_content",
+                config_id=config_id,
+                field="per_image_overrides",
+                expected="每个规范字段必须是非空字符串",
+            )
+        _validate_bound_angle(
+            overrides["绑定角度槽位"],
+            qualified,
+            label,
+            correction_config_id=config_id,
+        )
+        if overrides["输出画布比例"].strip() != "1:1":
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}画布比例异常",
+                code="canvas_ratio",
+                config_id=config_id,
+                field="输出画布比例",
+                expected="必须逐字写 1:1",
+            )
+        if f"约 {requirements.height_cm} 厘米" not in overrides["尺寸比例锁定"]:
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}缺少已确认高度",
+                code="confirmed_height_literal",
+                config_id=config_id,
+                field="尺寸比例锁定",
+                expected=f"必须包含约 {requirements.height_cm} 厘米",
+            )
+
+        handheld_declaration = overrides["手持交互声明"]
+        handheld = "本张图不启用手持场景" not in handheld_declaration
+        if handheld:
+            enabled_ids.append(config_id)
+        dynamic_reference = overrides["动态手持样式参考图调用"].strip()
+        if not handheld and dynamic_reference != "无":
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="不启用手持时必须逐字写无",
+            )
+        if handheld and "静态握持" in handheld_declaration and dynamic_reference != "无，仅动态拿起场景可调用":
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="静态握持时必须逐字写无，仅动态拿起场景可调用",
+            )
+        if handheld and "动态拿起" in handheld_declaration and dynamic_reference != "未提供，不调用":
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="动态手持样式参考图调用",
+                expected="动态拿起且未提供参考图时必须逐字写未提供，不调用",
+            )
+        if handheld and not any(kind in handheld_declaration for kind in ("静态握持", "动态拿起")):
+            raise ContentPredicateViolation(
+                f"codex-dev 收到的{label}手持规则调用异常",
+                code="handheld_reference",
+                config_id=config_id,
+                field="手持交互声明",
+                expected="启用手持必须逐字包含静态握持或动态拿起",
+            )
+
+    main_count = _mode_image_count(requirements, "main")
+    quota = main_handheld_chunk_quotas(
+        main_count,
+        requirements.handheld_main,
+    )[chunk_index - 1]
+    if len(enabled_ids) != quota:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=str(value["configs"][-1].get("config_id") or ""),
+            field="手持交互声明",
+            expected=f"本段必须恰好 {quota} 项启用手持",
+        )
+    _validate_detail_handheld_chunk_summary(
+        value,
+        quota=quota,
+        enabled_ids=enabled_ids,
+        is_set=False,
+        label=label,
+        config_id=chunk_config_id,
+    )
+
+
+def main_chunk_business_fingerprint(
+    value: Mapping[str, Any],
+    chunk_index: int,
+) -> str:
+    """Fingerprint main business fields while excluding wrapper-only notes."""
+
+    payload: dict[str, Any] = {
+        "configs": value["configs"],
+        "handheld_chunk_summary": value["handheld_chunk_summary"],
+    }
+    if chunk_index == 1:
+        payload["common_constraints"] = value["common_constraints"]
+    return stable_json_sha256(payload)
 
 
 def _validate_detail_chunk_business_content(
@@ -3483,6 +3936,83 @@ def _validate_set_config_items(
                     expected="非模块05两栏必须逐字写非尺寸标注图",
                 )
     return enabled_ids, all_appear_count
+
+
+def _validate_set_main_chunk_business_content(
+    value: Mapping[str, Any],
+    *,
+    chunk_index: int,
+    requirements: UserConfirmedRequirements,
+    set_identity: Mapping[str, Any],
+    component_identities: Sequence[Mapping[str, Any]],
+    set_angle_layout_inventory: Mapping[str, Any],
+) -> None:
+    """Validate per-image set rules without enforcing the global all-appear count."""
+
+    label = "套装主图变量配置"
+    confirmed_dimensions = _set_dimension_values(
+        set_identity,
+        component_identities,
+        requirements,
+    )
+    _reject_unsupported_claims(
+        value,
+        None,
+        label,
+        product_type=requirements.product_type,
+        lexicons=_requirements_recipe(requirements).lexicons,
+        confirmed_dimensions=confirmed_dimensions,
+        defer_style_master_prop_materials=True,
+        content_correction=True,
+        allow_confirmed_dimension_groups=True,
+    )
+    _reject_scene_policy_violations(
+        value,
+        requirements,
+        label,
+        content_correction=True,
+    )
+    first_config_id = str(value["configs"][0].get("config_id") or "")
+    if chunk_index == 1 and (
+        not isinstance(value.get("common_constraints"), dict)
+        or not value["common_constraints"]
+    ):
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}数量或结构异常",
+            code="common_constraints",
+            config_id=first_config_id,
+            field="common_constraints",
+            expected="必须是非空 JSON 对象",
+        )
+    start_index = 2 * (chunk_index - 1)
+    current_enabled, _all_appear = _validate_set_config_items(
+        value["configs"],
+        mode="main",
+        start_index=start_index,
+        requirements=requirements,
+        set_angle_layout_inventory=set_angle_layout_inventory,
+    )
+    main_count = _mode_image_count(requirements, "main")
+    quota = main_handheld_chunk_quotas(
+        main_count,
+        requirements.handheld_main,
+    )[chunk_index - 1]
+    if len(current_enabled) > quota:
+        raise ContentPredicateViolation(
+            f"codex-dev 收到的{label}手持数量异常",
+            code="handheld_count",
+            config_id=first_config_id,
+            field="手持交互声明",
+            expected=f"本段实际启用数量不得超过配额 {quota}",
+        )
+    _validate_detail_handheld_chunk_summary(
+        value,
+        quota=quota,
+        enabled_ids=current_enabled,
+        is_set=True,
+        label=label,
+        config_id=first_config_id,
+    )
 
 
 def _validate_set_detail_chunk_business_content(
@@ -4416,6 +4946,56 @@ def build_set_final_prompt_repair_prompt(*, mode: str) -> str:
     )
 
 
+def final_prompt_chunk_count(
+    mode: str,
+    requirements: UserConfirmedRequirements,
+) -> int:
+    """Return the number of two-config final-prompt chunks for one mode."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的最终提示词模式")
+    return len(pair_config_ids(mode, _mode_image_count(requirements, mode)))
+
+
+def build_final_prompt_chunk_prompt(
+    base_prompt: str,
+    chunk_index: int,
+    *,
+    mode: str,
+    requirements: UserConfirmedRequirements,
+) -> str:
+    """Append one bounded chunk override without changing the frozen base prompt."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的最终提示词模式")
+    if not isinstance(base_prompt, str) or not base_prompt:
+        raise ExecutorExecutionError("codex-dev 缺少最终提示词分段基底")
+    batches = pair_config_ids(mode, _mode_image_count(requirements, mode))
+    chunk_count = len(batches)
+    if not 1 <= chunk_index <= chunk_count:
+        raise ExecutorExecutionError("codex-dev 收到无效的最终提示词分段编号")
+    expected_ids = batches[chunk_index - 1]
+
+    # P2-d intentionally sends the byte-frozen full base with every chunk. At
+    # N=30 this repeats the input-side contract about 15 times. Trimming the
+    # base would break the golden contract, so real-batch validation must watch
+    # this accepted cost; the bounded response is the wall-clock benefit.
+    return base_prompt + "\n\n" + (
+        "【P2-d 最终提示词分段执行覆盖】\n"
+        f"本轮只执行第 {chunk_index}/{chunk_count} 段。"
+        "上方原始基底中的全批输出要求仅提供完整教学与逐图契约背景；"
+        "本覆盖块是本轮返回范围的最终指令。\n"
+        "本段唯一允许返回的配置编号为："
+        f"{json.dumps(list(expected_ids), ensure_ascii=False)}。"
+        "不得返回其他配置编号，不得引用、解释或局部修补上一轮正文。\n"
+        "上方原始基底中的全批负向禁令、被拒源图禁令、D 槽位禁令及"
+        "逐编号手持与角度绑定契约，对本段每一项继续原样生效。\n"
+        "只返回一个完整 JSON 对象，形状必须严格为 "
+        '{"prompts":[{"config_id":"...","final_prompt":"...",'
+        '"negative_prompt":"..."}]}，不要 Markdown、代码围栏或额外说明。'
+    )
+
+
 def _validate_variable_config_document(
     document: Mapping[str, Any],
     *,
@@ -4451,6 +5031,73 @@ def _validate_variable_config_document(
     return result
 
 
+def _select_final_prompt_configs(
+    configs: Sequence[dict[str, Any]],
+    expected_config_ids: Sequence[str] | None,
+    *,
+    mode: str,
+    label: str,
+) -> list[dict[str, Any]]:
+    """Select exactly one canonical pair chunk; ``None`` keeps full-batch mode."""
+
+    if expected_config_ids is None:
+        return list(configs)
+    if isinstance(expected_config_ids, (str, bytes)):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}分段编号异常")
+    requested = tuple(expected_config_ids)
+    if not requested or any(not isinstance(config_id, str) for config_id in requested):
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}分段编号异常")
+    batches = pair_config_ids(mode, len(configs))
+    if requested not in batches:
+        raise ExecutorExecutionError(f"codex-dev 收到的{label}分段编号异常")
+    by_id = {str(config["config_id"]): config for config in configs}
+    return [by_id[config_id] for config_id in requested]
+
+
+def assemble_final_prompt_chunks(
+    chunks: Sequence[Mapping[str, Mapping[str, str]]],
+    *,
+    mode: str,
+    requirements: UserConfirmedRequirements,
+) -> dict[str, list[dict[str, str]]]:
+    """Rebuild the original full response envelope from parsed prompt chunks."""
+
+    if mode not in {"main", "detail"}:
+        raise ExecutorExecutionError("codex-dev 收到不支持的最终提示词模式")
+    batches = pair_config_ids(mode, _mode_image_count(requirements, mode))
+    if len(chunks) != len(batches):
+        raise ExecutorExecutionError("codex-dev 收到的最终提示词分段数量异常")
+
+    prompts: list[dict[str, str]] = []
+    for chunk, expected_ids in zip(chunks, batches, strict=True):
+        if not isinstance(chunk, Mapping) or list(chunk) != list(expected_ids):
+            raise ExecutorExecutionError("codex-dev 收到的最终提示词分段覆盖异常")
+        for config_id in expected_ids:
+            prompt = chunk.get(config_id)
+            if (
+                not isinstance(prompt, Mapping)
+                or set(prompt) != {"final_prompt", "negative_prompt"}
+                or not isinstance(prompt.get("final_prompt"), str)
+                or not prompt["final_prompt"].strip()
+                or not isinstance(prompt.get("negative_prompt"), str)
+                or not prompt["negative_prompt"].strip()
+            ):
+                raise ExecutorExecutionError("codex-dev 收到的最终提示词分段内容异常")
+            prompts.append(
+                {
+                    "config_id": config_id,
+                    "final_prompt": prompt["final_prompt"].strip(),
+                    "negative_prompt": prompt["negative_prompt"].strip(),
+                }
+            )
+
+    if [prompt["config_id"] for prompt in prompts] != list(
+        config_ids(mode, _mode_image_count(requirements, mode))
+    ):
+        raise ExecutorExecutionError("codex-dev 收到的最终提示词分段覆盖异常")
+    return {"prompts": prompts}
+
+
 def parse_final_prompt_batch_response(
     text: str,
     *,
@@ -4460,6 +5107,7 @@ def parse_final_prompt_batch_response(
     angle_inventory: Mapping[str, Any],
     variable_config: Mapping[str, Any],
     style_master_text: str | None = None,
+    expected_config_ids: Sequence[str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Validate one prompt batch against immutable variable-config decisions."""
 
@@ -4482,11 +5130,17 @@ def parse_final_prompt_batch_response(
     )
     _reject_scene_policy_violations(value, requirements, label)
 
-    configs = _validate_variable_config_document(
+    all_configs = _validate_variable_config_document(
         variable_config,
         mode=mode,
         product_id=product_id,
         expected_count=_mode_image_count(requirements, mode),
+    )
+    configs = _select_final_prompt_configs(
+        all_configs,
+        expected_config_ids,
+        mode=mode,
+        label=label,
     )
     expected_ids = [config["config_id"] for config in configs]
     if len(value["prompts"]) != len(expected_ids):
@@ -4552,7 +5206,7 @@ def parse_final_prompt_batch_response(
             "negative_prompt": negative_prompt.strip(),
         }
     expected_handheld = requirements.handheld_main if mode == "main" else requirements.handheld_detail
-    if enabled != expected_handheld:
+    if expected_config_ids is None and enabled != expected_handheld:
         raise ExecutorExecutionError(f"codex-dev 检测到{label}上游手持数量异常")
     return parsed
 
@@ -4568,6 +5222,7 @@ def parse_set_final_prompt_batch_response(
     set_angle_layout_inventory: Mapping[str, Any],
     variable_config: Mapping[str, Any],
     style_master_text: str | None = None,
+    expected_config_ids: Sequence[str] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Validate one set prompt batch against its accepted configuration bindings."""
 
@@ -4597,11 +5252,17 @@ def parse_set_final_prompt_batch_response(
     )
     _reject_scene_policy_violations(value, requirements, label)
 
-    configs = _validate_variable_config_document(
+    all_configs = _validate_variable_config_document(
         variable_config,
         mode=mode,
         product_id=product_id,
         expected_count=_mode_image_count(requirements, mode),
+    )
+    configs = _select_final_prompt_configs(
+        all_configs,
+        expected_config_ids,
+        mode=mode,
+        label=label,
     )
     bindings = _set_final_prompt_config_bindings(
         configs,
@@ -4681,7 +5342,7 @@ def parse_set_final_prompt_batch_response(
             "final_prompt": final_prompt.strip(),
             "negative_prompt": negative_prompt.strip(),
         }
-    if enabled != _set_final_prompt_enabled_count(configs):
+    if expected_config_ids is None and enabled != _set_final_prompt_enabled_count(configs):
         raise ExecutorExecutionError(f"codex-dev 检测到{label}上游手持数量异常")
     return parsed
 

@@ -54,6 +54,7 @@ from image_count_contract import (  # noqa: E402
     detail_handheld_chunk_quotas,
     detail_module_assignment_lines,
     detail_module_groups,
+    main_handheld_chunk_quotas,
     pair_config_ids,
 )
 
@@ -499,11 +500,19 @@ def valid_set_variable_response(
     }
 
 
-def set_detail_chunks(response: dict[str, object]) -> list[dict[str, object]]:
+def _set_variable_chunks(
+    mode: str,
+    response: dict[str, object],
+) -> list[dict[str, object]]:
     configs = response["configs"]
-    batches = pair_config_ids("detail", len(configs))
-    handheld_target = response["handheld_count_summary"]["用户要求详情图手持数量"]
-    quotas = detail_handheld_chunk_quotas(len(configs), handheld_target)
+    batches = pair_config_ids(mode, len(configs))
+    scope = "主图" if mode == "main" else "详情图"
+    handheld_target = response["handheld_count_summary"][f"用户要求{scope}手持数量"]
+    quotas = (
+        main_handheld_chunk_quotas(len(configs), handheld_target)
+        if mode == "main"
+        else detail_handheld_chunk_quotas(len(configs), handheld_target)
+    )
     chunks: list[dict[str, object]] = []
     offset = 0
     for chunk_index, batch in enumerate(batches, start=1):
@@ -539,37 +548,67 @@ def set_detail_chunks(response: dict[str, object]) -> list[dict[str, object]]:
     return chunks
 
 
+def set_main_chunks(response: dict[str, object]) -> list[dict[str, object]]:
+    return _set_variable_chunks("main", response)
+
+
+def set_detail_chunks(response: dict[str, object]) -> list[dict[str, object]]:
+    return _set_variable_chunks("detail", response)
+
+
+def _variable_chunk_key_from_prompt(prompt: str) -> tuple[str, int] | None:
+    match = re.search(
+        r"本轮只返回第 (\d+)/(\d+) 段，且只包含配置 (main|detail)_\d{2}",
+        prompt,
+    )
+    return (match.group(3), int(match.group(1))) if match else None
+
+
 def _detail_chunk_index_from_prompt(prompt: str) -> int | None:
-    match = re.search(r"本轮只返回第 (\d+)/(\d+) 段", prompt)
-    return int(match.group(1)) if match else None
+    key = _variable_chunk_key_from_prompt(prompt)
+    return key[1] if key is not None and key[0] == "detail" else None
 
 
 class SequenceTransport:
     def __init__(self, responses: list[dict[str, object]]) -> None:
         self._non_chunk_results: list[CodexTurnResult] = []
-        self._chunk_results: dict[int, list[CodexTurnResult]] = {}
+        self._chunk_results: dict[tuple[str, int], list[CodexTurnResult]] = {}
         for response in responses:
             chunk_index = response.get("chunk_index")
+            configs = response.get("configs")
+            first_config_id = (
+                str(configs[0].get("config_id") or "")
+                if isinstance(configs, list)
+                and configs
+                and isinstance(configs[0], dict)
+                else ""
+            )
+            mode_match = re.fullmatch(r"(main|detail)_\d{2}", first_config_id)
+            chunk_key = (
+                (mode_match.group(1), chunk_index)
+                if mode_match is not None and isinstance(chunk_index, int)
+                else None
+            )
             result = CodexTurnResult(
                 text=json.dumps(response, ensure_ascii=False),
                 thread_id=(
-                    f"st03b-detail-chunk-{chunk_index}"
-                    if isinstance(chunk_index, int)
+                    f"st03b-{chunk_key[0]}-chunk-{chunk_key[1]}"
+                    if chunk_key is not None
                     else "st03b-thread"
                 ),
             )
-            if isinstance(chunk_index, int):
-                self._chunk_results.setdefault(chunk_index, []).append(result)
+            if chunk_key is not None:
+                self._chunk_results.setdefault(chunk_key, []).append(result)
             else:
                 self._non_chunk_results.append(result)
         self._lock = threading.Lock()
         self.calls: list[tuple[str, tuple[CodexAttachment, ...]]] = []
         self.continuation_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
 
-    def _pop_result(self, chunk_index: int | None) -> CodexTurnResult:
+    def _pop_result(self, chunk_key: tuple[str, int] | None) -> CodexTurnResult:
         results = (
-            self._chunk_results.get(chunk_index)
-            if chunk_index is not None
+            self._chunk_results.get(chunk_key)
+            if chunk_key is not None
             else self._non_chunk_results
         )
         if not results:
@@ -581,10 +620,10 @@ class SequenceTransport:
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
-        chunk_index = _detail_chunk_index_from_prompt(prompt)
+        chunk_key = _variable_chunk_key_from_prompt(prompt)
         with self._lock:
             self.calls.append((prompt, attachments))
-            return self._pop_result(chunk_index)
+            return self._pop_result(chunk_key)
 
     def continue_turn(
         self,
@@ -592,13 +631,13 @@ class SequenceTransport:
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
-        chunk_index = _detail_chunk_index_from_prompt(prompt)
-        if chunk_index is None:
-            match = re.fullmatch(r"st03b-detail-chunk-(\d+)", thread_id)
-            chunk_index = int(match.group(1)) if match else None
+        chunk_key = _variable_chunk_key_from_prompt(prompt)
+        if chunk_key is None:
+            match = re.fullmatch(r"st03b-(main|detail)-chunk-(\d+)", thread_id)
+            chunk_key = (match.group(1), int(match.group(2))) if match else None
         with self._lock:
             self.continuation_calls.append((thread_id, prompt, attachments))
-            result = self._pop_result(chunk_index)
+            result = self._pop_result(chunk_key)
             if result.thread_id != thread_id:
                 raise AssertionError("continuation used the wrong thread identity")
             return result
@@ -983,8 +1022,9 @@ class St03bPromptAndProvenanceTests(unittest.TestCase):
 class St03bExecutorTests(SetVariableConfigFixture):
     def test_set_main_full_chain_writes_unchanged_envelope_and_refuses_overwrite(self) -> None:
         response = valid_set_variable_response("main", count=2, handheld_target=1)
+        chunks = set_main_chunks(response)
         with tempfile.TemporaryDirectory() as temporary:
-            executor, transport, _manifest, paths = self.make_executor(Path(temporary), [response])
+            executor, transport, _manifest, paths = self.make_executor(Path(temporary), chunks)
             result = executor.execute(ExecutionRequest(step="main_vc"))
             output = paths["main"] / "main_variable_configs.json"
             artifact = json.loads(output.read_text(encoding="utf-8"))
@@ -1002,6 +1042,8 @@ class St03bExecutorTests(SetVariableConfigFixture):
             self.assertEqual((output,), result.outputs)
             self.assertEqual(1, len(transport.calls))
             self.assertEqual((), transport.calls[0][1])
+            self.assertIn("本轮只返回第 1/1 段", transport.calls[0][0])
+            self.assertEqual(("st03b-main-chunk-1",), result.metadata["thread_ids"])
             with self.assertRaisesRegex(ExecutorExecutionError, "已存在"):
                 executor.execute(ExecutionRequest(step="main_vc"))
 

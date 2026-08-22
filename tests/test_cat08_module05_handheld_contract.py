@@ -28,6 +28,10 @@ from tests.test_codex_dev_executor import (  # noqa: E402
     valid_detail_chunk_responses,
     valid_main_variable_response,
 )
+from tests.test_cc01_vc_correction_envelope import (  # noqa: E402
+    _chunk_turn,
+    single_main_chunks,
+)
 
 
 EXPECTED_CONTENT_CORRECTION_CODES = {
@@ -246,15 +250,15 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
             invalid = valid_main_variable_response()
             invalid["configs"][0]["per_image_overrides"]["输出画布比例"] = "3:4"  # type: ignore[index]
             valid = valid_main_variable_response()
+            invalid_chunks = single_main_chunks(invalid)
+            valid_chunks = single_main_chunks(valid)
             transport = FakeTransport(
                 [
-                    CodexTurnResult(
-                        text=json.dumps(invalid, ensure_ascii=False),
-                        thread_id="thread-main-cat08",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(valid, ensure_ascii=False),
-                        thread_id="thread-main-cat08",
+                    _chunk_turn(invalid_chunks[0], thread_prefix="thread-main-cat08"),
+                    _chunk_turn(valid_chunks[0], thread_prefix="thread-main-cat08"),
+                    *(
+                        _chunk_turn(chunk, thread_prefix="thread-main-cat08")
+                        for chunk in valid_chunks[1:]
                     ),
                 ]
             )
@@ -274,7 +278,7 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
 
             self.assertTrue(output_path.exists())
             self.assertEqual([(1, "canvas_ratio", "main_01")], corrections)
-            self.assertEqual(1, len(transport.calls))
+            self.assertEqual(3, len(transport.calls))
             self.assertEqual(1, len(transport.continuation_calls))
             correction_prompt = transport.continuation_calls[0][1]
             self.assertIn(
@@ -282,13 +286,13 @@ class Cat08Module05HandheldContractTest(CodexDevFixture):
                 "其余内容不变，完整重发本段。",
                 correction_prompt,
             )
-            self.assertIn(
-                '["common_constraints", "configs", "handheld_count_summary", "notes"]',
-                correction_prompt,
-            )
-            for config_id in (f"main_{index:02d}" for index in range(1, 7)):
+            self.assertIn("handheld_chunk_summary", correction_prompt)
+            self.assertIn("任一分段均不得返回 handheld_count_summary", correction_prompt)
+            for config_id in ("main_01", "main_02"):
                 self.assertIn(config_id, correction_prompt)
-            self.assertIn("不得只重发单条配置", correction_prompt)
+            for config_id in ("main_03", "main_04", "main_05", "main_06"):
+                self.assertNotIn(config_id, correction_prompt)
+            self.assertIn("完整重发本段", correction_prompt)
             self.assertIn("只返回一个完整 JSON 对象", correction_prompt)
 
     def test_detail_module05_correction_writes_safe_event_and_succeeds(self) -> None:

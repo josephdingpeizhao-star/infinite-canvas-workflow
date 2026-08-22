@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -28,6 +29,7 @@ from executor_contract import (  # noqa: E402
     ExecutionResult,
     ExecutorExecutionError,
 )
+from image_count_contract import main_handheld_chunk_quotas, pair_config_ids  # noqa: E402
 import workflow_production_service as production_service  # noqa: E402
 from test_codex_dev_executor import (  # noqa: E402
     CodexDevFixture,
@@ -73,8 +75,89 @@ def _paraphrased_final_prompt_response(mode: str) -> dict[str, object]:
     return response
 
 
+def _valid_main_chunk_responses() -> list[dict[str, object]]:
+    response = copy.deepcopy(valid_main_variable_response())
+    configs = response["configs"]
+    batches = pair_config_ids("main", len(configs))
+    quotas = main_handheld_chunk_quotas(len(configs), 2)
+    enabled_declaration = configs[0]["per_image_overrides"]["手持交互声明"]
+    enabled_reference = configs[0]["per_image_overrides"]["动态手持样式参考图调用"]
+    disabled_declaration = "本张图不启用手持场景"
+    disabled_reference = "无"
+    chunks: list[dict[str, object]] = []
+    offset = 0
+    for chunk_index, (batch, quota) in enumerate(
+        zip(batches, quotas, strict=True),
+        start=1,
+    ):
+        chunk_configs = copy.deepcopy(configs[offset : offset + len(batch)])
+        offset += len(batch)
+        for config_offset, config in enumerate(chunk_configs):
+            overrides = config["per_image_overrides"]
+            enabled = config_offset < quota
+            overrides["手持交互声明"] = (
+                enabled_declaration if enabled else disabled_declaration
+            )
+            overrides["动态手持样式参考图调用"] = (
+                enabled_reference if enabled else disabled_reference
+            )
+        enabled_ids = [
+            config["config_id"]
+            for config in chunk_configs
+            if "本张图不启用手持场景"
+            not in config["per_image_overrides"]["手持交互声明"]
+        ]
+        chunk: dict[str, object] = {
+            "chunk_index": chunk_index,
+            "chunk_count": len(batches),
+            "configs": chunk_configs,
+            "handheld_chunk_summary": {
+                "本段手持配额": quota,
+                "本段实际启用数量": len(enabled_ids),
+                "本段启用手持配置": enabled_ids,
+            },
+        }
+        if chunk_index == 1:
+            chunk["common_constraints"] = copy.deepcopy(response["common_constraints"])
+            chunk["notes"] = response["notes"]
+        chunks.append(chunk)
+    return chunks
+
+
+def _main_chunk_turns(
+    chunks: list[dict[str, object]],
+    *,
+    thread_prefix: str,
+) -> list[CodexTurnResult]:
+    return [
+        CodexTurnResult(
+            text=json.dumps(chunk, ensure_ascii=False),
+            thread_id=f"{thread_prefix}-chunk-{chunk_index}",
+        )
+        for chunk_index, chunk in enumerate(chunks, start=1)
+    ]
+
+
+def _final_prompt_chunk_response(
+    mode: str,
+    chunk_index: int,
+    *,
+    response: dict[str, object] | None = None,
+) -> dict[str, object]:
+    full = copy.deepcopy(response or valid_final_prompt_response(mode))
+    prompts = full["prompts"]
+    expected_ids = set(pair_config_ids(mode, len(prompts))[chunk_index - 1])
+    return {
+        "prompts": [
+            prompt
+            for prompt in prompts
+            if prompt["config_id"] in expected_ids
+        ]
+    }
+
+
 class _FailOnceTransport(FakeTransport):
-    def __init__(self, result: CodexTurnResult) -> None:
+    def __init__(self, result: list[CodexTurnResult]) -> None:
         super().__init__(result)
         self.failed = False
 
@@ -83,12 +166,12 @@ class _FailOnceTransport(FakeTransport):
         prompt: str,
         attachments: tuple[CodexAttachment, ...],
     ) -> CodexTurnResult:
-        self.calls.append((prompt, attachments))
-        if not self.failed:
+        chunk_match = re.search(r"本轮只返回第 (\d+)/\d+ 段", prompt)
+        if not self.failed and chunk_match and int(chunk_match.group(1)) == 1:
             self.failed = True
+            self.calls.append((prompt, attachments))
             raise RuntimeError("simulated transport failure")
-        assert self.results
-        return self.results.pop(0)
+        return super().run_turn(prompt, attachments)
 
 
 class _ProgressFinalPromptTransport:
@@ -101,14 +184,17 @@ class _ProgressFinalPromptTransport:
         "detail": "final_prompts 详情图批次任务",
     }
 
-    def __init__(self, responses: dict[str, list[CodexTurnResult]]) -> None:
-        self._responses = {mode: list(items) for mode, items in responses.items()}
-        self._thread_ids: dict[str, str] = {}
+    def __init__(
+        self,
+        responses: dict[tuple[str, int], list[CodexTurnResult]],
+    ) -> None:
+        self._responses = {key: list(items) for key, items in responses.items()}
+        self._thread_ids: dict[tuple[str, int], str] = {}
         self._lock = threading.Lock()
         self._last_return = threading.local()
-        self.calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+        self.calls: list[tuple[str, int, str, tuple[CodexAttachment, ...]]] = []
         self.continuation_calls: list[
-            tuple[str, str, str, tuple[CodexAttachment, ...]]
+            tuple[str, int, str, str, tuple[CodexAttachment, ...]]
         ] = []
 
     @staticmethod
@@ -118,10 +204,17 @@ class _ProgressFinalPromptTransport:
             raise AssertionError("final prompt mode could not be identified")
         return matches[0]
 
-    def _next_result(self, mode: str) -> CodexTurnResult:
-        results = self._responses.get(mode)
+    @staticmethod
+    def _chunk_index_from_prompt(prompt: str) -> int:
+        match = re.search(r"本轮只执行第 (\d+)/\d+ 段", prompt)
+        if match is None:
+            raise AssertionError("final prompt chunk could not be identified")
+        return int(match.group(1))
+
+    def _next_result(self, key: tuple[str, int]) -> CodexTurnResult:
+        results = self._responses.get(key)
         if not results:
-            raise AssertionError(f"unexpected {mode} final prompt transport call")
+            raise AssertionError(f"unexpected {key} final prompt transport call")
         return results.pop(0)
 
     def run_turn(
@@ -134,13 +227,15 @@ class _ProgressFinalPromptTransport:
         if turn_timeout != 1200.0:
             raise AssertionError("final initial turn must use the 1200-second timeout")
         mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
+        chunk_index = self._chunk_index_from_prompt(prompt)
+        key = (mode, chunk_index)
         with self._lock:
-            self.calls.append((mode, prompt, attachments))
-            result = self._next_result(mode)
-            expected_thread_id = self._thread_ids.setdefault(mode, result.thread_id)
+            self.calls.append((mode, chunk_index, prompt, attachments))
+            result = self._next_result(key)
+            expected_thread_id = self._thread_ids.setdefault(key, result.thread_id)
             if result.thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} initial response changed thread identity")
-        self._last_return.identity = (mode, result.thread_id, "initial")
+                raise AssertionError(f"{key} initial response changed thread identity")
+        self._last_return.identity = (mode, chunk_index, result.thread_id, "initial")
         return result
 
     def continue_turn(
@@ -154,18 +249,22 @@ class _ProgressFinalPromptTransport:
         if turn_timeout != 1200.0:
             raise AssertionError("final correction turn must use the 1200-second timeout")
         mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
+        chunk_index = self._chunk_index_from_prompt(prompt)
+        key = (mode, chunk_index)
         with self._lock:
-            expected_thread_id = self._thread_ids.get(mode)
+            expected_thread_id = self._thread_ids.get(key)
             if thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} repair used the wrong thread identity")
-            self.continuation_calls.append((mode, thread_id, prompt, attachments))
-            result = self._next_result(mode)
+                raise AssertionError(f"{key} repair used the wrong thread identity")
+            self.continuation_calls.append(
+                (mode, chunk_index, thread_id, prompt, attachments)
+            )
+            result = self._next_result(key)
             if result.thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} repair response changed thread identity")
-        self._last_return.identity = (mode, result.thread_id, "correction")
+                raise AssertionError(f"{key} repair response changed thread identity")
+        self._last_return.identity = (mode, chunk_index, result.thread_id, "correction")
         return result
 
-    def take_return_identity(self) -> tuple[str, str, str]:
+    def take_return_identity(self) -> tuple[str, int, str, str]:
         identity = getattr(self._last_return, "identity", None)
         if identity is None:
             raise AssertionError("turn progress was emitted without a transport return")
@@ -299,75 +398,87 @@ class TurnProgressExecutorTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, output_path = self.fixture.make_downstream_fixture(root)
-            invalid = valid_main_variable_response()
-            invalid["configs"][0]["per_image_overrides"]["输出画布比例"] = "3:4"  # type: ignore[index]
+            chunks = _valid_main_chunk_responses()
+            invalid_chunk = copy.deepcopy(chunks[0])
+            invalid_chunk["configs"][0]["per_image_overrides"]["输出画布比例"] = "3:4"  # type: ignore[index]
             transport = FakeTransport(
                 [
                     CodexTurnResult(
-                        text=json.dumps(invalid, ensure_ascii=False),
-                        thread_id="thread-vd01-main",
+                        text=json.dumps(invalid_chunk, ensure_ascii=False),
+                        thread_id="thread-vd01-main-chunk-1",
                     ),
-                    CodexTurnResult(
-                        text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
-                        thread_id="thread-vd01-main",
-                    ),
+                    *_main_chunk_turns(chunks, thread_prefix="thread-vd01-main"),
                 ]
             )
-            boundaries: list[int] = []
+            progress_events: list[tuple[int, str, str]] = []
+            progress_lock = threading.Lock()
             executor = CodexDevExecutor(context, transport=transport, repository_root=root)
             executor.set_content_correction_callback(lambda *_: None)
-            executor.set_turn_progress_callback(
-                lambda: boundaries.append(
-                    len(transport.calls) + len(transport.continuation_calls)
-                )
-            )
+
+            def record_progress() -> None:
+                identity = transport.take_detail_return_identity()
+                with progress_lock:
+                    progress_events.append(identity)
+
+            executor.set_turn_progress_callback(record_progress)
 
             executor.execute(ExecutionRequest(step="main_vc"))
 
-            self.assertEqual([1, 2], boundaries)
+            expected_events = (
+                (1, "thread-vd01-main-chunk-1", "initial"),
+                (1, "thread-vd01-main-chunk-1", "continuation"),
+                (2, "thread-vd01-main-chunk-2", "initial"),
+                (3, "thread-vd01-main-chunk-3", "initial"),
+            )
+            with progress_lock:
+                actual_events = tuple(progress_events)
+            self.assertCountEqual(expected_events, actual_events)
+            self.assertEqual(4, len(actual_events))
             self.assertTrue(output_path.exists())
 
-    def test_final_prompt_batches_and_corrections_report_all_four_returns(self) -> None:
+    def test_final_prompt_segments_and_corrections_report_every_return(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = (
                 self.fixture.make_final_prompt_fixture(root)
             )
-            transport = _ProgressFinalPromptTransport(
-                {
-                    "main": [
+            responses: dict[tuple[str, int], list[CodexTurnResult]] = {}
+            for mode in ("main", "detail"):
+                full = valid_final_prompt_response(mode)
+                chunk_count = len(pair_config_ids(mode, len(full["prompts"])))
+                for chunk_index in range(1, chunk_count + 1):
+                    thread_id = f"thread-vd01-final-{mode}-chunk-{chunk_index}"
+                    responses[(mode, chunk_index)] = [
                         CodexTurnResult(
                             text=json.dumps(
-                                _paraphrased_final_prompt_response("main"),
+                                _final_prompt_chunk_response(mode, chunk_index),
                                 ensure_ascii=False,
                             ),
-                            thread_id="thread-vd01-final-main",
-                        ),
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("main"), ensure_ascii=False
+                            thread_id=thread_id,
+                        )
+                    ]
+                responses[(mode, 1)] = [
+                    CodexTurnResult(
+                        text=json.dumps(
+                            _final_prompt_chunk_response(
+                                mode,
+                                1,
+                                response=_paraphrased_final_prompt_response(mode),
                             ),
-                            thread_id="thread-vd01-final-main",
+                            ensure_ascii=False,
                         ),
-                    ],
-                    "detail": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                _paraphrased_final_prompt_response("detail"),
-                                ensure_ascii=False,
-                            ),
-                            thread_id="thread-vd01-final-detail",
+                        thread_id=f"thread-vd01-final-{mode}-chunk-1",
+                    ),
+                    CodexTurnResult(
+                        text=json.dumps(
+                            _final_prompt_chunk_response(mode, 1),
+                            ensure_ascii=False,
                         ),
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("detail"), ensure_ascii=False
-                            ),
-                            thread_id="thread-vd01-final-detail",
-                        ),
-                    ],
-                }
-            )
-            progress_events: list[tuple[str, str, str]] = []
+                        thread_id=f"thread-vd01-final-{mode}-chunk-1",
+                    ),
+                ]
+            transport = _ProgressFinalPromptTransport(responses)
+            progress_events: list[tuple[str, int, str, str]] = []
             progress_lock = threading.Lock()
             raw_callback_count = 0
 
@@ -384,23 +495,31 @@ class TurnProgressExecutorTest(unittest.TestCase):
 
             executor.execute(ExecutionRequest(step="final_prompts"))
 
-            expected_events = (
-                ("main", "thread-vd01-final-main", "initial"),
-                ("main", "thread-vd01-final-main", "correction"),
-                ("detail", "thread-vd01-final-detail", "initial"),
-                ("detail", "thread-vd01-final-detail", "correction"),
+            expected_events = tuple(
+                (
+                    mode,
+                    chunk_index,
+                    f"thread-vd01-final-{mode}-chunk-{chunk_index}",
+                    "initial",
+                )
+                for mode, chunk_count in (("main", 3), ("detail", 4))
+                for chunk_index in range(1, chunk_count + 1)
+            ) + (
+                ("main", 1, "thread-vd01-final-main-chunk-1", "correction"),
+                ("detail", 1, "thread-vd01-final-detail-chunk-1", "correction"),
             )
             with progress_lock:
                 actual_events = tuple(progress_events)
                 actual_raw_callback_count = raw_callback_count
-            self.assertEqual(4, actual_raw_callback_count)
-            self.assertEqual(4, len(actual_events))
+            self.assertEqual(9, actual_raw_callback_count)
+            self.assertEqual(9, len(actual_events))
             for event in expected_events:
                 self.assertEqual(1, actual_events.count(event))
-            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
+            self.assertEqual(3, sum(call[0] == "main" for call in transport.calls))
+            self.assertEqual(4, sum(call[0] == "detail" for call in transport.calls))
             self.assertCountEqual(
-                ("main", "detail"),
-                tuple(call[0] for call in transport.continuation_calls),
+                (("main", 1), ("detail", 1)),
+                tuple(call[:2] for call in transport.continuation_calls),
             )
             self.assertTrue((final_dir / "final_prompt_index.json").exists())
 
@@ -409,9 +528,9 @@ class TurnProgressExecutorTest(unittest.TestCase):
             root = Path(tmp)
             context, output_path = self.fixture.make_downstream_fixture(root)
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
-                    thread_id="thread-vd01-callback-failure",
+                _main_chunk_turns(
+                    _valid_main_chunk_responses(),
+                    thread_prefix="thread-vd01-callback-failure",
                 )
             )
             callback_calls = 0
@@ -426,23 +545,25 @@ class TurnProgressExecutorTest(unittest.TestCase):
 
             result = executor.execute(ExecutionRequest(step="main_vc"))
 
-            self.assertEqual(1, callback_calls)
+            self.assertEqual(3, callback_calls)
             self.assertEqual("主图变量配置已生成", result.detail)
             self.assertTrue(output_path.exists())
 
-    def test_transport_exception_has_no_heartbeat_until_next_successful_return(self) -> None:
+    def test_failed_transport_call_has_no_heartbeat_but_successful_segments_do(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, output_path = self.fixture.make_downstream_fixture(root)
             transport = _FailOnceTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
-                    thread_id="thread-vd01-transport-recovery",
+                _main_chunk_turns(
+                    _valid_main_chunk_responses(),
+                    thread_prefix="thread-vd01-transport-failure",
                 )
             )
-            heartbeat_calls: list[str] = []
+            heartbeat_calls: list[tuple[int, str, str]] = []
             executor = CodexDevExecutor(context, transport=transport, repository_root=root)
-            executor.set_turn_progress_callback(lambda: heartbeat_calls.append("returned"))
+            executor.set_turn_progress_callback(
+                lambda: heartbeat_calls.append(transport.take_detail_return_identity())
+            )
 
             with self.assertRaises(ExecutorExecutionError) as caught:
                 executor.execute(ExecutionRequest(step="main_vc"))
@@ -451,12 +572,42 @@ class TurnProgressExecutorTest(unittest.TestCase):
                 "codex-dev 的 Codex 线程执行失败：RuntimeError: simulated transport failure",
                 str(caught.exception),
             )
-            self.assertEqual([], heartbeat_calls)
+            self.assertCountEqual(
+                (
+                    (2, "thread-vd01-transport-failure-chunk-2", "initial"),
+                    (3, "thread-vd01-transport-failure-chunk-3", "initial"),
+                ),
+                heartbeat_calls,
+            )
             self.assertFalse(output_path.exists())
 
-            executor.execute(ExecutionRequest(step="main_vc"))
+            successful_transport = FakeTransport(
+                _main_chunk_turns(
+                    _valid_main_chunk_responses(),
+                    thread_prefix="thread-vd01-transport-success",
+                )
+            )
+            successful_executor = CodexDevExecutor(
+                context,
+                transport=successful_transport,
+                repository_root=root,
+            )
+            successful_events: list[tuple[int, str, str]] = []
+            successful_executor.set_turn_progress_callback(
+                lambda: successful_events.append(
+                    successful_transport.take_detail_return_identity()
+                )
+            )
+            successful_executor.execute(ExecutionRequest(step="main_vc"))
 
-            self.assertEqual(["returned"], heartbeat_calls)
+            self.assertCountEqual(
+                (
+                    (1, "thread-vd01-transport-success-chunk-1", "initial"),
+                    (2, "thread-vd01-transport-success-chunk-2", "initial"),
+                    (3, "thread-vd01-transport-success-chunk-3", "initial"),
+                ),
+                successful_events,
+            )
             self.assertTrue(output_path.exists())
 
     def test_bound_and_unbound_executor_paths_match_bytes_results_and_failures(self) -> None:
@@ -467,9 +618,9 @@ class TurnProgressExecutorTest(unittest.TestCase):
             bound: bool,
         ) -> tuple[bytes, tuple[object, ...], int]:
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
-                    thread_id="thread-vd01-equivalence",
+                _main_chunk_turns(
+                    _valid_main_chunk_responses(),
+                    thread_prefix="thread-vd01-equivalence",
                 )
             )
             callbacks: list[None] = []
@@ -504,7 +655,7 @@ class TurnProgressExecutorTest(unittest.TestCase):
 
         self.assertEqual(unbound_bytes, bound_bytes)
         self.assertEqual(unbound_result, bound_result)
-        self.assertEqual((0, 1), (unbound_callbacks, bound_callbacks))
+        self.assertEqual((0, 3), (unbound_callbacks, bound_callbacks))
 
         def run_failure(bound: bool) -> tuple[str, str, int]:
             with tempfile.TemporaryDirectory() as tmp:

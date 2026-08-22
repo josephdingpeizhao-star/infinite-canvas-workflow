@@ -12,6 +12,7 @@ import math
 import os
 import re
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -33,25 +34,34 @@ from codex_dev_downstream import (
     DetailChunkEnvelopeCorrection,
     DetailChunkTransportCorruption,
     FinalPromptLiteralViolation,
+    MainChunkEnvelopeCorrection,
+    MainChunkTransportCorruption,
     UserConfirmedRequirements,
     artifact_file_under_root,
     assemble_detail_variable_config_chunks,
+    assemble_final_prompt_chunks,
+    assemble_main_variable_config_chunks,
     build_detail_variable_config_chunk_prompt,
+    build_main_variable_config_chunk_prompt,
     detail_chunk_business_fingerprint,
     detail_variable_config_chunk_count,
     build_final_prompt_batch_prompt,
+    build_final_prompt_chunk_prompt,
     build_final_prompt_repair_prompt,
     build_final_prompt_bundle,
     build_set_final_prompt_batch_prompt,
     build_set_final_prompt_bundle,
     build_set_final_prompt_repair_prompt,
     build_set_variable_config_prompt,
-    build_variable_config_correction_prompt,
     build_variable_config_prompt,
     expand_set_final_prompt_upstream_keys,
     final_prompt_bundle_targets,
+    final_prompt_chunk_count,
     load_typed_artifact,
+    main_chunk_business_fingerprint,
+    main_variable_config_chunk_count,
     parse_final_prompt_batch_response,
+    parse_main_variable_config_chunk,
     parse_set_final_prompt_batch_response,
     parse_detail_variable_config_chunk,
     parse_set_variable_config_response,
@@ -73,6 +83,7 @@ from codex_dev_qc import (
     write_qc_report_exclusive,
 )
 from executor_contract import ExecutionRequest, ExecutionResult, ExecutorContext, ExecutorExecutionError
+from image_count_contract import pair_config_ids
 import runtime_roots
 
 
@@ -398,6 +409,48 @@ class _DetailChunkChainResult:
     thread_id: str
     recovery_attempts: int
     structure_correction_attempts: int
+
+
+@dataclass(frozen=True)
+class _MainChunkChainResult:
+    chunk: Mapping[str, Any]
+    thread_id: str
+    recovery_attempts: int
+    structure_correction_attempts: int
+
+
+def _run_parallel_chains(
+    task_submissions: tuple[tuple[Any, Callable[[], Any]], ...],
+    *,
+    failure_priority: tuple[Any, ...],
+) -> dict[Any, Any]:
+    """Run every chain, drain every future, then raise by explicit priority."""
+
+    task_keys = tuple(key for key, _ in task_submissions)
+    if not task_keys or len(set(task_keys)) != len(task_keys):
+        raise ExecutorExecutionError("codex-dev 收到无效的并行分段任务")
+    if len(failure_priority) != len(task_keys) or set(failure_priority) != set(task_keys):
+        raise ExecutorExecutionError("codex-dev 收到无效的并行分段失败顺序")
+
+    results: dict[Any, Any] = {}
+    failures: dict[Any, Exception] = {}
+    with ThreadPoolExecutor(
+        max_workers=min(len(task_submissions), DETAIL_CHUNK_MAX_CONCURRENCY)
+    ) as executor:
+        futures = {
+            key: executor.submit(run_chain)
+            for key, run_chain in task_submissions
+        }
+        for key in task_keys:
+            try:
+                results[key] = futures[key].result()
+            except Exception as exc:
+                failures[key] = exc
+
+    for key in failure_priority:
+        if key in failures:
+            raise failures[key]
+    return results
 
 
 class CodexTransport(Protocol):
@@ -905,6 +958,7 @@ class CodexDevExecutor:
         self._content_correction_callback: (
             Callable[[int, str, str], None] | None
         ) = None
+        self._content_correction_lock = threading.Lock()
 
     def set_turn_progress_callback(
         self,
@@ -947,9 +1001,10 @@ class CodexDevExecutor:
         chunk_index: int,
         error: ContentPredicateViolation,
     ) -> None:
-        callback = self._content_correction_callback
-        if callback is not None:
-            callback(chunk_index, error.code, error.details.config_id)
+        with self._content_correction_lock:
+            callback = self._content_correction_callback
+            if callback is not None:
+                callback(chunk_index, error.code, error.details.config_id)
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
         safe_message = ""
@@ -1276,7 +1331,7 @@ class CodexDevExecutor:
                 "套装角度与编排入库表",
             )
             set_rules = self._load_set_variable_config_rules()
-            prompt = build_set_variable_config_prompt(
+            base_prompt = build_set_variable_config_prompt(
                 mode="main",
                 product_id=product_id,
                 repository_root=self.repository_root,
@@ -1298,6 +1353,12 @@ class CodexDevExecutor:
                 },
                 "style_master": style_path,
                 "set_angle_layout_inventory": set_layout_path,
+            }
+            chunk_angle_inventory = set_layout_inventory
+            chunk_set_kwargs: dict[str, Any] = {
+                "set_identity": set_identity,
+                "component_identities": component_identities,
+                "set_angle_layout_inventory": set_layout_inventory,
             }
 
             def parse_response(response_text: str) -> dict[str, Any]:
@@ -1327,7 +1388,7 @@ class CodexDevExecutor:
                 "angle_inventory",
                 "角度槽位入库表",
             )
-            prompt = build_variable_config_prompt(
+            base_prompt = build_variable_config_prompt(
                 mode="main",
                 product_id=product_id,
                 repository_root=self.repository_root,
@@ -1341,6 +1402,8 @@ class CodexDevExecutor:
                 "style_master": style_path,
                 "angle_inventory": angle_path,
             }
+            chunk_angle_inventory = angle_inventory
+            chunk_set_kwargs = {}
 
             def parse_response(response_text: str) -> dict[str, Any]:
                 return parse_variable_config_response(
@@ -1352,36 +1415,161 @@ class CodexDevExecutor:
                     upstream_paths=upstream_paths,
                 )
 
-        turn = self._run_transport(prompt, ())
-        self._emit_turn_progress()
-        try:
-            artifact = parse_response(turn.text)
-        except ContentPredicateViolation as error:
-            if self._content_correction_callback is None:
-                raise
-            self._emit_content_correction(1, error)
-            corrected_turn = self._continue_transport(
-                turn.thread_id,
-                build_variable_config_correction_prompt(
-                    error,
-                    mode="main",
-                    requirements=requirements,
-                ),
-                (),
+        chunk_count = main_variable_config_chunk_count(requirements)
+
+        def run_chunk_chain(chunk_index: int) -> _MainChunkChainResult:
+            recovery_attempts = 0
+            structure_correction_attempts = 0
+            content_correction_attempted = False
+            expected_business_fingerprint = ""
+            prompt = build_main_variable_config_chunk_prompt(
+                base_prompt,
+                chunk_index,
+                requirements=requirements,
+                is_set=is_set,
             )
+            turn = self._run_transport(prompt, ())
             self._emit_turn_progress()
-            if corrected_turn.thread_id != turn.thread_id:
-                raise ExecutorExecutionError(
-                    "codex-dev 收到无效的主图变量配置线程返回"
+            thread_id = turn.thread_id
+
+            while True:
+                try:
+                    chunk = parse_main_variable_config_chunk(
+                        turn.text,
+                        chunk_index,
+                        requirements=requirements,
+                        angle_inventory=chunk_angle_inventory,
+                        **chunk_set_kwargs,
+                    )
+                    if (
+                        expected_business_fingerprint
+                        and main_chunk_business_fingerprint(chunk, chunk_index)
+                        != expected_business_fingerprint
+                    ):
+                        raise ExecutorExecutionError(
+                            "codex-dev 主图变量配置格式纠正改变了业务内容"
+                        )
+                    break
+                except MainChunkTransportCorruption:
+                    if recovery_attempts >= 2:
+                        raise ExecutorExecutionError(
+                            "codex-dev 主图变量配置传输恢复已达到上限"
+                        ) from None
+                    recovery_attempts += 1
+                    repair_prompt = build_main_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        requirements=requirements,
+                        is_set=is_set,
+                        repair=True,
+                    )
+                    turn = self._continue_transport(thread_id, repair_prompt, ())
+                    self._emit_turn_progress()
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的主图变量配置线程返回"
+                        )
+                except MainChunkEnvelopeCorrection as error:
+                    if structure_correction_attempts >= 1:
+                        raise ExecutorExecutionError(
+                            "codex-dev 主图变量配置格式纠正已达到上限"
+                        ) from None
+                    structure_correction_attempts += 1
+                    expected_business_fingerprint = error.business_fingerprint
+                    correction_prompt = build_main_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        requirements=requirements,
+                        is_set=is_set,
+                        structure_correction=True,
+                    )
+                    turn = self._continue_transport(
+                        thread_id,
+                        correction_prompt,
+                        (),
+                    )
+                    self._emit_turn_progress()
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的主图变量配置线程返回"
+                        )
+                except ContentPredicateViolation as error:
+                    if self._content_correction_callback is None:
+                        raise
+                    if content_correction_attempted:
+                        raise
+                    content_correction_attempted = True
+                    expected_business_fingerprint = ""
+                    self._emit_content_correction(chunk_index, error)
+                    correction_prompt = build_main_variable_config_chunk_prompt(
+                        base_prompt,
+                        chunk_index,
+                        requirements=requirements,
+                        is_set=is_set,
+                        correction=error,
+                    )
+                    turn = self._continue_transport(
+                        thread_id,
+                        correction_prompt,
+                        (),
+                    )
+                    self._emit_turn_progress()
+                    if turn.thread_id != thread_id:
+                        raise ExecutorExecutionError(
+                            "codex-dev 收到无效的主图变量配置线程返回"
+                        )
+            return _MainChunkChainResult(
+                chunk=chunk,
+                thread_id=thread_id,
+                recovery_attempts=recovery_attempts,
+                structure_correction_attempts=structure_correction_attempts,
             )
-            turn = corrected_turn
-            artifact = parse_response(turn.text)
+
+        task_keys = tuple(range(1, chunk_count + 1))
+        chunk_results = _run_parallel_chains(
+            tuple(
+                (
+                    chunk_index,
+                    lambda chunk_index=chunk_index: run_chunk_chain(chunk_index),
+                )
+                for chunk_index in task_keys
+            ),
+            failure_priority=task_keys,
+        )
+        ordered_results = tuple(chunk_results[chunk_index] for chunk_index in task_keys)
+        chunks = [result.chunk for result in ordered_results]
+        recovery_attempts = sum(
+            result.recovery_attempts for result in ordered_results
+        )
+        structure_correction_attempts = sum(
+            result.structure_correction_attempts for result in ordered_results
+        )
+        thread_ids = tuple(result.thread_id for result in ordered_results)
+
+        assembled_response = assemble_main_variable_config_chunks(
+            chunks,
+            requirements=requirements,
+            is_set=is_set,
+        )
+        artifact = parse_response(json.dumps(assembled_response, ensure_ascii=False))
         write_json_exclusive(output_path, artifact, "主图变量配置")
+        detail = "主图变量配置已生成"
+        recovery_notes: list[str] = []
+        if recovery_attempts:
+            recovery_notes.append(f"受控恢复 {recovery_attempts} 次")
+        if structure_correction_attempts:
+            recovery_notes.append(f"格式纠正 {structure_correction_attempts} 次")
+        if recovery_notes:
+            detail += f"（{'，'.join(recovery_notes)}）"
         return ExecutionResult(
-            detail="主图变量配置已生成",
+            detail=detail,
             outputs=(output_path,),
             provider=self.name,
-            metadata={"thread_id": turn.thread_id},
+            metadata={
+                "thread_ids": thread_ids,
+                "recovery_attempts": recovery_attempts,
+                "structure_correction_attempts": structure_correction_attempts,
+            },
         )
 
     def _execute_detail_variable_config(self, product_id: str) -> ExecutionResult:
@@ -1602,27 +1790,20 @@ class CodexDevExecutor:
                 structure_correction_attempts=structure_correction_attempts,
             )
 
-        chunk_results: dict[int, _DetailChunkChainResult] = {}
-        failures: dict[int, Exception] = {}
-        with ThreadPoolExecutor(
-            max_workers=min(chunk_count, DETAIL_CHUNK_MAX_CONCURRENCY)
-        ) as executor:
-            futures = {
-                chunk_index: executor.submit(run_chunk_chain, chunk_index)
-                for chunk_index in range(1, chunk_count + 1)
-            }
-            for chunk_index in range(1, chunk_count + 1):
-                try:
-                    chunk_results[chunk_index] = futures[chunk_index].result()
-                except Exception as exc:
-                    failures[chunk_index] = exc
-
-        if failures:
-            raise failures[min(failures)]
-
+        task_keys = tuple(range(1, chunk_count + 1))
+        chunk_results = _run_parallel_chains(
+            tuple(
+                (
+                    chunk_index,
+                    lambda chunk_index=chunk_index: run_chunk_chain(chunk_index),
+                )
+                for chunk_index in task_keys
+            ),
+            failure_priority=task_keys,
+        )
         ordered_results = tuple(
             chunk_results[chunk_index]
-            for chunk_index in range(1, chunk_count + 1)
+            for chunk_index in task_keys
         )
         chunks = [result.chunk for result in ordered_results]
         recovery_attempts = sum(
@@ -1738,17 +1919,21 @@ class CodexDevExecutor:
                 continue
             return batch, turn, correction_attempts
 
-    def _run_final_prompt_pair(
+    def _run_final_prompt_chunks(
         self,
         *,
-        main_prompt: str,
-        main_parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
-        detail_prompt: str,
-        detail_parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
-    ) -> tuple[_FinalPromptChainResult, _FinalPromptChainResult]:
+        main_prompts: tuple[str, ...],
+        main_parse_turn: Callable[[int, CodexTurnResult], _FinalPromptChainResult],
+        detail_prompts: tuple[str, ...],
+        detail_parse_turn: Callable[[int, CodexTurnResult], _FinalPromptChainResult],
+    ) -> tuple[tuple[_FinalPromptChainResult, ...], tuple[_FinalPromptChainResult, ...]]:
+        if not main_prompts or not detail_prompts:
+            raise ExecutorExecutionError("codex-dev 收到无效的最终提示词分段任务")
+
         def run_chain(
             prompt: str,
-            parse_turn: Callable[[CodexTurnResult], _FinalPromptChainResult],
+            chunk_index: int,
+            parse_turn: Callable[[int, CodexTurnResult], _FinalPromptChainResult],
         ) -> _FinalPromptChainResult:
             turn = self._run_transport(
                 prompt,
@@ -1756,32 +1941,55 @@ class CodexDevExecutor:
                 turn_timeout=FINAL_PROMPT_TURN_TIMEOUT_SECONDS,
             )
             self._emit_turn_progress()
-            return parse_turn(turn)
+            return parse_turn(chunk_index, turn)
 
-        results: dict[str, _FinalPromptChainResult] = {}
-        failures: dict[str, Exception] = {}
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = {
-                "main": executor.submit(
-                    run_chain,
-                    main_prompt,
-                    main_parse_turn,
-                ),
-                "detail": executor.submit(
-                    run_chain,
-                    detail_prompt,
-                    detail_parse_turn,
-                ),
-            }
-            for mode in ("main", "detail"):
-                try:
-                    results[mode] = futures[mode].result()
-                except Exception as exc:
-                    failures[mode] = exc
+        # Interleave submissions so both chains can make progress even when one
+        # mode has many segments. Failure priority is deliberately separate:
+        # every main segment precedes every detail segment after all futures drain.
+        task_submissions: list[tuple[tuple[str, int], Callable[[], Any]]] = []
+        for offset in range(max(len(main_prompts), len(detail_prompts))):
+            if offset < len(main_prompts):
+                chunk_index = offset + 1
+                prompt = main_prompts[offset]
+                task_submissions.append(
+                    (
+                        ("main", chunk_index),
+                        lambda prompt=prompt, chunk_index=chunk_index: run_chain(
+                            prompt,
+                            chunk_index,
+                            main_parse_turn,
+                        ),
+                    )
+                )
+            if offset < len(detail_prompts):
+                chunk_index = offset + 1
+                prompt = detail_prompts[offset]
+                task_submissions.append(
+                    (
+                        ("detail", chunk_index),
+                        lambda prompt=prompt, chunk_index=chunk_index: run_chain(
+                            prompt,
+                            chunk_index,
+                            detail_parse_turn,
+                        ),
+                    )
+                )
 
-        if failures:
-            raise failures["main"] if "main" in failures else failures["detail"]
-        return results["main"], results["detail"]
+        failure_priority = tuple(
+            [("main", index) for index in range(1, len(main_prompts) + 1)]
+            + [("detail", index) for index in range(1, len(detail_prompts) + 1)]
+        )
+        results = _run_parallel_chains(
+            tuple(task_submissions),
+            failure_priority=failure_priority,
+        )
+        return (
+            tuple(results[("main", index)] for index in range(1, len(main_prompts) + 1)),
+            tuple(
+                results[("detail", index)]
+                for index in range(1, len(detail_prompts) + 1)
+            ),
+        )
 
     def _execute_final_prompts(self, product_id: str) -> ExecutionResult:
         if self.context.manifest.get("batch_type", "single") == "set":
@@ -1845,7 +2053,7 @@ class CodexDevExecutor:
             product_id=product_id,
         )
 
-        main_prompt = build_final_prompt_batch_prompt(
+        main_base_prompt = build_final_prompt_batch_prompt(
             mode="main",
             product_id=product_id,
             repository_root=self.repository_root,
@@ -1855,7 +2063,7 @@ class CodexDevExecutor:
             variable_config=main_variable_config,
             requirements=requirements,
         )
-        detail_prompt = build_final_prompt_batch_prompt(
+        detail_base_prompt = build_final_prompt_batch_prompt(
             mode="detail",
             product_id=product_id,
             repository_root=self.repository_root,
@@ -1867,11 +2075,18 @@ class CodexDevExecutor:
         )
 
         def parse_single_turn(
+            chunk_index: int,
             turn: CodexTurnResult,
             *,
             mode: str,
             variable_config: Mapping[str, Any],
         ) -> _FinalPromptChainResult:
+            expected_config_ids = pair_config_ids(
+                mode,
+                requirements.main_image_count
+                if mode == "main"
+                else requirements.detail_image_count,
+            )[chunk_index - 1]
             batch, corrected_turn, correction_attempts = (
                 self._parse_final_prompt_with_bounded_correction(
                     turn,
@@ -1882,6 +2097,25 @@ class CodexDevExecutor:
                     variable_config=variable_config,
                     style_master_text=style_master_text,
                     correction_attempts=0,
+                    parse_response=lambda response_text: parse_final_prompt_batch_response(
+                        response_text,
+                        mode=mode,
+                        product_id=product_id,
+                        requirements=requirements,
+                        angle_inventory=angle_inventory,
+                        variable_config=variable_config,
+                        style_master_text=style_master_text,
+                        expected_config_ids=expected_config_ids,
+                    ),
+                    repair_prompt_builder=lambda: build_final_prompt_chunk_prompt(
+                        build_final_prompt_repair_prompt(
+                            mode=mode,
+                            requirements=requirements,
+                        ),
+                        chunk_index,
+                        mode=mode,
+                        requirements=requirements,
+                    ),
                 )
             )
             return _FinalPromptChainResult(
@@ -1890,30 +2124,85 @@ class CodexDevExecutor:
                 correction_attempts=correction_attempts,
             )
 
-        main_result, detail_result = self._run_final_prompt_pair(
-            main_prompt=main_prompt,
-            main_parse_turn=lambda turn: parse_single_turn(
+        main_prompts = tuple(
+            build_final_prompt_chunk_prompt(
+                main_base_prompt,
+                chunk_index,
+                mode="main",
+                requirements=requirements,
+            )
+            for chunk_index in range(
+                1,
+                final_prompt_chunk_count("main", requirements) + 1,
+            )
+        )
+        detail_prompts = tuple(
+            build_final_prompt_chunk_prompt(
+                detail_base_prompt,
+                chunk_index,
+                mode="detail",
+                requirements=requirements,
+            )
+            for chunk_index in range(
+                1,
+                final_prompt_chunk_count("detail", requirements) + 1,
+            )
+        )
+        main_results, detail_results = self._run_final_prompt_chunks(
+            main_prompts=main_prompts,
+            main_parse_turn=lambda chunk_index, turn: parse_single_turn(
+                chunk_index,
                 turn,
                 mode="main",
                 variable_config=main_variable_config,
             ),
-            detail_prompt=detail_prompt,
-            detail_parse_turn=lambda turn: parse_single_turn(
+            detail_prompts=detail_prompts,
+            detail_parse_turn=lambda chunk_index, turn: parse_single_turn(
+                chunk_index,
                 turn,
                 mode="detail",
                 variable_config=detail_variable_config,
             ),
         )
-        correction_attempts = (
-            main_result.correction_attempts + detail_result.correction_attempts
+        main_assembled_response = assemble_final_prompt_chunks(
+            [result.batch for result in main_results],
+            mode="main",
+            requirements=requirements,
+        )
+        main_batch = parse_final_prompt_batch_response(
+            json.dumps(main_assembled_response, ensure_ascii=False),
+            mode="main",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            variable_config=main_variable_config,
+            style_master_text=style_master_text,
+        )
+        detail_assembled_response = assemble_final_prompt_chunks(
+            [result.batch for result in detail_results],
+            mode="detail",
+            requirements=requirements,
+        )
+        detail_batch = parse_final_prompt_batch_response(
+            json.dumps(detail_assembled_response, ensure_ascii=False),
+            mode="detail",
+            product_id=product_id,
+            requirements=requirements,
+            angle_inventory=angle_inventory,
+            variable_config=detail_variable_config,
+            style_master_text=style_master_text,
+        )
+        correction_attempts = sum(
+            result.correction_attempts
+            for result in (*main_results, *detail_results)
         )
 
         bundle = build_final_prompt_bundle(
             product_id=product_id,
             output_dir=output_dir,
             prompt_batches={
-                "main": main_result.batch,
-                "detail": detail_result.batch,
+                "main": main_batch,
+                "detail": detail_batch,
             },
             variable_configs={
                 "main": (main_variable_config, main_path),
@@ -1936,8 +2225,12 @@ class CodexDevExecutor:
             outputs=(index_path,),
             provider=self.name,
             metadata={
-                "main_thread_id": main_result.turn.thread_id,
-                "detail_thread_id": detail_result.turn.thread_id,
+                "main_thread_ids": tuple(
+                    result.turn.thread_id for result in main_results
+                ),
+                "detail_thread_ids": tuple(
+                    result.turn.thread_id for result in detail_results
+                ),
                 "correction_attempts": correction_attempts,
             },
         )
@@ -2007,7 +2300,7 @@ class CodexDevExecutor:
             self._load_set_final_prompt_rules()
         )
 
-        main_prompt = build_set_final_prompt_batch_prompt(
+        main_base_prompt = build_set_final_prompt_batch_prompt(
             mode="main",
             product_id=product_id,
             repository_root=self.repository_root,
@@ -2022,7 +2315,11 @@ class CodexDevExecutor:
             set_layout_rules=set_layout_rules,
         )
 
-        def parse_main_response(response_text: str) -> dict[str, dict[str, str]]:
+        def parse_main_response(
+            response_text: str,
+            *,
+            expected_config_ids: tuple[str, ...] | None = None,
+        ) -> dict[str, dict[str, str]]:
             return parse_set_final_prompt_batch_response(
                 response_text,
                 mode="main",
@@ -2033,9 +2330,10 @@ class CodexDevExecutor:
                 set_angle_layout_inventory=set_layout_inventory,
                 variable_config=main_variable_config,
                 style_master_text=style_master_text,
+                expected_config_ids=expected_config_ids,
             )
 
-        detail_prompt = build_set_final_prompt_batch_prompt(
+        detail_base_prompt = build_set_final_prompt_batch_prompt(
             mode="detail",
             product_id=product_id,
             repository_root=self.repository_root,
@@ -2050,7 +2348,11 @@ class CodexDevExecutor:
             set_layout_rules=set_layout_rules,
         )
 
-        def parse_detail_response(response_text: str) -> dict[str, dict[str, str]]:
+        def parse_detail_response(
+            response_text: str,
+            *,
+            expected_config_ids: tuple[str, ...] | None = None,
+        ) -> dict[str, dict[str, str]]:
             return parse_set_final_prompt_batch_response(
                 response_text,
                 mode="detail",
@@ -2061,15 +2363,23 @@ class CodexDevExecutor:
                 set_angle_layout_inventory=set_layout_inventory,
                 variable_config=detail_variable_config,
                 style_master_text=style_master_text,
+                expected_config_ids=expected_config_ids,
             )
 
         def parse_set_turn(
+            chunk_index: int,
             turn: CodexTurnResult,
             *,
             mode: str,
             variable_config: Mapping[str, Any],
-            parse_response: Callable[[str], dict[str, dict[str, str]]],
+            parse_response: Callable[..., dict[str, dict[str, str]]],
         ) -> _FinalPromptChainResult:
+            expected_config_ids = pair_config_ids(
+                mode,
+                requirements.main_image_count
+                if mode == "main"
+                else requirements.detail_image_count,
+            )[chunk_index - 1]
             batch, corrected_turn, correction_attempts = (
                 self._parse_final_prompt_with_bounded_correction(
                     turn,
@@ -2080,9 +2390,15 @@ class CodexDevExecutor:
                     variable_config=variable_config,
                     style_master_text=style_master_text,
                     correction_attempts=0,
-                    parse_response=parse_response,
-                    repair_prompt_builder=lambda: build_set_final_prompt_repair_prompt(
-                        mode=mode
+                    parse_response=lambda response_text: parse_response(
+                        response_text,
+                        expected_config_ids=expected_config_ids,
+                    ),
+                    repair_prompt_builder=lambda: build_final_prompt_chunk_prompt(
+                        build_set_final_prompt_repair_prompt(mode=mode),
+                        chunk_index,
+                        mode=mode,
+                        requirements=requirements,
                     ),
                 )
             )
@@ -2092,24 +2408,67 @@ class CodexDevExecutor:
                 correction_attempts=correction_attempts,
             )
 
-        main_result, detail_result = self._run_final_prompt_pair(
-            main_prompt=main_prompt,
-            main_parse_turn=lambda turn: parse_set_turn(
+        main_prompts = tuple(
+            build_final_prompt_chunk_prompt(
+                main_base_prompt,
+                chunk_index,
+                mode="main",
+                requirements=requirements,
+            )
+            for chunk_index in range(
+                1,
+                final_prompt_chunk_count("main", requirements) + 1,
+            )
+        )
+        detail_prompts = tuple(
+            build_final_prompt_chunk_prompt(
+                detail_base_prompt,
+                chunk_index,
+                mode="detail",
+                requirements=requirements,
+            )
+            for chunk_index in range(
+                1,
+                final_prompt_chunk_count("detail", requirements) + 1,
+            )
+        )
+        main_results, detail_results = self._run_final_prompt_chunks(
+            main_prompts=main_prompts,
+            main_parse_turn=lambda chunk_index, turn: parse_set_turn(
+                chunk_index,
                 turn,
                 mode="main",
                 variable_config=main_variable_config,
                 parse_response=parse_main_response,
             ),
-            detail_prompt=detail_prompt,
-            detail_parse_turn=lambda turn: parse_set_turn(
+            detail_prompts=detail_prompts,
+            detail_parse_turn=lambda chunk_index, turn: parse_set_turn(
+                chunk_index,
                 turn,
                 mode="detail",
                 variable_config=detail_variable_config,
                 parse_response=parse_detail_response,
             ),
         )
-        correction_attempts = (
-            main_result.correction_attempts + detail_result.correction_attempts
+        main_assembled_response = assemble_final_prompt_chunks(
+            [result.batch for result in main_results],
+            mode="main",
+            requirements=requirements,
+        )
+        main_batch = parse_main_response(
+            json.dumps(main_assembled_response, ensure_ascii=False)
+        )
+        detail_assembled_response = assemble_final_prompt_chunks(
+            [result.batch for result in detail_results],
+            mode="detail",
+            requirements=requirements,
+        )
+        detail_batch = parse_detail_response(
+            json.dumps(detail_assembled_response, ensure_ascii=False)
+        )
+        correction_attempts = sum(
+            result.correction_attempts
+            for result in (*main_results, *detail_results)
         )
 
         try:
@@ -2137,8 +2496,8 @@ class CodexDevExecutor:
             product_id=product_id,
             output_dir=output_dir,
             prompt_batches={
-                "main": main_result.batch,
-                "detail": detail_result.batch,
+                "main": main_batch,
+                "detail": detail_batch,
             },
             variable_configs={
                 "main": (main_variable_config, main_path),
@@ -2157,8 +2516,12 @@ class CodexDevExecutor:
             outputs=(index_path,),
             provider=self.name,
             metadata={
-                "main_thread_id": main_result.turn.thread_id,
-                "detail_thread_id": detail_result.turn.thread_id,
+                "main_thread_ids": tuple(
+                    result.turn.thread_id for result in main_results
+                ),
+                "detail_thread_ids": tuple(
+                    result.turn.thread_id for result in detail_results
+                ),
                 "correction_attempts": correction_attempts,
             },
         )

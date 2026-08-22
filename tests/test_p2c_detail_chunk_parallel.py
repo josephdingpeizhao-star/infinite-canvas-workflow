@@ -1039,11 +1039,19 @@ class P2cRiderTimeoutTests(unittest.TestCase):
             repository_root=ROOT,
         )
 
-        main_result, detail_result = executor._run_final_prompt_pair(
-            main_prompt="main-final",
-            main_parse_turn=lambda turn: turn,
-            detail_prompt="detail-final",
-            detail_parse_turn=lambda turn: turn,
+        main_results, detail_results = executor._run_final_prompt_chunks(
+            main_prompts=("main-final-1", "main-final-2"),
+            main_parse_turn=lambda _index, turn: executor_module._FinalPromptChainResult(
+                batch={},
+                turn=turn,
+                correction_attempts=0,
+            ),
+            detail_prompts=("detail-final-1",),
+            detail_parse_turn=lambda _index, turn: executor_module._FinalPromptChainResult(
+                batch={},
+                turn=turn,
+                correction_attempts=0,
+            ),
         )
         other_result = executor._run_transport("main-vc-other", ())
         parse_attempts = 0
@@ -1076,16 +1084,26 @@ class P2cRiderTimeoutTests(unittest.TestCase):
         final_run_timeouts = {
             prompt: timeout
             for prompt, timeout in transport.run_calls
-            if prompt in {"main-final", "detail-final"}
+            if prompt in {"main-final-1", "main-final-2", "detail-final-1"}
         }
         self.assertEqual(
-            {"main-final": 1200.0, "detail-final": 1200.0},
+            {
+                "main-final-1": 1200.0,
+                "main-final-2": 1200.0,
+                "detail-final-1": 1200.0,
+            },
             final_run_timeouts,
         )
         self.assertIn(("main-vc-other", 600.0), transport.run_calls)
         self.assertEqual([("thread-correction", 1200.0)], transport.continue_calls)
-        self.assertEqual("thread-main-final", main_result.thread_id)
-        self.assertEqual("thread-detail-final", detail_result.thread_id)
+        self.assertEqual(
+            ("thread-main-final-1", "thread-main-final-2"),
+            tuple(result.turn.thread_id for result in main_results),
+        )
+        self.assertEqual(
+            ("thread-detail-final-1",),
+            tuple(result.turn.thread_id for result in detail_results),
+        )
         self.assertEqual("thread-main-vc-other", other_result.thread_id)
         self.assertEqual("thread-correction", corrected_turn.thread_id)
         self.assertEqual(1, correction_attempts)

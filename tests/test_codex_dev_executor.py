@@ -248,12 +248,12 @@ def valid_main_variable_response() -> dict[str, object]:
             "手持交互声明": (
                 "本张图启用手持场景。手持子场景类型：静态握持。"
                 "单手自然握住把手，不离桌，不倾倒"
-                if index in {1, 2}
+                if index in {1, 3}
                 else "本张图不启用手持场景"
             ),
             "动态手持样式参考图调用": (
                 "无，仅动态拿起场景可调用"
-                if index in {1, 2}
+                if index in {1, 3}
                 else "无"
             ),
             "背景与光线": "左前方柔和自然光，保留真实接触阴影",
@@ -273,7 +273,7 @@ def valid_main_variable_response() -> dict[str, object]:
             "用户要求主图手持数量": 2,
             "实际启用手持数量": 2,
             "未启用手持数量": 4,
-            "启用手持配置": ["main_01", "main_02"],
+            "启用手持配置": ["main_01", "main_03"],
             "是否完全满足用户数量": "是",
         },
         "notes": "不生成图片、最终提示词或质检产物",
@@ -394,10 +394,42 @@ def valid_detail_chunk_responses(
     return chunks
 
 
-def detail_chunk_turns(
+def valid_main_chunk_responses(
+    response: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    value = copy.deepcopy(response or valid_main_variable_response())
+    configs = value["configs"]
+    chunks: list[dict[str, object]] = []
+    for chunk_index, start in enumerate(range(0, 6, 2), start=1):
+        chunk_configs = copy.deepcopy(configs[start : start + 2])
+        enabled_ids = [
+            str(config["config_id"])
+            for config in chunk_configs
+            if "本张图不启用手持场景"
+            not in config["per_image_overrides"]["手持交互声明"]
+        ]
+        chunk: dict[str, object] = {
+            "chunk_index": chunk_index,
+            "chunk_count": 3,
+            "configs": chunk_configs,
+            "handheld_chunk_summary": {
+                "本段手持配额": 1 if chunk_index <= 2 else 0,
+                "本段实际启用数量": len(enabled_ids),
+                "本段启用手持配置": enabled_ids,
+            },
+        }
+        if chunk_index == 1:
+            chunk["common_constraints"] = copy.deepcopy(value["common_constraints"])
+            chunk["notes"] = value["notes"]
+        chunks.append(chunk)
+    return chunks
+
+
+def variable_config_chunk_turns(
     chunks: list[dict[str, object]],
     *,
-    thread_id: str = "thread-detail-vc",
+    mode: str,
+    thread_id: str,
 ) -> list[CodexTurnResult]:
     turns: list[CodexTurnResult] = []
     for chunk in chunks:
@@ -409,7 +441,7 @@ def detail_chunk_turns(
             and isinstance(configs[0], dict)
             else ""
         )
-        match = re.fullmatch(r"detail_(\d{2})", first_config_id)
+        match = re.fullmatch(rf"{mode}_(\d{{2}})", first_config_id)
         chunk_index = (
             (int(match.group(1)) + 1) // 2
             if match is not None
@@ -422,6 +454,22 @@ def detail_chunk_turns(
             )
         )
     return turns
+
+
+def main_chunk_turns(
+    chunks: list[dict[str, object]],
+    *,
+    thread_id: str = "thread-main-vc",
+) -> list[CodexTurnResult]:
+    return variable_config_chunk_turns(chunks, mode="main", thread_id=thread_id)
+
+
+def detail_chunk_turns(
+    chunks: list[dict[str, object]],
+    *,
+    thread_id: str = "thread-detail-vc",
+) -> list[CodexTurnResult]:
+    return variable_config_chunk_turns(chunks, mode="detail", thread_id=thread_id)
 
 
 def valid_final_prompt_response(mode: str) -> dict[str, object]:
@@ -453,6 +501,38 @@ def valid_final_prompt_response(mode: str) -> dict[str, object]:
             }
         )
     return {"prompts": prompts}
+
+
+def valid_final_prompt_chunk_responses(
+    mode: str,
+    response: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
+    value = copy.deepcopy(response or valid_final_prompt_response(mode))
+    prompts = value["prompts"]
+    return [
+        {"prompts": copy.deepcopy(prompts[start : start + 2])}
+        for start in range(0, len(prompts), 2)
+    ]
+
+
+def final_prompt_chunk_results(
+    mode: str,
+    response: dict[str, object] | None = None,
+    *,
+    thread_id: str,
+) -> dict[int, list[object]]:
+    return {
+        chunk_index: [
+            CodexTurnResult(
+                text=json.dumps(chunk, ensure_ascii=False),
+                thread_id=f"{thread_id}-chunk-{chunk_index}",
+            )
+        ]
+        for chunk_index, chunk in enumerate(
+            valid_final_prompt_chunk_responses(mode, response),
+            start=1,
+        )
+    }
 
 
 def handheld_count(artifact: dict[str, object]) -> int:
@@ -489,22 +569,34 @@ class FakeTransport:
     ):
         results = list(result) if isinstance(result, (list, tuple)) else ([result] if result else [])
         self.results: list[CodexTurnResult] = []
-        self._detail_results: dict[int, list[CodexTurnResult]] = {}
+        self._chunk_results: dict[tuple[str | None, int], list[CodexTurnResult]] = {}
         for turn in results:
             chunk_match = re.search(r"-chunk-(\d+)$", turn.thread_id)
             if chunk_match is None:
                 self.results.append(turn)
                 continue
-            self._detail_results.setdefault(int(chunk_match.group(1)), []).append(turn)
+            mode_match = re.search(r'"config_id"\s*:\s*"(main|detail)_\d{2}"', turn.text)
+            mode = mode_match.group(1) if mode_match is not None else None
+            if mode is None:
+                thread_mode_match = re.search(
+                    r"(?:^|-)(main|detail)(?:-|$)",
+                    turn.thread_id,
+                )
+                mode = thread_mode_match.group(1) if thread_mode_match is not None else None
+            self._chunk_results.setdefault(
+                (mode, int(chunk_match.group(1))),
+                [],
+            ).append(turn)
         self.error = error
         self._lock = threading.Lock()
-        self._detail_threads: dict[str, int] = {}
+        self._detail_threads: dict[str, tuple[str | None, int]] = {}
         self._last_return = threading.local()
         self.calls: list[tuple[str, tuple[CodexAttachment, ...]]] = []
         self.continuation_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
 
     def run_turn(self, prompt: str, attachments: tuple[CodexAttachment, ...]) -> CodexTurnResult:
         chunk_match = re.search(r"第 (\d+)/\d+ 段", prompt)
+        mode = "main" if "main_vc" in prompt else "detail" if "detail_vc" in prompt else None
         with self._lock:
             self.calls.append((prompt, attachments))
             if self.error:
@@ -513,12 +605,14 @@ class FakeTransport:
                 assert self.results
                 return self.results.pop(0)
             chunk_index = int(chunk_match.group(1))
-            queue = self._detail_results.get(chunk_index)
+            queue = self._chunk_results.get((mode, chunk_index))
+            if not queue:
+                queue = self._chunk_results.get((None, chunk_index))
             if not queue and chunk_index == 1 and self.results:
                 queue = self.results
-            assert queue, f"missing detail chunk {chunk_index} response"
+            assert queue, f"missing {mode or 'variable-config'} chunk {chunk_index} response"
             turn = queue.pop(0)
-            self._detail_threads[turn.thread_id] = chunk_index
+            self._detail_threads[turn.thread_id] = (mode, chunk_index)
         self._last_return.identity = (chunk_index, turn.thread_id, "initial")
         return turn
 
@@ -532,12 +626,15 @@ class FakeTransport:
             self.continuation_calls.append((thread_id, prompt, attachments))
             if self.error:
                 raise self.error
-            chunk_index = self._detail_threads.get(thread_id)
-            if chunk_index is None:
+            chunk_identity = self._detail_threads.get(thread_id)
+            if chunk_identity is None:
                 assert self.results
                 return self.results.pop(0)
-            queue = self._detail_results.get(chunk_index)
-            assert queue, f"missing detail chunk {chunk_index} continuation response"
+            mode, chunk_index = chunk_identity
+            queue = self._chunk_results.get((mode, chunk_index))
+            if not queue:
+                queue = self._chunk_results.get((None, chunk_index))
+            assert queue, f"missing {mode or 'variable-config'} chunk {chunk_index} continuation response"
             turn = queue.pop(0)
         self._last_return.identity = (chunk_index, turn.thread_id, "continuation")
         return turn
@@ -571,11 +668,19 @@ def final_prompt_mode(prompt: str) -> str:
 
 
 class FinalPromptIdentityTransport:
-    """Route concurrent final-prompt chains by prompt type and thread identity."""
+    """Route concurrent final-prompt chains by mode, chunk, and thread identity."""
 
-    def __init__(self, *, main: list[object], detail: list[object]):
-        self._results = {"main": list(main), "detail": list(detail)}
-        self._thread_modes: dict[str, str] = {}
+    def __init__(
+        self,
+        *,
+        main: list[object] | dict[int, list[object]],
+        detail: list[object] | dict[int, list[object]],
+    ):
+        self._results = {
+            "main": self._normalize_results(main),
+            "detail": self._normalize_results(detail),
+        }
+        self._thread_modes: dict[str, tuple[str, int]] = {}
         self._lock = threading.Lock()
         self.calls: list[tuple[str, tuple[CodexAttachment, ...]]] = []
         self.run_calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
@@ -584,19 +689,34 @@ class FinalPromptIdentityTransport:
         self.active_calls = 0
         self.peak_active_calls = 0
 
-    def _take(self, mode: str) -> object:
+    @staticmethod
+    def _normalize_results(
+        values: list[object] | dict[int, list[object]],
+    ) -> dict[int, list[object]]:
+        if isinstance(values, dict):
+            return {chunk_index: list(queue) for chunk_index, queue in values.items()}
+        return {1: list(values)}
+
+    @staticmethod
+    def _chunk_index(prompt: str) -> int:
+        match = re.search(r"本轮只执行第 (\d+)/\d+ 段", prompt)
+        return int(match.group(1)) if match is not None else 1
+
+    def _take(self, mode: str, chunk_index: int) -> object:
         with self._lock:
-            assert self._results[mode], f"missing {mode} response"
-            return self._results[mode].pop(0)
+            queue = self._results[mode].get(chunk_index)
+            assert queue, f"missing {mode} chunk {chunk_index} response"
+            return queue.pop(0)
 
     def _resolve(
         self,
         mode: str,
+        chunk_index: int,
         *,
         expected_thread_id: str | None = None,
     ) -> CodexTurnResult:
         try:
-            value = self._take(mode)
+            value = self._take(mode, chunk_index)
             resolved = value(mode) if callable(value) else value
             if isinstance(resolved, Exception):
                 raise resolved
@@ -606,8 +726,11 @@ class FinalPromptIdentityTransport:
                     resolved.thread_id == expected_thread_id
                 ), "continuation response must preserve its requested thread identity"
             with self._lock:
-                existing_mode = self._thread_modes.setdefault(resolved.thread_id, mode)
-                assert existing_mode == mode
+                existing_identity = self._thread_modes.setdefault(
+                    resolved.thread_id,
+                    (mode, chunk_index),
+                )
+                assert existing_identity == (mode, chunk_index)
             return resolved
         finally:
             with self._lock:
@@ -622,12 +745,13 @@ class FinalPromptIdentityTransport:
     ) -> CodexTurnResult:
         assert turn_timeout == 1200.0
         mode = final_prompt_mode(prompt)
+        chunk_index = self._chunk_index(prompt)
         with self._lock:
             self.calls.append((prompt, attachments))
             self.run_calls.append((mode, prompt, attachments))
             self.active_calls += 1
             self.peak_active_calls = max(self.peak_active_calls, self.active_calls)
-        return self._resolve(mode)
+        return self._resolve(mode, chunk_index)
 
     def continue_turn(
         self,
@@ -639,19 +763,24 @@ class FinalPromptIdentityTransport:
     ) -> CodexTurnResult:
         assert turn_timeout == 1200.0
         prompt_mode = final_prompt_mode(prompt)
+        prompt_chunk_index = self._chunk_index(prompt)
         with self._lock:
-            mode = self._thread_modes.get(thread_id)
-            assert mode in {"main", "detail"}, "continuation must use a known chain thread"
+            identity = self._thread_modes.get(thread_id)
+            assert identity is not None, "continuation must use a known chain thread"
+            mode, chunk_index = identity
             assert prompt_mode == mode, "continuation prompt mode must match its thread identity"
+            assert (
+                prompt_chunk_index == chunk_index
+            ), "continuation prompt chunk must match its thread identity"
             self.continuation_calls.append((thread_id, prompt, attachments))
             self.continuation_modes.append(mode)
             self.active_calls += 1
             self.peak_active_calls = max(self.peak_active_calls, self.active_calls)
-        return self._resolve(mode, expected_thread_id=thread_id)
+        return self._resolve(mode, chunk_index, expected_thread_id=thread_id)
 
     def remaining(self, mode: str) -> int:
         with self._lock:
-            return len(self._results[mode])
+            return sum(len(queue) for queue in self._results[mode].values())
 
 
 class FakeResponse:
@@ -1201,8 +1330,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             root = Path(tmp)
             context, output_path = self.make_downstream_fixture(root)
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(),
                     thread_id="thread-main-vc",
                 )
             )
@@ -1221,7 +1350,14 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertTrue(all(valid_resolved_hash(artifact, config) for config in artifact["configs"]))
             self.assertEqual((output_path,), result.outputs)
             self.assertEqual("主图变量配置已生成", result.detail)
-            self.assertEqual("thread-main-vc", result.metadata["thread_id"])
+            self.assertEqual(
+                (
+                    "thread-main-vc-chunk-1",
+                    "thread-main-vc-chunk-2",
+                    "thread-main-vc-chunk-3",
+                ),
+                result.metadata["thread_ids"],
+            )
             prompt, attachments = transport.calls[0]
             self.assertIn("MAIN_VARIABLE_SKILL_MARKER", prompt)
             self.assertIn("MAIN_RUNTIME_MARKER", prompt)
@@ -1309,8 +1445,8 @@ class CodexDevExecutorTest(CodexDevFixture):
                 "是否完全满足用户数量": "是",
             }
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(response, ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(response),
                     thread_id="thread-main-canonical-handheld",
                 )
             )
@@ -1333,8 +1469,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             response = valid_main_variable_response()
             response["common_constraints"]["产品类型"] = "电热水壶"
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(response, ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(response),
                     thread_id="thread-structured-category",
                 )
             )
@@ -1355,8 +1491,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             main_context, main_output = self.make_downstream_fixture(root / "main")
             main_context = self.with_structured_facts(main_context, allow_clear_water=False)
             main_transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(),
                     thread_id="thread-main-clear-water-rejected",
                 )
             )
@@ -1374,18 +1510,14 @@ class CodexDevExecutorTest(CodexDevFixture):
             )
             final_context = self.with_structured_facts(final_context, allow_clear_water=False)
             final_transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                        thread_id="thread-final-clear-water-rejected",
-                    )
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-final-detail-clear-water-rejected",
-                    )
-                ],
+                main=final_prompt_chunk_results(
+                    "main",
+                    thread_id="thread-final-clear-water-rejected",
+                ),
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    thread_id="thread-final-detail-clear-water-rejected",
+                ),
             )
             cases.append(("final_prompts", (final_context, final_transport), final_dir))
 
@@ -1426,8 +1558,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             for config in response["configs"]:
                 config["per_image_overrides"]["内容物状态"] = "空置，禁止出现清水"
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(response, ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(response),
                     thread_id="thread-no-clear-water",
                 )
             )
@@ -1453,8 +1585,8 @@ class CodexDevExecutorTest(CodexDevFixture):
                     "清水自然倾倒展示，禁止改变产品身份"
                 )
                 transport = FakeTransport(
-                    CodexTurnResult(
-                        text=json.dumps(response, ensure_ascii=False),
+                    main_chunk_turns(
+                        valid_main_chunk_responses(response),
                         thread_id=f"thread-action-{forbidden}",
                     )
                 )
@@ -1504,8 +1636,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             angle_path.write_text(json.dumps(angle, ensure_ascii=False), encoding="utf-8")
             context = self.with_structured_facts(context, missing_d_no_retake=False)
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(),
                     thread_id="thread-d-available",
                 )
             )
@@ -1531,14 +1663,14 @@ class CodexDevExecutorTest(CodexDevFixture):
             value["configs"][0]["per_image_overrides"]["绑定角度槽位"] = "img_005；A 槽位"
 
         def one_handheld(value: dict[str, object]) -> None:
-            value["configs"][1]["per_image_overrides"]["手持交互声明"] = "本张图不启用手持场景"
-            value["configs"][1]["per_image_overrides"]["动态手持样式参考图调用"] = "无"
+            value["configs"][2]["per_image_overrides"]["手持交互声明"] = "本张图不启用手持场景"
+            value["configs"][2]["per_image_overrides"]["动态手持样式参考图调用"] = "无"
 
         def three_handheld(value: dict[str, object]) -> None:
-            value["configs"][2]["per_image_overrides"]["手持交互声明"] = (
+            value["configs"][1]["per_image_overrides"]["手持交互声明"] = (
                 "本张图启用手持场景。手持子场景类型：静态握持。轻扶壶身"
             )
-            value["configs"][2]["per_image_overrides"]["动态手持样式参考图调用"] = (
+            value["configs"][1]["per_image_overrides"]["动态手持样式参考图调用"] = (
                 "无，仅动态拿起场景可调用"
             )
 
@@ -1561,37 +1693,39 @@ class CodexDevExecutorTest(CodexDevFixture):
             value["notes"] = "损坏\ufffd内容"
 
         cases = {
-            "five_configs": five_configs,
-            "duplicate_id": duplicate_id,
-            "missing_d": missing_d,
-            "rejected_asset": rejected_asset,
-            "one_handheld": one_handheld,
-            "three_handheld": three_handheld,
-            "missing_field": missing_field,
-            "wrong_ratio": wrong_ratio,
-            "invented_capacity": invented_capacity,
-            "invented_material": invented_material,
-            "downstream_field": downstream_field,
-            "damaged_unicode": damaged_unicode,
+            "five_configs": (five_configs, "分段覆盖异常"),
+            "duplicate_id": (duplicate_id, "分段覆盖异常"),
+            "missing_d": (missing_d, "角度绑定异常"),
+            "rejected_asset": (rejected_asset, "角度绑定异常"),
+            "one_handheld": (one_handheld, "手持数量异常"),
+            "three_handheld": (three_handheld, "手持数量异常"),
+            "missing_field": (missing_field, "缺少规范字段"),
+            "wrong_ratio": (wrong_ratio, "画布比例异常"),
+            "invented_capacity": (invented_capacity, "未确认参数"),
+            "invented_material": (invented_material, "未确认商品事实"),
+            "downstream_field": (downstream_field, "越界字段"),
+            "damaged_unicode": (damaged_unicode, "传输恢复已达到上限"),
         }
-        for case_name, mutate in cases.items():
+        for case_name, (mutate, expected_reason) in cases.items():
             with self.subTest(case=case_name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 context, output_path = self.make_downstream_fixture(root)
                 response = copy.deepcopy(valid_main_variable_response())
                 mutate(response)
-                transport = FakeTransport(
-                    CodexTurnResult(
-                        text=json.dumps(response, ensure_ascii=False),
-                        thread_id=f"thread-{case_name}",
-                    )
-                )
+                chunks = valid_main_chunk_responses(response)
+                if case_name == "downstream_field":
+                    chunks[0]["final_prompt"] = response["final_prompt"]
+                turns = main_chunk_turns(chunks, thread_id=f"thread-{case_name}")
+                if case_name == "damaged_unicode":
+                    turns.extend((copy.deepcopy(turns[0]), copy.deepcopy(turns[0])))
+                transport = FakeTransport(turns)
                 executor = CodexDevExecutor(context, transport=transport, repository_root=root)
 
                 with self.assertRaises(ExecutorExecutionError) as caught:
                     executor.execute(ExecutionRequest(step="main_vc"))
 
                 self.assertFalse(output_path.exists())
+                self.assertIn(expected_reason, str(caught.exception))
                 self.assertNotIn("PRIVATE_FINAL_PROMPT", str(caught.exception))
                 self.assertIsNone(caught.exception.__cause__)
                 self.assertIsNone(caught.exception.__context__)
@@ -2476,18 +2610,14 @@ class CodexDevExecutorTest(CodexDevFixture):
             root = Path(tmp)
             context, final_dir, main_path, detail_path = self.make_final_prompt_fixture(root)
             transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                        thread_id="thread-final-main",
-                    )
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-final-detail",
-                    )
-                ],
+                main=final_prompt_chunk_results(
+                    "main",
+                    thread_id="thread-final-main",
+                ),
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    thread_id="thread-final-detail",
+                ),
             )
 
             result = CodexDevExecutor(context, transport=transport, repository_root=root).execute(
@@ -2526,7 +2656,24 @@ class CodexDevExecutorTest(CodexDevFixture):
 
             self.assertEqual((final_dir / "final_prompt_index.json",), result.outputs)
             self.assertEqual("最终提示词已生成", result.detail)
-            self.assertEqual(2, len(transport.calls))
+            self.assertEqual(7, len(transport.calls))
+            self.assertEqual(
+                (
+                    "thread-final-main-chunk-1",
+                    "thread-final-main-chunk-2",
+                    "thread-final-main-chunk-3",
+                ),
+                result.metadata["main_thread_ids"],
+            )
+            self.assertEqual(
+                (
+                    "thread-final-detail-chunk-1",
+                    "thread-final-detail-chunk-2",
+                    "thread-final-detail-chunk-3",
+                    "thread-final-detail-chunk-4",
+                ),
+                result.metadata["detail_thread_ids"],
+            )
             self.assertTrue(all(attachments == () for _prompt, attachments in transport.calls))
             self.assertEqual(
                 {"main", "detail"},
@@ -2538,22 +2685,39 @@ class CodexDevExecutorTest(CodexDevFixture):
             self.assertFalse((root / "workspace" / "artifacts" / "comfyui_jobs").exists())
             self.assertFalse((root / "workspace" / "artifacts" / "qc_reports").exists())
 
-    def test_final_prompts_main_and_detail_turns_overlap_with_peak_two(self) -> None:
+    def test_final_prompts_main_and_detail_chunks_share_pool_with_peak_four(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
-            both_started = threading.Barrier(2)
+            four_started = threading.Barrier(4)
 
-            def response(mode: str) -> CodexTurnResult:
-                both_started.wait(timeout=3)
+            def response(mode: str, chunk_index: int) -> CodexTurnResult:
+                four_started.wait(timeout=3)
+                chunk = valid_final_prompt_chunk_responses(mode)[chunk_index - 1]
                 return CodexTurnResult(
-                    text=json.dumps(valid_final_prompt_response(mode), ensure_ascii=False),
-                    thread_id=f"thread-final-parallel-{mode}",
+                    text=json.dumps(chunk, ensure_ascii=False),
+                    thread_id=f"thread-final-parallel-{mode}-chunk-{chunk_index}",
                 )
 
+            main_results = final_prompt_chunk_results(
+                "main",
+                thread_id="thread-final-parallel-main",
+            )
+            detail_results = final_prompt_chunk_results(
+                "detail",
+                thread_id="thread-final-parallel-detail",
+            )
+            for mode, results in (("main", main_results), ("detail", detail_results)):
+                for chunk_index in (1, 2):
+                    results[chunk_index] = [
+                        lambda _transport_mode, mode=mode, chunk_index=chunk_index: response(
+                            mode,
+                            chunk_index,
+                        )
+                    ]
             transport = FinalPromptIdentityTransport(
-                main=[response],
-                detail=[response],
+                main=main_results,
+                detail=detail_results,
             )
 
             result = CodexDevExecutor(
@@ -2563,7 +2727,8 @@ class CodexDevExecutorTest(CodexDevFixture):
             ).execute(ExecutionRequest(step="final_prompts"))
 
             self.assertEqual("最终提示词已生成", result.detail)
-            self.assertEqual(2, transport.peak_active_calls)
+            self.assertEqual(4, transport.peak_active_calls)
+            self.assertEqual(7, len(transport.calls))
             self.assertEqual(
                 {"main", "detail"},
                 {mode for mode, _prompt, _attachments in transport.run_calls},
@@ -2584,8 +2749,11 @@ class CodexDevExecutorTest(CodexDevFixture):
                     raise AssertionError("detail chain did not fail while main was still running")
                 main_completed.set()
                 return CodexTurnResult(
-                    text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                    thread_id="thread-final-main-completes-after-detail-failure",
+                    text=json.dumps(
+                        valid_final_prompt_chunk_responses("main")[0],
+                        ensure_ascii=False,
+                    ),
+                    thread_id="thread-final-main-completes-after-detail-failure-chunk-1",
                 )
 
             def detail_response(_mode: str) -> CodexTurnResult:
@@ -2593,10 +2761,17 @@ class CodexDevExecutorTest(CodexDevFixture):
                 detail_failed.set()
                 raise CanvasAgentTransportError("thread")
 
-            transport = FinalPromptIdentityTransport(
-                main=[main_response],
-                detail=[detail_response],
+            main_results = final_prompt_chunk_results(
+                "main",
+                thread_id="thread-final-main-drain",
             )
+            detail_results = final_prompt_chunk_results(
+                "detail",
+                thread_id="thread-final-detail-drain",
+            )
+            main_results[1] = [main_response]
+            detail_results[1] = [detail_response]
+            transport = FinalPromptIdentityTransport(main=main_results, detail=detail_results)
 
             with self.assertRaises(ExecutorExecutionError):
                 CodexDevExecutor(
@@ -2607,7 +2782,9 @@ class CodexDevExecutorTest(CodexDevFixture):
 
             self.assertTrue(detail_failed.is_set())
             self.assertTrue(main_completed.is_set())
-            self.assertEqual(2, transport.peak_active_calls)
+            self.assertGreaterEqual(transport.peak_active_calls, 2)
+            self.assertLessEqual(transport.peak_active_calls, 4)
+            self.assertEqual(7, len(transport.calls))
             self.assertEqual(
                 {"main", "detail"},
                 {mode for mode, _prompt, _attachments in transport.run_calls},
@@ -2621,18 +2798,15 @@ class CodexDevExecutorTest(CodexDevFixture):
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；后景玻璃器皿虚化。"
             transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(main_response, ensure_ascii=False),
-                        thread_id="thread-final-main-style-prop",
-                    )
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-final-detail-style-prop",
-                    )
-                ],
+                main=final_prompt_chunk_results(
+                    "main",
+                    main_response,
+                    thread_id="thread-final-main-style-prop",
+                ),
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    thread_id="thread-final-detail-style-prop",
+                ),
             )
 
             CodexDevExecutor(context, transport=transport, repository_root=root).execute(
@@ -2651,18 +2825,15 @@ class CodexDevExecutorTest(CodexDevFixture):
             main_response = valid_final_prompt_response("main")
             main_response["prompts"][0]["final_prompt"] += "；杯身为玻璃。"
             transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(main_response, ensure_ascii=False),
-                        thread_id="thread-final-main-product-material",
-                    )
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-final-detail-product-material",
-                    )
-                ],
+                main=final_prompt_chunk_results(
+                    "main",
+                    main_response,
+                    thread_id="thread-final-main-product-material",
+                ),
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    thread_id="thread-final-detail-product-material",
+                ),
             )
 
             with self.assertRaises(ExecutorExecutionError) as caught:
@@ -2686,18 +2857,15 @@ class CodexDevExecutorTest(CodexDevFixture):
             invalid_detail = valid_final_prompt_response("detail")
             invalid_detail["prompts"].pop()
             transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                        thread_id="thread-final-main",
-                    )
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(invalid_detail, ensure_ascii=False),
-                        thread_id="thread-final-detail-invalid",
-                    )
-                ],
+                main=final_prompt_chunk_results(
+                    "main",
+                    thread_id="thread-final-main",
+                ),
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    invalid_detail,
+                    thread_id="thread-final-detail-invalid",
+                ),
             )
 
             with self.assertRaises(ExecutorExecutionError):
@@ -2705,7 +2873,7 @@ class CodexDevExecutorTest(CodexDevFixture):
                     ExecutionRequest(step="final_prompts")
                 )
 
-            self.assertEqual(2, len(transport.calls))
+            self.assertEqual(7, len(transport.calls))
             self.assertEqual(
                 {"main", "detail"},
                 {mode for mode, _prompt, _attachments in transport.run_calls},
@@ -2752,35 +2920,37 @@ class CodexDevExecutorTest(CodexDevFixture):
             value["prompts"][0]["image"] = "PRIVATE_IMAGE_BODY"
 
         cases = {
-            "duplicate_id": duplicate_id,
-            "wrong_ratio": wrong_ratio,
-            "rejected_asset": rejected_asset,
-            "missing_d": missing_d,
-            "missing_height": missing_height,
-            "changed_handheld": changed_handheld,
-            "invented_capacity": invented_capacity,
-            "damaged_unicode": damaged_unicode,
-            "unknown_field": unknown_field,
+            "duplicate_id": (duplicate_id, "单项内容异常"),
+            "wrong_ratio": (wrong_ratio, "未保留画布比例"),
+            "rejected_asset": (rejected_asset, "未保留角度绑定"),
+            "missing_d": (missing_d, "未保留角度绑定"),
+            "missing_height": (missing_height, "未保留已确认高度"),
+            "changed_handheld": (changed_handheld, "未保留手持状态"),
+            "invented_capacity": (invented_capacity, "未确认参数"),
+            "damaged_unicode": (damaged_unicode, "包含损坏字符"),
+            "unknown_field": (unknown_field, "单项结构异常"),
         }
-        for case_name, mutate in cases.items():
+        for case_name, (mutate, expected_reason) in cases.items():
             with self.subTest(case=case_name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
                 main_response = copy.deepcopy(valid_final_prompt_response("main"))
                 mutate(main_response)
+                main_results = final_prompt_chunk_results(
+                    "main",
+                    main_response,
+                    thread_id=f"final-main-{case_name}",
+                )
+                if case_name in {"wrong_ratio", "missing_height"}:
+                    main_results[1].extend(
+                        (copy.deepcopy(main_results[1][0]), copy.deepcopy(main_results[1][0]))
+                    )
                 transport = FinalPromptIdentityTransport(
-                    main=[
-                        CodexTurnResult(
-                            text=json.dumps(main_response, ensure_ascii=False),
-                            thread_id=f"final-main-{case_name}",
-                        )
-                    ],
-                    detail=[
-                        CodexTurnResult(
-                            text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                            thread_id=f"final-detail-{case_name}",
-                        )
-                    ],
+                    main=main_results,
+                    detail=final_prompt_chunk_results(
+                        "detail",
+                        thread_id=f"final-detail-{case_name}",
+                    ),
                 )
 
                 with self.assertRaises(ExecutorExecutionError) as caught:
@@ -2788,12 +2958,15 @@ class CodexDevExecutorTest(CodexDevFixture):
                         ExecutionRequest(step="final_prompts")
                     )
 
-                self.assertEqual(2, len(transport.calls))
+                self.assertEqual(7, len(transport.calls))
+                expected_corrections = 2 if case_name in {"wrong_ratio", "missing_height"} else 0
+                self.assertEqual(expected_corrections, len(transport.continuation_calls))
                 self.assertEqual(
                     {"main", "detail"},
                     {mode for mode, _prompt, _attachments in transport.run_calls},
                 )
                 self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
+                self.assertIn(expected_reason, str(caught.exception))
                 self.assertNotIn("PRIVATE_IMAGE_BODY", str(caught.exception))
 
     def test_final_prompts_existing_formal_target_is_rejected_before_transport(self) -> None:
@@ -4430,8 +4603,8 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             response = valid_main_variable_response()
             response["configs"][0]["per_image_overrides"]["展示重点"] = "约 25 厘米"
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(response, ensure_ascii=False),
+                main_chunk_turns(
+                    valid_main_chunk_responses(response),
                     thread_id="thread-main-confirmed-height-restatement",
                 )
             )
@@ -4459,23 +4632,35 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             main_response["prompts"][0]["final_prompt"] = main_response["prompts"][0][
                 "final_prompt"
             ].replace("产品高度约 25 厘米", "整壶约 25 厘米")
+            main_results = final_prompt_chunk_results(
+                "main",
+                thread_id="thread-final-main-confirmed-height-restatement",
+            )
+            correction_thread_id = (
+                "thread-final-main-confirmed-height-restatement-chunk-1"
+            )
+            main_results[1] = [
+                CodexTurnResult(
+                    text=json.dumps(
+                        valid_final_prompt_chunk_responses("main", main_response)[0],
+                        ensure_ascii=False,
+                    ),
+                    thread_id=correction_thread_id,
+                ),
+                CodexTurnResult(
+                    text=json.dumps(
+                        valid_final_prompt_chunk_responses("main")[0],
+                        ensure_ascii=False,
+                    ),
+                    thread_id=correction_thread_id,
+                ),
+            ]
             transport = FinalPromptIdentityTransport(
-                main=[
-                    CodexTurnResult(
-                        text=json.dumps(main_response, ensure_ascii=False),
-                        thread_id="thread-final-main-confirmed-height-restatement",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("main"), ensure_ascii=False),
-                        thread_id="thread-final-main-confirmed-height-restatement",
-                    ),
-                ],
-                detail=[
-                    CodexTurnResult(
-                        text=json.dumps(valid_final_prompt_response("detail"), ensure_ascii=False),
-                        thread_id="thread-final-detail-confirmed-height-restatement",
-                    )
-                ],
+                main=main_results,
+                detail=final_prompt_chunk_results(
+                    "detail",
+                    thread_id="thread-final-detail-confirmed-height-restatement",
+                ),
             )
 
             result = CodexDevExecutor(
@@ -4493,7 +4678,7 @@ class UnsupportedClaimsRegressionTest(CodexDevFixture):
             self.assertEqual(1, result.metadata["correction_attempts"])
             self.assertEqual(1, len(transport.continuation_calls))
             thread_id, repair_prompt, attachments = transport.continuation_calls[0]
-            self.assertEqual("thread-final-main-confirmed-height-restatement", thread_id)
+            self.assertEqual(correction_thread_id, thread_id)
             self.assertEqual(["main"], transport.continuation_modes)
             self.assertEqual((), attachments)
             self.assertIn("画布比例固定为 1:1", repair_prompt)

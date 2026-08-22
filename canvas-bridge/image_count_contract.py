@@ -141,6 +141,37 @@ def pair_config_ids(mode: str, count: int) -> tuple[tuple[str, ...], ...]:
     )
 
 
+def main_handheld_chunk_quotas(
+    main_count: int,
+    handheld_target: int,
+) -> tuple[int, ...]:
+    """Distribute the main handheld target across two-config chunks.
+
+    Every main slot is eligible.  Quotas are filled one item at a time in
+    ascending chunk order, wrapping until the requested target is exhausted.
+    """
+
+    chunks = pair_config_ids("main", main_count)
+    if type(handheld_target) is not int or handheld_target < 0:
+        raise ImageCountContractError("主图手持目标必须是非负整数")
+
+    capacities = tuple(len(chunk) for chunk in chunks)
+    if handheld_target > sum(capacities):
+        raise ImageCountContractError("主图手持目标超过可用图位容量")
+
+    quotas = [0] * len(capacities)
+    remaining = handheld_target
+    while remaining:
+        for index, capacity in enumerate(capacities):
+            if quotas[index] >= capacity:
+                continue
+            quotas[index] += 1
+            remaining -= 1
+            if remaining == 0:
+                break
+    return tuple(quotas)
+
+
 def detail_module_groups(count: int) -> tuple[tuple[int, ...], ...]:
     """Map detail slots while omitting dimensions at 1 and assigning them once at 2–30."""
 

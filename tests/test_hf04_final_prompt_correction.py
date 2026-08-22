@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 import tempfile
 import threading
@@ -18,6 +19,7 @@ for extra in (BRIDGE, TESTS):
 
 from codex_dev_executor import CodexAttachment, CodexDevExecutor, CodexTurnResult  # noqa: E402
 from executor_contract import ExecutionRequest, ExecutorExecutionError  # noqa: E402
+from image_count_contract import pair_config_ids  # noqa: E402
 from test_codex_dev_executor import (  # noqa: E402
     CodexDevFixture,
     valid_final_prompt_response,
@@ -36,14 +38,14 @@ class _ModeAwareFinalPromptTransport:
 
     def __init__(
         self,
-        responses: dict[str, list[CodexTurnResult | Exception]],
+        responses: dict[tuple[str, int], list[CodexTurnResult | Exception]],
     ) -> None:
-        self._responses = {mode: list(items) for mode, items in responses.items()}
-        self._thread_ids: dict[str, str] = {}
+        self._responses = {key: list(items) for key, items in responses.items()}
+        self._thread_ids: dict[tuple[str, int], str] = {}
         self._lock = threading.Lock()
-        self.calls: list[tuple[str, str, tuple[CodexAttachment, ...]]] = []
+        self.calls: list[tuple[str, int, str, tuple[CodexAttachment, ...]]] = []
         self.continuation_calls: list[
-            tuple[str, str, str, tuple[CodexAttachment, ...]]
+            tuple[str, int, str, str, tuple[CodexAttachment, ...]]
         ] = []
 
     @staticmethod
@@ -53,10 +55,17 @@ class _ModeAwareFinalPromptTransport:
             raise AssertionError("final prompt mode could not be identified")
         return matches[0]
 
-    def _next_result(self, mode: str) -> CodexTurnResult:
-        results = self._responses.get(mode)
+    @staticmethod
+    def _chunk_index_from_prompt(prompt: str) -> int:
+        match = re.search(r"本轮只执行第 (\d+)/\d+ 段", prompt)
+        if match is None:
+            raise AssertionError("final prompt chunk could not be identified")
+        return int(match.group(1))
+
+    def _next_result(self, key: tuple[str, int]) -> CodexTurnResult:
+        results = self._responses.get(key)
         if not results:
-            raise AssertionError(f"unexpected {mode} final prompt transport call")
+            raise AssertionError(f"unexpected {key} final prompt transport call")
         result = results.pop(0)
         if isinstance(result, Exception):
             raise result
@@ -76,12 +85,14 @@ class _ModeAwareFinalPromptTransport:
     ) -> CodexTurnResult:
         self._require_final_timeout(turn_timeout)
         mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
+        chunk_index = self._chunk_index_from_prompt(prompt)
+        key = (mode, chunk_index)
         with self._lock:
-            self.calls.append((mode, prompt, attachments))
-            result = self._next_result(mode)
-            expected_thread_id = self._thread_ids.setdefault(mode, result.thread_id)
+            self.calls.append((mode, chunk_index, prompt, attachments))
+            result = self._next_result(key)
+            expected_thread_id = self._thread_ids.setdefault(key, result.thread_id)
             if result.thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} initial response changed thread identity")
+                raise AssertionError(f"{key} initial response changed thread identity")
             return result
 
     def continue_turn(
@@ -94,22 +105,69 @@ class _ModeAwareFinalPromptTransport:
     ) -> CodexTurnResult:
         self._require_final_timeout(turn_timeout)
         mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
+        chunk_index = self._chunk_index_from_prompt(prompt)
+        key = (mode, chunk_index)
         with self._lock:
-            expected_thread_id = self._thread_ids.get(mode)
+            expected_thread_id = self._thread_ids.get(key)
             if thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} repair used the wrong thread identity")
-            self.continuation_calls.append((mode, thread_id, prompt, attachments))
-            result = self._next_result(mode)
+                raise AssertionError(f"{key} repair used the wrong thread identity")
+            self.continuation_calls.append(
+                (mode, chunk_index, thread_id, prompt, attachments)
+            )
+            result = self._next_result(key)
             if result.thread_id != expected_thread_id:
-                raise AssertionError(f"{mode} repair response changed thread identity")
+                raise AssertionError(f"{key} repair response changed thread identity")
             return result
 
     def remaining(self, mode: str) -> int:
         with self._lock:
-            return len(self._responses.get(mode, ()))
+            return sum(
+                len(items)
+                for (response_mode, _chunk_index), items in self._responses.items()
+                if response_mode == mode
+            )
 
 
 class FinalPromptCorrectionBudgetTest(CodexDevFixture):
+    @staticmethod
+    def chunk_response(
+        mode: str,
+        chunk_index: int,
+        *,
+        response: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        full = copy.deepcopy(response or valid_final_prompt_response(mode))
+        prompts = full["prompts"]
+        batches = pair_config_ids(mode, len(prompts))
+        expected_ids = set(batches[chunk_index - 1])
+        return {
+            "prompts": [
+                prompt
+                for prompt in prompts
+                if prompt["config_id"] in expected_ids
+            ]
+        }
+
+    @classmethod
+    def valid_chunk_sequences(
+        cls,
+    ) -> dict[tuple[str, int], list[CodexTurnResult | Exception]]:
+        sequences: dict[tuple[str, int], list[CodexTurnResult | Exception]] = {}
+        for mode in ("main", "detail"):
+            full = valid_final_prompt_response(mode)
+            chunk_count = len(pair_config_ids(mode, len(full["prompts"])))
+            for chunk_index in range(1, chunk_count + 1):
+                sequences[(mode, chunk_index)] = [
+                    CodexTurnResult(
+                        text=json.dumps(
+                            cls.chunk_response(mode, chunk_index, response=full),
+                            ensure_ascii=False,
+                        ),
+                        thread_id=f"thread-{mode}-chunk-{chunk_index}",
+                    )
+                ]
+        return sequences
+
     @staticmethod
     def paraphrased_response(mode: str) -> dict[str, object]:
         response = copy.deepcopy(valid_final_prompt_response(mode))
@@ -127,33 +185,18 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             invalid = self.paraphrased_response("main")
-            transport = _ModeAwareFinalPromptTransport(
-                {
-                    "main": [
-                        CodexTurnResult(
-                            text=json.dumps(invalid, ensure_ascii=False),
-                            thread_id="thread-main-budget",
-                        ),
-                        CodexTurnResult(
-                            text=json.dumps(invalid, ensure_ascii=False),
-                            thread_id="thread-main-budget",
-                        ),
-                        CodexTurnResult(
-                            text=json.dumps(invalid, ensure_ascii=False),
-                            thread_id="thread-main-budget",
-                        ),
-                    ],
-                    "detail": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("detail"),
-                                ensure_ascii=False,
-                            ),
-                            thread_id="thread-detail-budget",
-                        )
-                    ],
-                }
-            )
+            responses = self.valid_chunk_sequences()
+            responses[("main", 1)] = [
+                CodexTurnResult(
+                    text=json.dumps(
+                        self.chunk_response("main", 1, response=invalid),
+                        ensure_ascii=False,
+                    ),
+                    thread_id="thread-main-chunk-1",
+                )
+                for _ in range(3)
+            ]
+            transport = _ModeAwareFinalPromptTransport(responses)
 
             with self.assertRaisesRegex(
                 ExecutorExecutionError,
@@ -169,19 +212,34 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
             self.assertIn("未保留画布比例", failure_detail)
             self.assertLessEqual(len(failure_detail), 160)
             self.assertNotIn("输出画布比例", failure_detail)
-            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
-            main_repairs = [call for call in transport.continuation_calls if call[0] == "main"]
+            self.assertEqual(
+                {"main": 3, "detail": 4},
+                {
+                    mode: sum(call[0] == mode for call in transport.calls)
+                    for mode in ("main", "detail")
+                },
+            )
+            main_repairs = [
+                call
+                for call in transport.continuation_calls
+                if call[:2] == ("main", 1)
+            ]
             self.assertEqual(2, len(main_repairs))
             self.assertEqual(
                 [],
                 [call for call in transport.continuation_calls if call[0] == "detail"],
             )
             self.assertEqual(
-                ("thread-main-budget", "thread-main-budget"),
-                tuple(call[1] for call in main_repairs),
+                ("thread-main-chunk-1", "thread-main-chunk-1"),
+                tuple(call[2] for call in main_repairs),
             )
-            self.assertTrue(all("画布比例固定为 1:1" in call[2] for call in main_repairs))
-            self.assertTrue(all("高度约 25 厘米" in call[2] for call in main_repairs))
+            self.assertTrue(
+                all("画布比例固定为 1:1" in call[3] for call in main_repairs)
+            )
+            self.assertTrue(
+                all("高度约 25 厘米" in call[3] for call in main_repairs)
+            )
+            self.assertEqual(0, transport.remaining("main"))
             self.assertEqual(0, transport.remaining("detail"))
             self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
 
@@ -192,26 +250,7 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             context = self.with_structured_facts(context, allow_clear_water=False)
-            transport = _ModeAwareFinalPromptTransport(
-                {
-                    "main": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("main"), ensure_ascii=False
-                            ),
-                            thread_id="thread-main-clear-water-business-stop",
-                        )
-                    ],
-                    "detail": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("detail"), ensure_ascii=False
-                            ),
-                            thread_id="thread-detail-clear-water-business-stop",
-                        )
-                    ],
-                }
-            )
+            transport = _ModeAwareFinalPromptTransport(self.valid_chunk_sequences())
 
             with self.assertRaisesRegex(ExecutorExecutionError, "场景边界"):
                 CodexDevExecutor(
@@ -220,7 +259,8 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                     repository_root=root,
                 ).execute(ExecutionRequest(step="final_prompts"))
 
-            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
+            self.assertEqual(3, sum(call[0] == "main" for call in transport.calls))
+            self.assertEqual(4, sum(call[0] == "detail" for call in transport.calls))
             self.assertEqual([], transport.continuation_calls)
             self.assertEqual(0, transport.remaining("detail"))
             self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
@@ -231,24 +271,17 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             invalid_main = valid_final_prompt_response("main")
             invalid_main["prompts"][0]["final_prompt"] += "；杯身为玻璃。"
-            transport = _ModeAwareFinalPromptTransport(
-                {
-                    "main": [
-                        CodexTurnResult(
-                            text=json.dumps(invalid_main, ensure_ascii=False),
-                            thread_id="thread-main-material-business-stop",
-                        )
-                    ],
-                    "detail": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("detail"), ensure_ascii=False
-                            ),
-                            thread_id="thread-detail-material-business-stop",
-                        )
-                    ],
-                }
-            )
+            responses = self.valid_chunk_sequences()
+            responses[("main", 1)] = [
+                CodexTurnResult(
+                    text=json.dumps(
+                        self.chunk_response("main", 1, response=invalid_main),
+                        ensure_ascii=False,
+                    ),
+                    thread_id="thread-main-chunk-1",
+                )
+            ]
+            transport = _ModeAwareFinalPromptTransport(responses)
 
             with self.assertRaisesRegex(ExecutorExecutionError, "未确认商品事实"):
                 CodexDevExecutor(
@@ -257,7 +290,8 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                     repository_root=root,
                 ).execute(ExecutionRequest(step="final_prompts"))
 
-            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
+            self.assertEqual(3, sum(call[0] == "main" for call in transport.calls))
+            self.assertEqual(4, sum(call[0] == "detail" for call in transport.calls))
             self.assertEqual([], transport.continuation_calls)
             self.assertEqual(0, transport.remaining("detail"))
             self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
@@ -267,25 +301,18 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
             root = Path(tmp)
             context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
             invalid_main = self.paraphrased_response("main")
-            transport = _ModeAwareFinalPromptTransport(
-                {
-                    "main": [
-                        CodexTurnResult(
-                            text=json.dumps(invalid_main, ensure_ascii=False),
-                            thread_id="thread-main-transport-failure",
-                        ),
-                        RuntimeError("repair transport stopped"),
-                    ],
-                    "detail": [
-                        CodexTurnResult(
-                            text=json.dumps(
-                                valid_final_prompt_response("detail"), ensure_ascii=False
-                            ),
-                            thread_id="thread-detail-transport-failure",
-                        )
-                    ],
-                }
-            )
+            responses = self.valid_chunk_sequences()
+            responses[("main", 1)] = [
+                CodexTurnResult(
+                    text=json.dumps(
+                        self.chunk_response("main", 1, response=invalid_main),
+                        ensure_ascii=False,
+                    ),
+                    thread_id="thread-main-chunk-1",
+                ),
+                RuntimeError("repair transport stopped"),
+            ]
+            transport = _ModeAwareFinalPromptTransport(responses)
 
             with self.assertRaisesRegex(
                 ExecutorExecutionError,
@@ -297,11 +324,12 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                     repository_root=root,
                 ).execute(ExecutionRequest(step="final_prompts"))
 
-            self.assertCountEqual(("main", "detail"), tuple(call[0] for call in transport.calls))
+            self.assertEqual(3, sum(call[0] == "main" for call in transport.calls))
+            self.assertEqual(4, sum(call[0] == "detail" for call in transport.calls))
             self.assertEqual(1, len(transport.continuation_calls))
             self.assertEqual(
-                ("main", "thread-main-transport-failure"),
-                transport.continuation_calls[0][:2],
+                ("main", 1, "thread-main-chunk-1"),
+                transport.continuation_calls[0][:3],
             )
             self.assertEqual(0, transport.remaining("detail"))
             self.assertFalse(final_dir.exists() and any(final_dir.iterdir()))
@@ -316,16 +344,21 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                 root = Path(tmp)
                 context, final_dir, _main_path, _detail_path = self.make_final_prompt_fixture(root)
                 thread_ids = {
-                    "main": f"thread-main-independent-budget-{scenario}",
-                    "detail": f"thread-detail-independent-budget-{scenario}",
+                    "main": f"thread-main-chunk-1-{scenario}",
+                    "detail": f"thread-detail-chunk-1-{scenario}",
                 }
 
-                def mode_responses(mode: str, correction_count: int) -> list[CodexTurnResult]:
+                def chunk_responses(mode: str, correction_count: int) -> list[CodexTurnResult]:
                     return [
                         *(
                             CodexTurnResult(
                                 text=json.dumps(
-                                    self.paraphrased_response(mode), ensure_ascii=False
+                                    self.chunk_response(
+                                        mode,
+                                        1,
+                                        response=self.paraphrased_response(mode),
+                                    ),
+                                    ensure_ascii=False,
                                 ),
                                 thread_id=thread_ids[mode],
                             )
@@ -333,27 +366,25 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                         ),
                         CodexTurnResult(
                             text=json.dumps(
-                                valid_final_prompt_response(mode), ensure_ascii=False
+                                self.chunk_response(mode, 1),
+                                ensure_ascii=False,
                             ),
                             thread_id=thread_ids[mode],
                         ),
                     ]
 
-                transport = _ModeAwareFinalPromptTransport(
-                    {
-                        "main": mode_responses("main", main_corrections),
-                        "detail": mode_responses("detail", detail_corrections),
-                    }
-                )
+                responses = self.valid_chunk_sequences()
+                responses[("main", 1)] = chunk_responses("main", main_corrections)
+                responses[("detail", 1)] = chunk_responses("detail", detail_corrections)
+                transport = _ModeAwareFinalPromptTransport(responses)
                 result = CodexDevExecutor(
                     context,
                     transport=transport,
                     repository_root=root,
                 ).execute(ExecutionRequest(step="final_prompts"))
 
-                self.assertCountEqual(
-                    ("main", "detail"), tuple(call[0] for call in transport.calls)
-                )
+                self.assertEqual(3, sum(call[0] == "main" for call in transport.calls))
+                self.assertEqual(4, sum(call[0] == "detail" for call in transport.calls))
                 actual_corrections = {
                     mode: sum(call[0] == mode for call in transport.continuation_calls)
                     for mode in ("main", "detail")
@@ -365,15 +396,19 @@ class FinalPromptCorrectionBudgetTest(CodexDevFixture):
                 for mode in ("main", "detail"):
                     self.assertTrue(
                         all(
-                            call[1] == thread_ids[mode]
+                            call[1] == 1 and call[2] == thread_ids[mode]
                             for call in transport.continuation_calls
                             if call[0] == mode
                         )
                     )
                     self.assertEqual(0, transport.remaining(mode))
                 self.assertEqual(3, result.metadata["correction_attempts"])
-                self.assertEqual(thread_ids["main"], result.metadata["main_thread_id"])
-                self.assertEqual(thread_ids["detail"], result.metadata["detail_thread_id"])
+                self.assertEqual(3, len(result.metadata["main_thread_ids"]))
+                self.assertEqual(4, len(result.metadata["detail_thread_ids"]))
+                self.assertEqual(thread_ids["main"], result.metadata["main_thread_ids"][0])
+                self.assertEqual(thread_ids["detail"], result.metadata["detail_thread_ids"][0])
+                self.assertNotIn("main_thread_id", result.metadata)
+                self.assertNotIn("detail_thread_id", result.metadata)
                 self.assertEqual(
                     "最终提示词已生成（受控纠正 3 次）",
                     result.detail,

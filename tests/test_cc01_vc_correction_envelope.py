@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import json
 import sys
 import tempfile
@@ -15,6 +16,7 @@ if str(BRIDGE) not in sys.path:
 from category_recipes import CategoryRecipe  # noqa: E402
 from codex_dev_downstream import (  # noqa: E402
     UserConfirmedRequirements,
+    build_main_variable_config_chunk_prompt,
     build_variable_config_correction_prompt,
     parse_user_confirmed_requirements,
 )
@@ -24,7 +26,12 @@ from content_correction import (  # noqa: E402
     build_content_correction_instruction,
 )
 from executor_contract import ExecutionRequest, ExecutorExecutionError  # noqa: E402
-from image_count_contract import chinese_image_count, config_ids  # noqa: E402
+from image_count_contract import (  # noqa: E402
+    chinese_image_count,
+    config_ids,
+    main_handheld_chunk_quotas,
+    pair_config_ids,
+)
 from tests.test_codex_dev_executor import (  # noqa: E402
     CodexDevFixture,
     FakeTransport,
@@ -86,6 +93,72 @@ def _invalid_canvas_ratio_response() -> dict[str, object]:
     invalid = valid_main_variable_response()
     invalid["configs"][0]["per_image_overrides"]["输出画布比例"] = "3:4"  # type: ignore[index]
     return invalid
+
+
+def single_main_chunks(response: dict[str, object]) -> list[dict[str, object]]:
+    """Convert the legacy full fake into the real P2-d main chunk envelope."""
+
+    value = copy.deepcopy(response)
+    configs = value["configs"]
+    batches = pair_config_ids("main", len(configs))
+    target = value["handheld_count_summary"]["用户要求主图手持数量"]
+    quotas = main_handheld_chunk_quotas(len(configs), target)
+    enabled_template = next(
+        config
+        for config in configs
+        if "本张图不启用手持场景"
+        not in config["per_image_overrides"]["手持交互声明"]
+    )["per_image_overrides"]
+    disabled_template = next(
+        config
+        for config in configs
+        if "本张图不启用手持场景"
+        in config["per_image_overrides"]["手持交互声明"]
+    )["per_image_overrides"]
+    chunks: list[dict[str, object]] = []
+    offset = 0
+    for chunk_index, batch in enumerate(batches, start=1):
+        chunk_configs = copy.deepcopy(configs[offset : offset + len(batch)])
+        quota = quotas[chunk_index - 1]
+        for position, config in enumerate(chunk_configs):
+            source = enabled_template if position < quota else disabled_template
+            overrides = config["per_image_overrides"]
+            overrides["手持交互声明"] = source["手持交互声明"]
+            overrides["动态手持样式参考图调用"] = source["动态手持样式参考图调用"]
+        enabled_ids = [
+            config["config_id"]
+            for config in chunk_configs
+            if "本张图不启用手持场景"
+            not in config["per_image_overrides"]["手持交互声明"]
+        ]
+        chunk: dict[str, object] = {
+            "chunk_index": chunk_index,
+            "chunk_count": len(batches),
+            "configs": chunk_configs,
+            "handheld_chunk_summary": {
+                "本段手持配额": quota,
+                "本段实际启用数量": len(enabled_ids),
+                "本段启用手持配置": enabled_ids,
+            },
+        }
+        if chunk_index == 1:
+            chunk["common_constraints"] = copy.deepcopy(value["common_constraints"])
+            chunk["notes"] = value["notes"]
+        chunks.append(chunk)
+        offset += len(batch)
+    return chunks
+
+
+def _chunk_turn(
+    chunk: dict[str, object],
+    *,
+    thread_prefix: str,
+) -> CodexTurnResult:
+    chunk_index = int(chunk["chunk_index"])
+    return CodexTurnResult(
+        text=json.dumps(chunk, ensure_ascii=False),
+        thread_id=f"{thread_prefix}-chunk-{chunk_index}",
+    )
 
 
 class VariableConfigCorrectionEnvelopeUnitTest(unittest.TestCase):
@@ -152,21 +225,15 @@ class VariableConfigCorrectionEnvelopeExecutorTest(CodexDevFixture):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             context, output_path = self.make_downstream_fixture(root)
+            invalid_chunks = single_main_chunks(_invalid_canvas_ratio_response())
+            valid_chunks = single_main_chunks(valid_main_variable_response())
             transport = FakeTransport(
                 [
-                    CodexTurnResult(
-                        text=json.dumps(
-                            _invalid_canvas_ratio_response(),
-                            ensure_ascii=False,
-                        ),
-                        thread_id="thread-cc01-complete",
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(
-                            valid_main_variable_response(),
-                            ensure_ascii=False,
-                        ),
-                        thread_id="thread-cc01-complete",
+                    _chunk_turn(invalid_chunks[0], thread_prefix="thread-cc01-complete"),
+                    _chunk_turn(valid_chunks[0], thread_prefix="thread-cc01-complete"),
+                    *(
+                        _chunk_turn(chunk, thread_prefix="thread-cc01-complete")
+                        for chunk in valid_chunks[1:]
                     ),
                 ]
             )
@@ -180,16 +247,19 @@ class VariableConfigCorrectionEnvelopeExecutorTest(CodexDevFixture):
             result = executor.execute(ExecutionRequest(step="main_vc"))
 
             requirements = parse_user_confirmed_requirements(context.manifest, root)
-            expected_prompt = build_variable_config_correction_prompt(
-                _canvas_ratio_violation(),
-                mode="main",
+            expected_prompt = build_main_variable_config_chunk_prompt(
+                "",
+                1,
                 requirements=requirements,
+                correction=_canvas_ratio_violation(),
             )
-            self.assertEqual(1, len(transport.calls))
+            self.assertEqual(3, len(transport.calls))
             self.assertEqual(
-                [("thread-cc01-complete", expected_prompt, ())],
+                [("thread-cc01-complete-chunk-1", expected_prompt, ())],
                 transport.continuation_calls,
             )
+            self.assertIn("main_01、main_02", expected_prompt)
+            self.assertNotIn("main_03", expected_prompt)
             self.assertEqual((output_path,), result.outputs)
             self.assertTrue(output_path.exists())
             artifact = json.loads(output_path.read_text(encoding="utf-8"))
@@ -204,18 +274,18 @@ class VariableConfigCorrectionEnvelopeExecutorTest(CodexDevFixture):
             root = Path(temp_dir)
             context, output_path = self.make_downstream_fixture(root)
             single_config = valid_main_variable_response()["configs"][0]  # type: ignore[index]
+            invalid_chunks = single_main_chunks(_invalid_canvas_ratio_response())
+            valid_chunks = single_main_chunks(valid_main_variable_response())
             transport = FakeTransport(
                 [
-                    CodexTurnResult(
-                        text=json.dumps(
-                            _invalid_canvas_ratio_response(),
-                            ensure_ascii=False,
-                        ),
-                        thread_id="thread-cc01-single",
-                    ),
+                    _chunk_turn(invalid_chunks[0], thread_prefix="thread-cc01-single"),
                     CodexTurnResult(
                         text=json.dumps(single_config, ensure_ascii=False),
-                        thread_id="thread-cc01-single",
+                        thread_id="thread-cc01-single-chunk-1",
+                    ),
+                    *(
+                        _chunk_turn(chunk, thread_prefix="thread-cc01-single")
+                        for chunk in valid_chunks[1:]
                     ),
                 ]
             )
@@ -230,7 +300,7 @@ class VariableConfigCorrectionEnvelopeExecutorTest(CodexDevFixture):
                 executor.execute(ExecutionRequest(step="main_vc"))
 
             self.assertEqual(
-                "codex-dev 收到的主图变量配置包含越界顶层字段",
+                "codex-dev 收到的主图变量配置分段编号异常",
                 str(caught.exception),
             )
             self.assertEqual(1, len(transport.continuation_calls))

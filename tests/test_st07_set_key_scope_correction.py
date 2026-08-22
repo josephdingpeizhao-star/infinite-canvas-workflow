@@ -18,7 +18,7 @@ from codex_dev_downstream import (  # noqa: E402
     _reject_unicode_damage_or_forbidden_keys,
     parse_detail_variable_config_chunk,
 )
-from codex_dev_executor import CodexDevExecutor, CodexTurnResult  # noqa: E402
+from codex_dev_executor import CodexDevExecutor  # noqa: E402
 from content_correction import (  # noqa: E402
     ContentPredicateViolation,
     build_content_correction_instruction,
@@ -28,6 +28,10 @@ from tests.test_codex_dev_executor import (  # noqa: E402
     CodexDevFixture,
     FakeTransport,
     valid_main_variable_response,
+)
+from tests.test_cc01_vc_correction_envelope import (  # noqa: E402
+    _chunk_turn,
+    single_main_chunks,
 )
 from tests.test_st03b_set_variable_config import (  # noqa: E402
     SetVariableConfigFixture,
@@ -154,15 +158,20 @@ class SetKeyScopeExecutorTests(CodexDevFixture):
     def test_envelope_key_with_callback_still_does_not_correct_or_continue(self) -> None:
         response = copy.deepcopy(valid_main_variable_response())
         response["common_constraints"]["product_id"] = "PRIVATE_ST07_ID"
+        invalid_chunks = single_main_chunks(response)
+        valid_chunks = single_main_chunks(valid_main_variable_response())
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             context, output_path = self.make_downstream_fixture(root)
             transport = FakeTransport(
-                CodexTurnResult(
-                    text=json.dumps(response, ensure_ascii=False),
-                    thread_id="thread-st07-envelope",
-                )
+                [
+                    _chunk_turn(invalid_chunks[0], thread_prefix="thread-st07-envelope"),
+                    *(
+                        _chunk_turn(chunk, thread_prefix="thread-st07-envelope")
+                        for chunk in valid_chunks[1:]
+                    ),
+                ]
             )
             events: list[tuple[int, str, str]] = []
             executor = CodexDevExecutor(context, transport=transport, repository_root=root)
@@ -182,20 +191,20 @@ class SetKeyScopeExecutorTests(CodexDevFixture):
     def test_unregistered_set_key_with_callback_corrects_once_and_succeeds(self) -> None:
         invalid = copy.deepcopy(valid_main_variable_response())
         invalid["common_constraints"][SET_SCOPE_KEY] = "越界描述"
-        thread_id = "thread-st07-set-key"
+        invalid_chunks = single_main_chunks(invalid)
+        valid_chunks = single_main_chunks(valid_main_variable_response())
+        thread_prefix = "thread-st07-set-key"
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             context, output_path = self.make_downstream_fixture(root)
             transport = FakeTransport(
                 [
-                    CodexTurnResult(
-                        text=json.dumps(invalid, ensure_ascii=False),
-                        thread_id=thread_id,
-                    ),
-                    CodexTurnResult(
-                        text=json.dumps(valid_main_variable_response(), ensure_ascii=False),
-                        thread_id=thread_id,
+                    _chunk_turn(invalid_chunks[0], thread_prefix=thread_prefix),
+                    _chunk_turn(valid_chunks[0], thread_prefix=thread_prefix),
+                    *(
+                        _chunk_turn(chunk, thread_prefix=thread_prefix)
+                        for chunk in valid_chunks[1:]
                     ),
                 ]
             )
@@ -212,9 +221,11 @@ class SetKeyScopeExecutorTests(CodexDevFixture):
             continuation_thread, continuation_prompt, attachments = (
                 transport.continuation_calls[0]
             )
-            self.assertEqual(thread_id, continuation_thread)
+            self.assertEqual(f"{thread_prefix}-chunk-1", continuation_thread)
             self.assertIn(SET_SCOPE_KEY, continuation_prompt)
             self.assertIn("删除", continuation_prompt)
+            self.assertIn("main_01、main_02", continuation_prompt)
+            self.assertNotIn("main_03", continuation_prompt)
             self.assertEqual((), attachments)
             self.assertEqual((output_path,), result.outputs)
             self.assertTrue(output_path.exists())

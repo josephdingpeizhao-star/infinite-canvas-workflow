@@ -5,6 +5,7 @@ import hashlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -52,6 +53,7 @@ from test_st03b_set_variable_config import (  # noqa: E402
     SequenceTransport,
     SetVariableConfigFixture,
     set_detail_chunks,
+    set_main_chunks,
     set_manifest_facts,
     set_requirements,
     valid_component_identity,
@@ -150,6 +152,14 @@ def _final_prompt_response(
             }
         )
     return {"prompts": prompts}
+
+
+def _final_prompt_chunks(response: dict[str, object]) -> list[dict[str, object]]:
+    prompts = response["prompts"]
+    return [
+        {"prompts": copy.deepcopy(prompts[start : start + 2])}
+        for start in range(0, len(prompts), 2)
+    ]
 
 
 def _facts(*, handheld_main: int, handheld_detail: int) -> dict[str, object]:
@@ -481,14 +491,9 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
             "main": "final_prompts 套装主图批次任务",
             "detail": "final_prompts 套装详情图批次任务",
         }
-        _THREAD_IDS = {
-            "main": "st03c-final-main-thread",
-            "detail": "st03c-final-detail-thread",
-        }
-
         def __init__(
             self,
-            responses: dict[str, dict[str, object]],
+            responses: dict[str, list[dict[str, object]]],
             *,
             prior_calls: list[tuple[str, tuple[CodexAttachment, ...]]],
             prior_continuation_calls: list[
@@ -496,13 +501,14 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
             ],
         ) -> None:
             self._responses = {
-                mode: [
+                (mode, chunk_index): [
                     CodexTurnResult(
                         text=json.dumps(response, ensure_ascii=False),
-                        thread_id=self._THREAD_IDS[mode],
+                        thread_id=f"st03c-final-{mode}-chunk-{chunk_index}",
                     )
                 ]
-                for mode, response in responses.items()
+                for mode, chunks in responses.items()
+                for chunk_index, response in enumerate(chunks, start=1)
             }
             self._lock = threading.Lock()
             self.calls = list(prior_calls)
@@ -517,10 +523,19 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
                 raise AssertionError("set final prompt mode could not be identified")
             return matches[0]
 
-        def _next_result(self, mode: str) -> CodexTurnResult:
-            results = self._responses.get(mode)
+        @staticmethod
+        def _chunk_from_prompt(prompt: str) -> int:
+            match = re.search(r"本轮只执行第 (\d+)/(\d+) 段", prompt)
+            if match is None:
+                raise AssertionError("set final prompt chunk could not be identified")
+            return int(match.group(1))
+
+        def _next_result(self, mode: str, chunk_index: int) -> CodexTurnResult:
+            results = self._responses.get((mode, chunk_index))
             if not results:
-                raise AssertionError(f"unexpected {mode} set final prompt transport call")
+                raise AssertionError(
+                    f"unexpected {mode} chunk {chunk_index} set final prompt transport call"
+                )
             return results.pop(0)
 
         @staticmethod
@@ -537,10 +552,12 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
         ) -> CodexTurnResult:
             self._require_final_timeout(turn_timeout)
             mode = self._mode_from_prompt(prompt, self._INITIAL_MARKERS)
+            chunk_index = self._chunk_from_prompt(prompt)
             with self._lock:
                 self.calls.append((prompt, attachments))
-                result = self._next_result(mode)
-                if result.thread_id != self._THREAD_IDS[mode]:
+                result = self._next_result(mode, chunk_index)
+                expected_thread_id = f"st03c-final-{mode}-chunk-{chunk_index}"
+                if result.thread_id != expected_thread_id:
                     raise AssertionError(f"{mode} set final response changed thread identity")
                 return result
 
@@ -554,11 +571,13 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
         ) -> CodexTurnResult:
             self._require_final_timeout(turn_timeout)
             mode = self._mode_from_prompt(prompt, self._REPAIR_MARKERS)
+            chunk_index = self._chunk_from_prompt(prompt)
             with self._lock:
-                if thread_id != self._THREAD_IDS[mode]:
+                expected_thread_id = f"st03c-final-{mode}-chunk-{chunk_index}"
+                if thread_id != expected_thread_id:
                     raise AssertionError(f"{mode} set final repair used the wrong thread identity")
                 self.continuation_calls.append((thread_id, prompt, attachments))
-                result = self._next_result(mode)
+                result = self._next_result(mode, chunk_index)
                 if result.thread_id != thread_id:
                     raise AssertionError(f"{mode} set final repair changed thread identity")
                 return result
@@ -592,7 +611,7 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
             enabled_ids=detail_enabled,
         )
         responses = [
-            main_variable_response,
+            *set_main_chunks(main_variable_response),
             *set_detail_chunks(detail_variable_response),
         ]
         executor, _upstream_transport, manifest, paths = self.make_executor(root, responses)
@@ -622,15 +641,19 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
         executor.execute(ExecutionRequest(step="detail_vc"))
         transport = self._FinalPromptTransport(
             {
-                "main": _final_prompt_response(
-                    "main",
-                    count=main_count,
-                    enabled_ids=main_enabled,
+                "main": _final_prompt_chunks(
+                    _final_prompt_response(
+                        "main",
+                        count=main_count,
+                        enabled_ids=main_enabled,
+                    )
                 ),
-                "detail": _final_prompt_response(
-                    "detail",
-                    count=detail_count,
-                    enabled_ids=detail_enabled,
+                "detail": _final_prompt_chunks(
+                    _final_prompt_response(
+                        "detail",
+                        count=detail_count,
+                        enabled_ids=detail_enabled,
+                    )
                 ),
             },
             prior_calls=_upstream_transport.calls,
@@ -693,7 +716,7 @@ class St03cSetFinalPromptFixture(SetVariableConfigFixture):
 
 
 class St03cSetFinalPromptCompilerTests(St03cSetFinalPromptFixture):
-    def test_set_final_full_chain_uses_two_turns_and_writes_closed_bundle(self) -> None:
+    def test_set_final_full_chain_uses_segment_turns_and_writes_closed_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             prepared = self.prepare_full_chain(Path(temporary), handheld_target=0)
             final_dir = prepared["final_dir"]
@@ -710,7 +733,7 @@ class St03cSetFinalPromptCompilerTests(St03cSetFinalPromptFixture):
             self.assertEqual(5, prepared["final_transport_calls_before"])
             self.assertEqual(0, prepared["final_continuations_before"])
             self.assertEqual(
-                2,
+                5,
                 len(prepared["transport"].calls)
                 - prepared["final_transport_calls_before"],
             )
@@ -719,6 +742,14 @@ class St03cSetFinalPromptCompilerTests(St03cSetFinalPromptFixture):
                 len(prepared["transport"].continuation_calls),
             )
             self.assertEqual((final_dir / "final_prompt_index.json",), prepared["result"].outputs)
+            self.assertEqual(
+                ("st03c-final-main-chunk-1",),
+                prepared["result"].metadata["main_thread_ids"],
+            )
+            self.assertEqual(
+                tuple(f"st03c-final-detail-chunk-{index}" for index in range(1, 5)),
+                prepared["result"].metadata["detail_thread_ids"],
+            )
 
             expected_upstream_keys = set(expand_set_final_prompt_upstream_keys(2))
             index = json.loads((final_dir / "final_prompt_index.json").read_text(encoding="utf-8"))
